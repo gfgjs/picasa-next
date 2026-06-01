@@ -61,9 +61,13 @@
 | Q10 | 主题系统 | CSS Variables + `data-theme`，Light/Dark/System 三态 |
 | Q11 | 连接模型 | 写 `Mutex<Connection>` + 读 `r2d2` 连接池（桌面 4 连接，移动端 2） |
 | Q12 | 路径存储 | 相对路径 + 锚点架构 |
-| Q13 | 缓存键 | `xxh3_64("{rel_path}/{file_name}\|{file_mtime}")` → i64，不含尺寸 |
+| Q13 | 缓存键 | `xxh3_64("{rel_path}/{file_name}\|{file_mtime}")` → i64，不含尺寸；文件名 hex 用`format!("{:016x}", cache_key as u64)`避免负号 |
 | Q14 | 缩略图缓存 | **按尺寸分桶**：`cache/thumbnails/{size}/xx/xxxx.webp` |
-| Q15 | 布局策略 | **后端计算 Justified Layout + 行级分段加载** |
+| Q15 | 布局策略 | **后端计算 Justified Layout + 行级分段加载** ；布局缓存附带 
+`layout_version: u64`
+ 版本号，计算时原子递增，
+`get_layout_rows`
+ 携带版本校验防止竞争 |
 | Q16 | 虚拟滚动 | 自研行级虚拟化，配合后端行数据 |
 | Q17 | 图片预光栅化 | `Image.decode()` 消除滚动掉帧 |
 | Q18 | 大图预览 | 模态覆盖层，CSS `transform` 缩放/拖拽 |
@@ -195,7 +199,7 @@ picasa-next/
 │   │   ├── layout/
 │   │   │   ├── AppShell.vue
 │   │   │   ├── AppSidebar.vue        # 拖拽调整宽度
-│   │   │   ├── AppToolbar.vue        # 视图切换、排序、搜索、类型筛选芯片
+│   │   │   ├── AppToolbar.vue        # 视图切换、排序、搜索(150ms debounce)、类型筛选芯片
 │   │   │   └── AppStatusBar.vue
 │   │   ├── media/
 │   │   │   ├── MediaGrid.vue
@@ -207,7 +211,7 @@ picasa-next/
 │   │   │   ├── DocumentViewer.vue    # Phase 2
 │   │   │   └── DateSeparator.vue     # 全宽独立行，固定 36px
 │   │   ├── sidebar/
-│   │   │   ├── FolderTree.vue
+│   │   │   ├── FolderTree.vue        # 无目录时内嵌一键「添加文件夹」按钮（与主区域 EmptyState 联动）
 │   │   │   ├── SmartAlbums.vue
 │   │   │   └── ColorFilter.vue       # Phase 2
 │   │   └── common/
@@ -511,6 +515,7 @@ CREATE TABLE IF NOT EXISTS item_tags (
 
 1. `walkdir` 遍历 + `file_stat` (mtime/size) + 扩展名分类
 2. `image::image_dimensions()` → 读文件头获取宽高（~0.1ms/张，仅解析头部不解码）
+   - ⚠️ **TIFF 保护**：TIFF 头解析需读取更多字节，对 `.tif/.tiff` 文件加 50ms 超时保护（`tokio::time::timeout`），超时则 width/height 置 0，后台充实阶段重新获取
 3. JPEG 额外读取 EXIF Orientation 标签（位于文件头 1KB 以内，~0.1ms/张）→ 若需旋转则交换 width/height
 4. `cache_key` 生成 (xxh3_64)
 5. 批量 INSERT 主表（`sort_datetime = file_mtime`，`image_meta` 暂不写入）
@@ -603,10 +608,12 @@ CREATE TABLE IF NOT EXISTS item_tags (
   - Phase 1：`file_name LIKE '%query%'`（参数绑定）
   - 返回：`[{ id, file_name, media_type, thumb_path, thumbhash }]`
   - Phase 3：迁移到 FTS5 全文搜索
+  - **前端节流**：搜索框输入需加 150ms debounce，避免每次击键触发 IPC（在 `AppToolbar.vue` 或 `useSearch` composable 中实现）
 
 #### 缩略图 (`thumbnail_commands.rs`)
 
 - `batch_request_thumbnails({ item_ids, size? })` → `ThumbResult[]`（**主用接口**，攒 16-32 个）
+- 返回结果按请求 `item_ids` 的原始顺序排列，前端可直接按索引对齐显示，无需重新排序
 - `request_thumbnail({ item_id, size? })` → `ThumbResult`（单项补充）
 
 `size` 参数默认为 `app_config.thumb_size`（300），用于尺寸分桶。
@@ -641,7 +648,7 @@ interface MediaFilter {
 - `ScanErrorPayload { root_id, error }`
 
 **后台充实阶段**（Event 推送）：
-- `db:media_enriched → { root_id, enriched_count, total }` — 每批 500 项
+- `db:media_enriched → { root_id, enriched_count, total }` — 每批 500 项；前端 StatusBar 展示「正在充实 EXIF... 12,453 / 50,000」
 - `enrichment:completed → { root_id, elapsed_ms }` — 全部充实完成，前端触发 `compute_layout` 重算
 
 **通用 Event**：

@@ -1,0 +1,48 @@
+/* src/assets/styles/theme-dark.css */
+[data-theme="dark"] {
+  --color-bg-primary:    #0f0f17;
+  --color-bg-secondary:  #1a1a2e;
+  --color-bg-surface:    #222240;
+  --color-bg-elevated:   #2a2a4a;
+  --color-bg-overlay:    rgba(0, 0, 0, 0.65);
+  --color-bg-hover:      rgba(255, 255, 255, 0.05);
+  --color-bg-active:     rgba(233, 69, 96, 0.12);
+
+  --color-text-primary:   #e6e6f0;
+  --color-text-secondary: #9090a8;
+  --color-text-tertiary:  #606078;
+  --color-text-inverse:   #0f0f17;
+
+  --color-accent:         #e94560;
+  --color-accent-hover:   #ff6b81;
+  --color-accent-dim:     #c73352;
+  --color-accent-subtle:  rgba(233, 69, 96, 0.15);
+
+  --color-border:        rgba(255, 255, 255, 0.08);
+  --color-border-strong: rgba(255, 255, 255, 0.15);
+
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.6);
+  --shadow-xl: 0 16px 48px rgba(0, 0, 0, 0.75);
+
+  --color-scrollbar-thumb:       rgba(255, 255, 255, 0.12);
+  --color-scrollbar-thumb-hover: rgba(255, 255, 255, 0.22);
+  --color-scrollbar-track:       transparent;
+
+  --color-success: #34c759;
+  --color-warning: #ff9500;
+  --color-error:   #ff3b30;
+  --color-info:    #5ac8fa;
+
+  /* Sidebar active state */
+  --color-sidebar-active-bg:   rgba(233, 69, 96, 0.15);
+  --color-sidebar-active-text: #e94560;
+  --color-sidebar-hover-bg:    rgba(255, 255, 255, 0.06);
+
+  /* Badge */
+  --color-badge-live:     rgba(233, 69, 96, 0.9);
+  --color-badge-video:    rgba(90, 200, 250, 0.85);
+  --color-badge-audio:    rgba(52, 199, 89, 0.85);
+  --color-badge-document: rgba(255, 149, 0, 0.85);
+}

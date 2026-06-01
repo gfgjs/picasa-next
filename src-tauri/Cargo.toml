@@ -1,0 +1,77 @@
+[package]
+name = "picasa-next"
+version = "0.1.0"
+description = "Picasa Next — High-performance cross-platform media asset manager"
+authors = ["Picasa Next Contributors"]
+edition = "2021"
+
+[lib]
+name = "picasa_next_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# ── Tauri core ──────────────────────────────────────────────────────────────
+tauri          = { version = "2", features = ["unstable"] }
+tauri-plugin-dialog       = "2"
+tauri-plugin-fs           = "2"
+tauri-plugin-shell        = "2"
+tauri-plugin-window-state = "2"
+
+# ── Async runtime ────────────────────────────────────────────────────────────
+tokio      = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["codec"] }
+
+# ── Database ─────────────────────────────────────────────────────────────────
+rusqlite   = { version = "0.31", features = ["bundled"] }
+r2d2       = "0.8"
+r2d2_sqlite = "0.24"
+
+# ── Serialisation ─────────────────────────────────────────────────────────────
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# ── Error handling ────────────────────────────────────────────────────────────
+thiserror  = "1"
+
+# ── Hashing ───────────────────────────────────────────────────────────────────
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+
+# ── Image processing ──────────────────────────────────────────────────────────
+image              = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "bmp", "gif", "tiff"] }
+fast_image_resize  = "4"
+thumbhash          = "0.1"
+
+# ── EXIF / XMP ───────────────────────────────────────────────────────────────
+kamadak-exif = "0.5"
+quick-xml    = { version = "0.36", features = ["serialize"] }
+
+# ── CPU parallelism ───────────────────────────────────────────────────────────
+rayon = "1"
+
+# ── File system traversal ─────────────────────────────────────────────────────
+walkdir = "2"
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+chrono   = { version = "0.4", features = ["serde"] }
+anyhow   = "1"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.dev]
+incremental = true
+
+[profile.release]
+panic    = "abort"
+codegen-units = 1
+lto      = true
+opt-level = 3
+strip    = true

@@ -1,6 +1,8 @@
 // src-tauri/src/ipc/media_commands.rs
 //! Tauri IPC commands for media item operations (§ 6.1 — media queries).
 
+use std::sync::Arc;
+
 use tauri::State;
 
 use crate::db::models::{AppStats, DirNode, MediaDetail, MediaItem};
@@ -11,7 +13,7 @@ use crate::utils::path::resolve_media_path;
 
 /// Get full detail for a single media item.
 #[tauri::command]
-pub async fn get_media_detail(id: i64, state: State<'_, AppState>) -> Result<MediaDetail> {
+pub async fn get_media_detail(id: i64, state: State<'_, Arc<AppState>>) -> Result<MediaDetail> {
     let pool = state.db_read_pool.get().map_err(AppError::from)?;
     q::get_media_detail(&pool, id)
 }
@@ -21,7 +23,7 @@ pub async fn get_media_detail(id: i64, state: State<'_, AppState>) -> Result<Med
 #[tauri::command]
 pub async fn get_companion_video_url(
     item_id: i64,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<String> {
     let pool = state.db_read_pool.get().map_err(AppError::from)?;
 
@@ -70,28 +72,28 @@ pub async fn get_companion_video_url(
 
 /// Toggle the favorite status of a media item.
 #[tauri::command]
-pub async fn toggle_favorite(item_id: i64, state: State<'_, AppState>) -> Result<bool> {
+pub async fn toggle_favorite(item_id: i64, state: State<'_, Arc<AppState>>) -> Result<bool> {
     let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
     q::toggle_favorite(&conn, item_id)
 }
 
 /// Set the rating for a media item (0-5).
 #[tauri::command]
-pub async fn set_rating(item_id: i64, rating: i64, state: State<'_, AppState>) -> Result<()> {
+pub async fn set_rating(item_id: i64, rating: i64, state: State<'_, Arc<AppState>>) -> Result<()> {
     let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
     q::set_rating(&conn, item_id, rating.clamp(0, 5))
 }
 
 /// Soft-delete media items (mark is_deleted=1).
 #[tauri::command]
-pub async fn soft_delete_items(item_ids: Vec<i64>, state: State<'_, AppState>) -> Result<()> {
+pub async fn soft_delete_items(item_ids: Vec<i64>, state: State<'_, Arc<AppState>>) -> Result<()> {
     let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
     q::soft_delete_items(&conn, &item_ids)
 }
 
 /// Restore soft-deleted items.
 #[tauri::command]
-pub async fn restore_items(item_ids: Vec<i64>, state: State<'_, AppState>) -> Result<()> {
+pub async fn restore_items(item_ids: Vec<i64>, state: State<'_, Arc<AppState>>) -> Result<()> {
     let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
     q::restore_items(&conn, &item_ids)
 }
@@ -101,7 +103,7 @@ pub async fn restore_items(item_ids: Vec<i64>, state: State<'_, AppState>) -> Re
 pub async fn get_trash(
     offset: i64,
     limit: i64,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<Vec<MediaItem>> {
     let pool = state.db_read_pool.get().map_err(AppError::from)?;
     q::get_trash(&pool, offset, limit.min(200))
@@ -109,14 +111,14 @@ pub async fn get_trash(
 
 /// Get overall app statistics.
 #[tauri::command]
-pub async fn get_stats(state: State<'_, AppState>) -> Result<AppStats> {
+pub async fn get_stats(state: State<'_, Arc<AppState>>) -> Result<AppStats> {
     let pool = state.db_read_pool.get().map_err(AppError::from)?;
     q::get_app_stats(&pool)
 }
 
 /// Get the full directory tree for a scan root.
 #[tauri::command]
-pub async fn get_directory_tree(root_id: i64, state: State<'_, AppState>) -> Result<Vec<DirNode>> {
+pub async fn get_directory_tree(root_id: i64, state: State<'_, Arc<AppState>>) -> Result<Vec<DirNode>> {
     let pool = state.db_read_pool.get().map_err(AppError::from)?;
     q::get_directory_tree(&pool, root_id)
 }
@@ -125,7 +127,7 @@ pub async fn get_directory_tree(root_id: i64, state: State<'_, AppState>) -> Res
 #[tauri::command]
 pub async fn get_directory_children(
     parent_id: i64,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<Vec<DirNode>> {
     let pool = state.db_read_pool.get().map_err(AppError::from)?;
     q::get_directory_children(&pool, parent_id)

@@ -5,7 +5,6 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use rusqlite::Connection;
 use tokio_util::sync::CancellationToken;
 
 use crate::db::{DbPool, DbWriter};
@@ -74,5 +73,14 @@ impl AppState {
         if let Some(token) = self.scan_tokens.lock().unwrap().remove(&root_id) {
             token.cancel();
         }
+    }
+
+    /// Cancel all running scans.
+    pub fn cancel_all_scans(&self) {
+        let mut map = self.scan_tokens.lock().unwrap();
+        for token in map.values() {
+            token.cancel();
+        }
+        map.clear();
     }
 }

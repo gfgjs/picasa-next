@@ -37,6 +37,11 @@ export const useMediaStore = defineStore('media', () => {
     rowHeight?:      number
     gap?:            number
   }) {
+    console.log('[MediaStore] computeLayout: containerWidth=', params.containerWidth, 'directoryId=', params.directoryId)
+    if (params.containerWidth < 100) {
+      console.warn('[MediaStore] computeLayout: containerWidth too small, skipping')
+      return
+    }
     isComputingLayout.value = true
     rowCache.value.clear()
     try {
@@ -49,19 +54,32 @@ export const useMediaStore = defineStore('media', () => {
           gap:           params.gap ?? DEFAULTS.GRID_GAP,
         }
       })
+      console.log('[MediaStore] computeLayout result: totalRows=', layoutSummary.value?.totalRows,
+        'totalHeight=', layoutSummary.value?.totalHeight,
+        'version=', layoutSummary.value?.layoutVersion)
+    } catch (e) {
+      console.error('[MediaStore] computeLayout FAILED:', e)
     } finally {
       isComputingLayout.value = false
     }
   }
 
   async function fetchRows(startRow: number, endRow: number): Promise<LayoutRow[]> {
-    const rows = await invoke<LayoutRow[]>(IPC.GET_LAYOUT_ROWS, {
-      startRow,
-      endRow,
-      layoutVersion: layoutSummary.value?.layoutVersion,
-    })
-    rows.forEach((row, i) => rowCache.value.set(startRow + i, row))
-    return rows
+    const version = layoutSummary.value?.layoutVersion
+    console.log(`[MediaStore] fetchRows(${startRow}, ${endRow}) layoutVersion=${version}`)
+    try {
+      const rows = await invoke<LayoutRow[]>(IPC.GET_LAYOUT_ROWS, {
+        startRow,
+        endRow,
+        layoutVersion: version,
+      })
+      console.log(`[MediaStore] fetchRows(${startRow}, ${endRow}) → ${rows.length} rows`)
+      rows.forEach((row, i) => rowCache.value.set(startRow + i, row))
+      return rows
+    } catch (e) {
+      console.error(`[MediaStore] fetchRows(${startRow}, ${endRow}) FAILED:`, e)
+      throw e
+    }
   }
 
   async function openDetail(id: number) {

@@ -1,6 +1,8 @@
 // src-tauri/src/ipc/thumbnail_commands.rs
 //! Tauri IPC commands for thumbnail generation (§ 6.1 — thumbnail).
 
+use std::sync::Arc;
+
 use rayon::prelude::*;
 use tauri::State;
 use tracing::debug;
@@ -19,7 +21,7 @@ use crate::thumbnail::generate_thumbnail;
 pub async fn batch_request_thumbnails(
     item_ids: Vec<i64>,
     size: Option<u32>,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<Vec<ThumbResult>> {
     if item_ids.is_empty() {
         return Ok(vec![]);
@@ -61,18 +63,14 @@ pub async fn batch_request_thumbnails(
             state.thumb_config.clone()
         };
 
-        // Generate in parallel using rayon (via spawn_blocking)
-        let writer_ptr = &state.db_writer as *const _ as usize; // raw ptr for Send
-        let arena_ptr  = &state.engine_arena as *const _ as usize;
+        // Clone Arc so the blocking closure owns it (no unsafe raw pointers)
+        let state_arc = Arc::clone(&*state);
 
         let generated: Vec<(i64, Result<ThumbResult>)> = tokio::task::spawn_blocking(move || {
             needs_gen
                 .par_iter()
                 .map(|&id| {
-                    // SAFETY: AppState outlives this closure; pointers are valid
-                    let writer = unsafe { &*(writer_ptr as *const _) };
-                    let arena  = unsafe { &*(arena_ptr  as *const _) };
-                    (id, generate_thumbnail(writer, arena, id, &config))
+                    (id, generate_thumbnail(&state_arc.db_writer, &state_arc.engine_arena, id, &config))
                 })
                 .collect()
         })
@@ -110,7 +108,7 @@ pub async fn batch_request_thumbnails(
 pub async fn request_thumbnail(
     item_id: i64,
     size: Option<u32>,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<ThumbResult> {
     let results = batch_request_thumbnails(vec![item_id], size, state).await?;
     results.into_iter().next().ok_or(AppError::MediaNotFound(item_id))

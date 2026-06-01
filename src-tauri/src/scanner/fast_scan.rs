@@ -19,7 +19,6 @@ use tauri::ipc::Channel;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-use crate::db::models::MediaFilter;
 use crate::db::queries::{
     upsert_directory, upsert_fast_scan_item, update_scan_root_status, finish_scan_root, FastScanItem,
 };
@@ -121,6 +120,36 @@ fn extract_dimensions(walked: &WalkedFile) -> (i64, i64) {
 
 // ── Main fast scan entry point ────────────────────────────────────────────────
 
+fn ensure_dir_chain(
+    tx: &rusqlite::Transaction,
+    root_id: i64,
+    rel_path: &str,
+    dir_cache: &mut std::collections::HashMap<String, i64>,
+    root_name: &str,
+) -> Result<i64> {
+    if let Some(&id) = dir_cache.get(rel_path) {
+        return Ok(id);
+    }
+    let parent_id = if rel_path.is_empty() {
+        None
+    } else {
+        let p = Path::new(rel_path);
+        let p_rel = p.parent().map(|p| normalize_db_path(&p.to_string_lossy())).unwrap_or_default();
+        Some(ensure_dir_chain(tx, root_id, &p_rel, dir_cache, root_name)?)
+    };
+
+    let dir_name = if rel_path.is_empty() {
+        root_name.to_string()
+    } else {
+        Path::new(rel_path).file_name().and_then(|n| n.to_str()).unwrap_or("").to_string()
+    };
+    let depth = path_depth(rel_path);
+
+    let id = upsert_directory(tx, root_id, parent_id, rel_path, &dir_name, depth, None)?;
+    dir_cache.insert(rel_path.to_string(), id);
+    Ok(id)
+}
+
 /// Run the fast scan for a single scan root.
 ///
 /// - Walks the file system (single thread, I/O bound)
@@ -171,52 +200,14 @@ pub fn run_fast_scan(
         // Wrap the whole batch in a transaction
         let tx = conn.unchecked_transaction()?;
 
+        let root_name = root.file_name().and_then(|n| n.to_str()).unwrap_or("");
+
         for fi in chunk {
             let rel_path = dir_rel_path(root, &fi.walked.abs_path);
             let rel_path_norm = normalize_db_path(&rel_path);
 
-            // Get or create the directory record
-            let dir_id = if let Some(&id) = dir_cache.get(&rel_path_norm) {
-                id
-            } else {
-                let dir_name = if rel_path_norm.is_empty() {
-                    root.file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("")
-                        .to_string()
-                } else {
-                    Path::new(&rel_path_norm)
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("")
-                        .to_string()
-                };
-
-                let depth = path_depth(&rel_path_norm);
-                let parent_rel = if rel_path_norm.is_empty() {
-                    None
-                } else {
-                    Path::new(&rel_path_norm)
-                        .parent()
-                        .map(|p| normalize_db_path(&p.to_string_lossy()))
-                };
-                let parent_id = parent_rel
-                    .as_deref()
-                    .and_then(|p| dir_cache.get(p))
-                    .copied();
-
-                let id = upsert_directory(
-                    &tx,
-                    root_id,
-                    parent_id,
-                    &rel_path_norm,
-                    &dir_name,
-                    depth,
-                    Some(fi.walked.file_mtime),
-                )?;
-                dir_cache.insert(rel_path_norm.clone(), id);
-                id
-            };
+            // Get or create the directory record and its parents recursively
+            let dir_id = ensure_dir_chain(&tx, root_id, &rel_path_norm, &mut dir_cache, root_name)?;
 
             let cache_key = compute_cache_key(
                 &rel_path_norm,
@@ -250,7 +241,7 @@ pub fn run_fast_scan(
         debug!("Fast scan batch committed: {}/{}", batch_count, total);
 
         // Progress update
-        if batch_count % PROGRESS_INTERVAL == 0 || batch_count as u64 >= total {
+        if batch_count.is_multiple_of(PROGRESS_INTERVAL) || batch_count as u64 >= total {
             let _ = channel.send(ScanChannelPayload::Progress(ScanProgressPayload {
                 root_id,
                 scanned: batch_count as u64,

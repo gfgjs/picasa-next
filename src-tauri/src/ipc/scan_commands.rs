@@ -1,7 +1,9 @@
 // src-tauri/src/ipc/scan_commands.rs
 //! Tauri IPC commands for scan management (§ 6.1 — scan management).
 
-use tauri::{AppHandle, State};
+use std::sync::Arc;
+
+use tauri::{AppHandle, Manager, State};
 use tauri::ipc::Channel;
 use tracing::info;
 
@@ -18,9 +20,20 @@ use crate::utils::path::normalize_db_path;
 pub async fn add_scan_root(
     path: String,
     alias: Option<String>,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<ScanRoot> {
     let norm = normalize_db_path(&path);
+
+    // Check if the root already exists
+    {
+        let pool = state.db_read_pool.get().map_err(AppError::from)?;
+        let roots = q::list_scan_roots(&pool)?;
+        if let Some(existing) = roots.into_iter().find(|r| r.path == norm) {
+            info!("Scan root already exists: id={} path={}", existing.id, norm);
+            return Ok(existing);
+        }
+    }
+
     let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
     let id = q::insert_scan_root(&conn, &norm, alias.as_deref())?;
     let root = q::get_scan_root(&conn, id)?;
@@ -30,7 +43,7 @@ pub async fn add_scan_root(
 
 /// Remove a scan root and all its data (CASCADE).
 #[tauri::command]
-pub async fn remove_scan_root(id: i64, state: State<'_, AppState>) -> Result<()> {
+pub async fn remove_scan_root(id: i64, state: State<'_, Arc<AppState>>) -> Result<()> {
     state.cancel_scan(id);
     let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
     q::delete_scan_root(&conn, id)?;
@@ -40,7 +53,7 @@ pub async fn remove_scan_root(id: i64, state: State<'_, AppState>) -> Result<()>
 
 /// List all scan roots.
 #[tauri::command]
-pub async fn list_scan_roots(state: State<'_, AppState>) -> Result<Vec<ScanRoot>> {
+pub async fn list_scan_roots(state: State<'_, Arc<AppState>>) -> Result<Vec<ScanRoot>> {
     let pool = state.db_read_pool.get().map_err(AppError::from)?;
     q::list_scan_roots(&pool)
 }
@@ -54,7 +67,7 @@ pub async fn start_scan(
     root_id: i64,
     on_progress: Channel<ScanChannelPayload>,
     app: AppHandle,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<()> {
     // Cancel any existing scan for this root
     state.cancel_scan(root_id);
@@ -68,33 +81,31 @@ pub async fn start_scan(
 
     info!("start_scan: root_id={root_id} path={root_path}");
 
-    // Run fast scan (spawn_blocking so we don't block the async runtime)
-    let cancel_clone = cancel.clone();
+    // Clone the Arc so the closure owns an independent reference (no unsafe needed)
+    let state_arc = Arc::clone(&*state);
+    let cancel_fast = cancel.clone();
     let root_path_clone = root_path.clone();
-    let writer_ref = &state.db_writer;
 
-    tokio::task::spawn_blocking({
-        let db_writer = unsafe {
-            // SAFETY: AppState lives for the duration of the app; we hold the State ref.
-            &*(writer_ref as *const _)
-        };
-        let on_progress = on_progress.clone();
-        let cancel = cancel_clone.clone();
-        move || run_fast_scan(db_writer, root_id, &root_path_clone, &on_progress, &cancel)
+    // Run fast scan (spawn_blocking so we don't block the async runtime)
+    tokio::task::spawn_blocking(move || {
+        run_fast_scan(
+            &state_arc.db_writer,
+            root_id,
+            &root_path_clone,
+            &on_progress,
+            &cancel_fast,
+        )
     })
     .await
     .map_err(|e| AppError::Io(e.to_string()))??;
 
     // Spawn background enrichment (fire-and-forget, emits events)
     {
-        let app_clone = app.clone();
+        let state_arc2 = Arc::clone(&*state);
+        let app_clone   = app.clone();
         let cancel_enrich = cancel.clone();
-        let root_path_clone2 = root_path.clone();
-        let db_writer = unsafe {
-            &*(writer_ref as *const _)
-        };
         tokio::task::spawn_blocking(move || {
-            if let Err(e) = run_enrichment(&app_clone, db_writer, root_id, &cancel_enrich) {
+            if let Err(e) = run_enrichment(&app_clone, &state_arc2.db_writer, root_id, &cancel_enrich) {
                 tracing::error!("Enrichment error for root_id={root_id}: {e}");
             }
         });
@@ -105,8 +116,56 @@ pub async fn start_scan(
 
 /// Stop (cancel) an in-progress scan.
 #[tauri::command]
-pub async fn stop_scan(root_id: i64, state: State<'_, AppState>) -> Result<()> {
+pub async fn stop_scan(root_id: i64, state: State<'_, Arc<AppState>>) -> Result<()> {
     state.cancel_scan(root_id);
     info!("stop_scan: root_id={root_id}");
+    Ok(())
+}
+
+/// [Dev] Clear all data — wipe every table and the thumbnail cache directory.
+///
+/// This is intended for development / QA resets only. It does not delete any
+/// original media files on disk.
+#[tauri::command]
+pub async fn clear_all_data(
+    state: State<'_, Arc<AppState>>,
+    app:   AppHandle,
+) -> Result<()> {
+    // Cancel all running scans first
+    state.cancel_all_scans();
+
+    // Wipe all DB tables
+    {
+        let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        let tx = conn.unchecked_transaction()?;
+        tx.execute_batch(
+            "DELETE FROM image_meta;
+             DELETE FROM media_items;
+             DELETE FROM directories;
+             DELETE FROM scan_roots;
+             DELETE FROM layout_cache;
+             DELETE FROM app_config;
+             VACUUM;",
+        )?;
+        tx.commit()?;
+    }
+
+    // Drop the thumbnail cache directory
+    let cache_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| AppError::Io(e.to_string()))?
+        .join("cache")
+        .join("thumbnails");
+
+    if cache_dir.exists() {
+        std::fs::remove_dir_all(&cache_dir)
+            .map_err(|e| AppError::Io(format!("Failed to remove thumbnail cache: {e}")))?;
+    }
+
+    // Reset the layout cache in memory
+    *state.layout_cache.write().unwrap() = None;
+
+    info!("clear_all_data: all data wiped");
     Ok(())
 }

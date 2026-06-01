@@ -10,11 +10,14 @@ export function useFolderTree() {
   const roots     = ref<ScanRoot[]>([])
   const nodes     = ref<DirNode[]>([])
   const loading   = ref(false)
+  let   loadingId = 0          // guard against concurrent loadRoots calls
 
   async function loadRoots(scanRoots: ScanRoot[]) {
+    const myId = ++loadingId   // if another call starts, this one's results are discarded
     roots.value = scanRoots
     nodes.value = []
     for (const root of scanRoots) {
+      if (myId !== loadingId) return   // superseded — bail out
       await loadChildren(null, root.id)
     }
   }

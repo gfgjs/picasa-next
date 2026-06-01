@@ -39,6 +39,9 @@ export const IPC = {
   // ── System ────────────────────────────────────────────────────────────
   SHOW_IN_EXPLORER: 'show_in_explorer',
   MOVE_TO_TRASH:    'move_to_trash',
+
+  // ── Dev / maintenance ─────────────────────────────────────────────────
+  CLEAR_ALL_DATA:   'clear_all_data',
 } as const
 
 // ── Tauri events ──────────────────────────────────────────────────────────

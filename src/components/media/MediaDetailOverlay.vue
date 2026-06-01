@@ -166,7 +166,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { useMediaStore } from '../../stores/mediaStore'
@@ -179,8 +179,37 @@ const media = useMediaStore()
 const ui    = useUiStore()
 
 const detail  = computed(() => media.detailItem!)
-const state   = computed(() => useMediaDetail(detail.value))
 const absPath = computed(() => detail.value ? convertFileSrc(detail.value.absPath) : '')
+
+// ── Viewer state — created ONCE, not inside computed() ─────────────────────
+// Calling useMediaDetail() inside computed() would recreate internal refs and
+// re-register document event listeners every time a reactive dependency changes,
+// permanently leaking mousemove/mouseup handlers.
+const state = useMediaDetail()
+
+// Reset zoom whenever the viewed item changes
+watch(() => media.detailItem, () => {
+  state.resetZoom()
+  state.isPlayingLive.value = false
+  state.liveVideoSrc.value  = null
+})
+
+// ── Keyboard shortcuts ─────────────────────────────────────────────────────
+// Registered via onMounted / onBeforeUnmount to avoid accumulating listeners
+// on each open/close cycle (Teleport keeps the component alive).
+function onKeydown(e: KeyboardEvent) {
+  if (!media.isDetailOpen) return
+  if (e.key === 'Escape') { close(); return }
+  if (e.key === '+' || e.key === '=') { state.zoomIn(); return }
+  if (e.key === '-')                   { state.zoomOut(); return }
+  if (e.key === 'i' || e.key === 'I') { state.toggleInfo(); return }
+}
+
+onMounted(()        => document.addEventListener('keydown', onKeydown))
+onBeforeUnmount(()  => {
+  document.removeEventListener('keydown', onKeydown)
+  state.cleanup()
+})
 
 function close() { media.closeDetail() }
 
@@ -203,25 +232,19 @@ async function showInExplorer() {
 
 async function toggleLive() {
   if (!detail.value) return
-  const s = state.value
-  if (s.isPlayingLive.value) {
-    s.isPlayingLive.value = false
-    s.liveVideoSrc.value  = null
+  if (state.isPlayingLive.value) {
+    state.isPlayingLive.value = false
+    state.liveVideoSrc.value  = null
   } else {
     try {
       const path = await invoke<string>(IPC.GET_COMPANION_VIDEO_URL, { itemId: detail.value.id })
-      s.liveVideoSrc.value  = convertFileSrc(path)
-      s.isPlayingLive.value = true
+      state.liveVideoSrc.value  = convertFileSrc(path)
+      state.isPlayingLive.value = true
     } catch (e) {
       ui.addToast('error', '无法加载 Live 视频')
     }
   }
 }
-
-// Close on Escape
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && media.isDetailOpen) close()
-})
 </script>
 
 <style scoped>

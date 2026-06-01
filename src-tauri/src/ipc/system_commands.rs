@@ -1,7 +1,9 @@
 // src-tauri/src/ipc/system_commands.rs
 //! System-level commands (§ 6.1 — system).
 
-use tauri::{AppHandle, State};
+use std::sync::Arc;
+
+use tauri::State;
 use tracing::info;
 
 use crate::db::queries::get_item_path_info;
@@ -11,7 +13,7 @@ use crate::utils::path::resolve_media_path;
 
 /// Reveal a media item in the OS file explorer.
 #[tauri::command]
-pub async fn show_in_explorer(item_id: i64, state: State<'_, AppState>) -> Result<()> {
+pub async fn show_in_explorer(item_id: i64, state: State<'_, Arc<AppState>>) -> Result<()> {
     let pool = state.db_read_pool.get().map_err(AppError::from)?;
     let (root, rel, name) = get_item_path_info(&pool, item_id)?;
     let abs_path = resolve_media_path(&root, &rel, &name);
@@ -45,7 +47,7 @@ pub async fn show_in_explorer(item_id: i64, state: State<'_, AppState>) -> Resul
 
 /// Move items to the system trash (Phase 2 — stub for now).
 #[tauri::command]
-pub async fn move_to_trash(item_ids: Vec<i64>, state: State<'_, AppState>) -> Result<()> {
+pub async fn move_to_trash(item_ids: Vec<i64>, state: State<'_, Arc<AppState>>) -> Result<()> {
     // Phase 2: integrate `trash` crate
     // For now, fall back to soft delete
     let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;

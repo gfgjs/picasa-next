@@ -71,14 +71,24 @@
       >
         <div class="scan-root-item__info">
           <span class="scan-root-item__alias">{{ root.alias ?? root.path.split('/').pop() }}</span>
-          <button
-            class="btn-icon scan-root-item__scan-btn"
-            :class="{ active: scan.getProgress(root.id)?.isRunning }"
-            @click="toggleScan(root.id)"
-            :title="scan.getProgress(root.id)?.isRunning ? '停止扫描' : '重新扫描'"
-          >
-            {{ scan.getProgress(root.id)?.isRunning ? '⏹' : '⟳' }}
-          </button>
+          <div style="display: flex; gap: 4px;">
+            <button
+              class="btn-icon scan-root-item__scan-btn"
+              :class="{ active: scan.getProgress(root.id)?.isRunning }"
+              @click="toggleScan(root.id)"
+              :title="scan.getProgress(root.id)?.isRunning ? '停止扫描' : '重新扫描'"
+            >
+              {{ scan.getProgress(root.id)?.isRunning ? '⏹' : '⟳' }}
+            </button>
+            <button
+              class="btn-icon scan-root-item__scan-btn"
+              style="color: var(--color-error); opacity: 0.7;"
+              title="移除该文件夹"
+              @click="removeRoot(root.id)"
+            >
+              🗑️
+            </button>
+          </div>
         </div>
         <div v-if="scan.getProgress(root.id)?.isRunning" class="scan-root-item__progress">
           <div class="progress-bar">
@@ -94,11 +104,17 @@
       </div>
     </div>
 
-    <!-- Settings -->
+    <!-- Settings / footer -->
     <div class="sidebar__footer">
       <button class="btn-icon" title="切换主题" @click="ui.cycleTheme()">
         {{ ui.theme === 'dark' ? '☀️' : ui.theme === 'light' ? '🌙' : '🖥️' }}
       </button>
+      <!-- Dev-only: clear all data -->
+      <button
+        class="btn-icon btn-danger-sm"
+        title="[开发] 清除所有数据"
+        @click="clearAll"
+      >🗑️ 清空</button>
     </div>
   </nav>
 </template>
@@ -139,9 +155,14 @@ function onNodeClick(node: DirNode) {
   ui.setActiveDirectory(node.id)
 }
 
+// ── Watch scan roots for live updates (NOT immediate — onMounted handles init) ─
+// Using immediate:true here causes a double-load: the watch fires once before
+// onMounted (with empty array) and again after loadScanRoots() resolves,
+// making loadRoots() called twice and duplicating folder entries.
 watch(() => scan.scanRoots, (roots) => {
+  // Only react to changes that happen AFTER initial mount (scan add/remove)
   if (roots.length) folderTree.loadRoots(roots)
-}, { immediate: true })
+})
 
 // ── Scan controls ──────────────────────────────────────────────────────────
 
@@ -179,10 +200,33 @@ async function addRoot() {
   })
 }
 
+async function removeRoot(id: number) {
+  if (!confirm('确定要移除此文件夹吗？它的所有媒体信息将从库中删除，但不会删除本地文件。')) return
+  await scan.removeScanRoot(id)
+  media.loadStats()
+  folderTree.loadRoots(scan.scanRoots)
+}
+
 onMounted(async () => {
+  // Sequential init: load roots first, THEN tree — no parallel races
   await scan.loadScanRoots()
   await media.loadStats()
+  if (scan.scanRoots.length) {
+    await folderTree.loadRoots(scan.scanRoots)
+  }
 })
+
+async function clearAll() {
+  if (!confirm('确定清除所有数据吗？\n\n这将删除所有扫描根目录、媒体库记录、缩略图索引。\n本地文件不受影响。')) return
+  try {
+    await scan.clearAllData()
+    folderTree.loadRoots([])
+    media.loadStats()
+    ui.addToast('success', '数据已清除')
+  } catch (e) {
+    ui.addToast('error', '清除失败: ' + e)
+  }
+}
 </script>
 
 <style scoped>
@@ -366,7 +410,21 @@ onMounted(async () => {
   padding: var(--spacing-sm) var(--spacing-md);
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
   flex-shrink: 0;
+  gap: var(--spacing-sm);
+}
+
+.btn-danger-sm {
+  font-size: var(--font-size-xs);
+  color: var(--color-error, #f87171);
+  opacity: 0.7;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  transition: opacity var(--transition-fast), background var(--transition-fast);
+}
+.btn-danger-sm:hover {
+  opacity: 1;
+  background: rgba(248, 113, 113, 0.12);
 }
 </style>

@@ -23,7 +23,24 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self' ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost blob: data:; media-src 'self' asset: http://asset.localhost blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; script-src 'self' 'wasm-unsafe-eval'",
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$APPDATA/**",
+          "$HOME/**",
+          "$PICTURE/**",
+          "$DESKTOP/**",
+          "$DOCUMENT/**",
+          "$DOWNLOAD/**",
+          "$VIDEO/**",
+          "$AUDIO/**",
+          "D:/**",
+          "E:/**",
+          "F:/**",
+          "G:/**"
+        ]
+      }
     }
   },
   "bundle": {
@@ -36,13 +53,5 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
-  },
-  "plugins": {
-    "window-state": {
-      "stateFlags": "all"
-    },
-    "fs": {
-      "scope": ["$APPDATA/**", "$HOME/**", "$DESKTOP/**", "$DOWNLOAD/**", "$DOCUMENT/**", "$PICTURE/**", "$VIDEO/**", "$AUDIO/**"]
-    }
   }
 }

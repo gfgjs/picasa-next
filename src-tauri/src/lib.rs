@@ -11,6 +11,8 @@ pub mod state;
 pub mod thumbnail;
 pub mod utils;
 
+use std::sync::Arc;
+
 use tauri::Manager;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -86,7 +88,7 @@ pub fn run() {
                 thumb_skip_max_kb,
             );
 
-            app.manage(app_state);
+            app.manage(Arc::new(app_state));
             info!("AppState initialised");
             Ok(())
         })
@@ -98,6 +100,7 @@ pub fn run() {
             ipc::scan_commands::list_scan_roots,
             ipc::scan_commands::start_scan,
             ipc::scan_commands::stop_scan,
+            ipc::scan_commands::clear_all_data,
             // layout
             ipc::layout_commands::compute_layout,
             ipc::layout_commands::get_layout_rows,

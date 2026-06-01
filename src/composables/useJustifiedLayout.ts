@@ -17,16 +17,29 @@ export function useJustifiedLayout(containerWidthRef: () => number) {
 
   async function compute(width?: number) {
     const cw = width ?? containerWidthRef()
-    if (cw < 100) return
+
+    console.log('[JustifiedLayout] compute() cw=', cw)
+
+    // Container not ready yet — defer to next tick and retry once.
+    if (cw < 100) {
+      await new Promise(r => setTimeout(r, 50))
+      const retryW = containerWidthRef()
+      console.log('[JustifiedLayout] compute() retry: retryW=', retryW)
+      if (retryW < 100) {
+        console.warn('[JustifiedLayout] compute() retry failed: width still <100, giving up')
+        return
+      }
+      return compute(retryW)
+    }
 
     const directoryId = ui.activeDirectoryId
     const filters     = filter.toApiFilter()
 
-    // Set favorited filter from smart album
     if (ui.activeSmartAlbum === 'favorites') {
       filters.favoritedOnly = true
     }
 
+    console.log('[JustifiedLayout] invoking computeLayout: cw=', cw, 'directoryId=', directoryId)
     await media.computeLayout({
       directoryId,
       filters,
@@ -42,7 +55,9 @@ export function useJustifiedLayout(containerWidthRef: () => number) {
     resizeTimer = setTimeout(() => compute(newWidth), DEFAULTS.RESIZE_DEBOUNCE_MS)
   }
 
-  // Re-compute when filters or active view changes
+  // Re-compute when filters or active view changes.
+  // NOTE: totalItems changes (scan complete) are handled in MediaGrid.vue directly
+  // to also call updateVisible() after compute.
   watch(
     [
       () => filter.mediaTypes,

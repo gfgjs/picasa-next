@@ -1,6 +1,8 @@
 // src-tauri/src/ipc/layout_commands.rs
 //! Tauri IPC commands for Justified Layout (§ 6.1 — layout).
 
+use std::sync::Arc;
+
 use tauri::State;
 
 use crate::db::models::MediaFilter;
@@ -27,7 +29,7 @@ pub struct ComputeLayoutParams {
 #[tauri::command]
 pub async fn compute_layout(
     params: ComputeLayoutParams,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<LayoutSummary> {
     let filter = {
         let mut f = params.filters.unwrap_or_default();
@@ -82,7 +84,7 @@ pub async fn get_layout_rows(
     start_row: usize,
     end_row: usize,
     layout_version: Option<u64>,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<Vec<LayoutRow>> {
     get_rows(&state.layout_cache, start_row, end_row, layout_version)
         .ok_or(AppError::LayoutNotReady)

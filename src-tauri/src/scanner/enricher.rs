@@ -14,13 +14,13 @@ use tracing::{debug, error, info, warn};
 
 use crate::db::models::ImageMeta;
 use crate::db::queries::{
-    get_item_path_info, get_unenriched_image_ids, update_live_photo_flags, update_sort_datetime,
+    get_item_path_info, update_live_photo_flags, update_sort_datetime,
     upsert_image_meta,
 };
 use crate::error::{AppError, Result};
 use crate::scanner::live_photo::pair_live_photos;
 use crate::scanner::metadata::{
-    detect_motion_photo_xmp, orientation_needs_swap, parse_exif_meta,
+    detect_motion_photo_xmp, parse_exif_meta,
 };
 use crate::utils::path::resolve_media_path;
 
@@ -158,18 +158,10 @@ pub fn run_enrichment(
                         if let Some(exif_dt) = m.exif_datetime {
                             let _ = update_sort_datetime(&tx, *item_id, exif_dt);
                         }
-
-                        // Handle dimension swap for rotated images
-                        if orientation_needs_swap(m.orientation as u32) {
-                            // Swap width/height in DB if not already done
-                            let _ = tx.execute(
-                                "UPDATE media_items
-                                 SET width=height, height=width,
-                                     updated_at=strftime('%s','now')
-                                 WHERE id=?1 AND width > height",
-                                rusqlite::params![item_id],
-                            );
-                        }
+                        // NOTE: width/height orientation correction is handled by fast_scan
+                        // for JPEG (the most common case). Do NOT swap here again to avoid
+                        // a double-flip. If non-JPEG orientation support is needed in future,
+                        // add a media_items.dims_corrected flag and only swap when it is 0.
                     }
                     Err(e) => {
                         debug!("EXIF parse skipped id={item_id}: {e}");

@@ -10,7 +10,7 @@
 //!   - When the row width reaches `container_width ± tolerance`, commit the row.
 //!   - When the `sort_datetime` crosses a day boundary, insert a separator row first.
 
-use chrono::{DateTime, Datelike, TimeZone, Utc};
+use chrono::{Datelike, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::db::models::LayoutItem;
@@ -76,6 +76,10 @@ pub struct LayoutParams {
 const SEPARATOR_HEIGHT: f64 = 36.0;
 /// How much we allow the last row to be shorter before we "justify" it vs. leave as-is.
 const LAST_ROW_JUSTIFY_THRESHOLD: f64 = 0.6;
+/// Maximum row height multiplier — prevents a single portrait image from
+/// stretching to fill the entire container width (e.g. 1200 / 0.2 = 6000px).
+/// If computed row_h > target_h * MAX_ROW_HEIGHT_FACTOR, clamp to this factor.
+const MAX_ROW_HEIGHT_FACTOR: f64 = 2.0;
 
 // ── Main algorithm ────────────────────────────────────────────────────────────
 
@@ -115,7 +119,9 @@ pub fn compute_justified_layout(items: &[LayoutItem], params: &LayoutParams) -> 
             // Last row — don't stretch; use target height
             target_h
         } else {
-            available_w / *ar_sum
+            // Normal row: scale to fill width, but cap at MAX_ROW_HEIGHT_FACTOR
+            // to prevent a single portrait image from producing a 6000px-tall row.
+            (available_w / *ar_sum).min(target_h * MAX_ROW_HEIGHT_FACTOR)
         };
 
         let mut x = 0.0f64;
@@ -123,8 +129,11 @@ pub fn compute_justified_layout(items: &[LayoutItem], params: &LayoutParams) -> 
 
         for (i, item) in pending.iter().enumerate() {
             let ar = aspect_ratio(item);
-            let item_w = if i == pending.len() - 1 {
-                // Last item in row: use remaining width to avoid float accumulation gaps
+            let item_w = if i == pending.len() - 1 && pending.len() > 1 {
+                // Last item in a MULTI-image row: snap to remaining width to
+                // absorb float rounding and avoid a visible gap on the right.
+                // Single-image rows use natural width to avoid stretching one
+                // portrait/square image across the entire container.
                 params.container_width - x
             } else {
                 (ar * row_h).round()
@@ -167,7 +176,7 @@ pub fn compute_justified_layout(items: &[LayoutItem], params: &LayoutParams) -> 
 
         if needs_separator {
             // Commit any pending row before the separator
-            let pending_clone = pending_items.clone();
+            let _pending_clone = pending_items.clone();
             commit_row(
                 &mut pending_items,
                 &mut pending_ar_sum,

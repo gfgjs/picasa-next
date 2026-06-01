@@ -1,6 +1,8 @@
 // src-tauri/src/ipc/search_commands.rs
 //! Phase 1 file-name LIKE search (§ 6.1 — search).
 
+use std::sync::Arc;
+
 use tauri::State;
 
 use crate::db::models::{MediaFilter, SearchResult};
@@ -18,7 +20,7 @@ pub async fn search_media(
     directory_id: Option<i64>,
     filters: Option<MediaFilter>,
     limit: Option<i64>,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<Vec<SearchResult>> {
     if query.trim().is_empty() {
         return Ok(vec![]);

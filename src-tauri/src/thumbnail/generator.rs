@@ -18,7 +18,7 @@ use crate::db::models::ThumbResult;
 use crate::db::queries::{get_item_path_info, get_media_item, update_thumb_result};
 use crate::engine::EngineArena;
 use crate::error::{AppError, Result};
-use crate::thumbnail::cache::{ensure_thumb_dir, thumb_db_path, thumb_exists, thumb_path};
+use crate::thumbnail::cache::{ensure_thumb_dir, thumb_db_path, thumb_path};
 use crate::thumbnail::exif_thumb::{encode_as_jpeg, encode_as_webp, try_exif_thumb};
 use crate::thumbnail::thumbhash::generate_thumbhash;
 
@@ -67,14 +67,17 @@ pub fn generate_thumbnail(
     if item.file_size as u64 <= config.skip_max_bytes && item.media_type == "image" {
         // Still generate ThumbHash for the placeholder
         let hash = generate_thumbhash_from_file(arena, &item.file_format, abs_path)?;
+        // Store the absolute path as thumb_path so the frontend can load the
+        // original file directly via convertFileSrc without an extra IPC call.
+        let abs_path_str = abs_path.to_string_lossy().replace('\\', "/");
         {
             let conn = writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
-            update_thumb_result(&conn, item_id, 3, None, hash.as_deref())?;
+            update_thumb_result(&conn, item_id, 3, Some(abs_path_str.as_str()), hash.as_deref())?;
         }
         return Ok(ThumbResult {
             item_id,
             thumb_status: 3,
-            thumb_path: None,
+            thumb_path: Some(abs_path_str),
             thumbhash: hash,
         });
     }

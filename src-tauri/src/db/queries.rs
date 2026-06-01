@@ -181,8 +181,8 @@ pub fn get_directory_tree(conn: &Connection, root_id: i64) -> Result<Vec<DirNode
         "SELECT d.id, d.root_id, d.parent_id, d.name, d.rel_path, d.depth, d.media_count,
                 (SELECT COUNT(*)>0 FROM directories c WHERE c.parent_id=d.id) AS has_children
          FROM directories d
-         WHERE d.root_id=?1
-         ORDER BY d.depth ASC, d.name ASC",
+         WHERE d.root_id=?1 AND d.parent_id IS NULL
+         ORDER BY d.name ASC",
     )?;
     let rows = stmt.query_map(params![root_id], map_dir_node)?;
     rows.map(|r| r.map_err(AppError::from)).collect()
@@ -548,26 +548,36 @@ pub fn set_rating(conn: &Connection, item_id: i64, rating: i64) -> Result<()> {
 }
 
 pub fn soft_delete_items(conn: &Connection, item_ids: &[i64]) -> Result<()> {
+    if item_ids.is_empty() {
+        return Ok(());
+    }
+    let tx = conn.unchecked_transaction()?;
     for &id in item_ids {
-        conn.execute(
+        tx.execute(
             "UPDATE media_items SET is_deleted=1, deleted_at=strftime('%s','now'),
                      updated_at=strftime('%s','now')
              WHERE id=?1",
             params![id],
         )?;
     }
+    tx.commit()?;
     Ok(())
 }
 
 pub fn restore_items(conn: &Connection, item_ids: &[i64]) -> Result<()> {
+    if item_ids.is_empty() {
+        return Ok(());
+    }
+    let tx = conn.unchecked_transaction()?;
     for &id in item_ids {
-        conn.execute(
+        tx.execute(
             "UPDATE media_items SET is_deleted=0, deleted_at=NULL,
                      updated_at=strftime('%s','now')
              WHERE id=?1",
             params![id],
         )?;
     }
+    tx.commit()?;
     Ok(())
 }
 

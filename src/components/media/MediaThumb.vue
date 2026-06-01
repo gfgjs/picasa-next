@@ -57,7 +57,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
+import { convertFileSrc } from '@tauri-apps/api/core'
 import { thumbhashToBackgroundImage } from '../../utils/thumbhash'
 import { formatDuration } from '../../utils/format'
 
@@ -91,12 +92,14 @@ const emit = defineEmits<{
   (e: 'click', id: number): void
   (e: 'select', id: number): void
   (e: 'favorite', id: number): void
+  (e: 'request-thumb', id: number): void
 }>()
 
-const isLoaded    = ref(false)
-const displaySrc  = ref('')
-const showFavorite = ref(false)
-const favAnimating = ref(false)
+const isLoaded      = ref(false)
+const displaySrc    = ref('')
+const showFavorite  = ref(false)
+const favAnimating  = ref(false)
+const hasRequested  = ref(false)  // guard: only request once per mount
 
 const thumbStyle = computed(() => ({
   width:  `${props.w}px`,
@@ -115,18 +118,61 @@ const mediaTypeIcon = computed(() => {
 })
 
 async function loadThumb() {
-  if (!props.thumbPath) return
-  try {
-    const { convertFileSrc } = await import('@tauri-apps/api/core')
-    const abs = `${props.cacheDir}/thumbnails/${props.thumbPath}`.replace(/\\/g, '/')
-    const src = convertFileSrc(abs)
-    const img = new Image()
-    img.src = src
-    await img.decode()
-    displaySrc.value = src
-    isLoaded.value   = true
-  } catch { /* leave placeholder */ }
+  // thumb_status meanings:
+  //   0 = pending generation
+  //   1 = generated WebP on disk  → load from cache dir
+  //   2 = failed
+  //   3 = small file direct display → load the original file via absPath
+  //       (absPath is not available here; parent supplies the thumb_path as the abs path in this case)
+
+  if (props.thumbStatus === 1 && props.thumbPath) {
+    // Load the generated thumbnail from the cache directory
+    try {
+      const abs = `${props.cacheDir}/thumbnails/${props.thumbPath}`.replace(/\\/g, '/')
+      const src = convertFileSrc(abs)
+      const img = new Image()
+      img.src = src
+      await img.decode()
+      displaySrc.value = src
+      isLoaded.value   = true
+    } catch { /* leave placeholder */ }
+    return
+  }
+
+  if (props.thumbStatus === 3 && props.thumbPath) {
+    // Small file: thumbPath holds the absolute path to the original file
+    try {
+      const src = convertFileSrc(props.thumbPath.replace(/\\/g, '/'))
+      const img = new Image()
+      img.src = src
+      await img.decode()
+      displaySrc.value = src
+      isLoaded.value   = true
+    } catch { /* leave placeholder */ }
+    return
+  }
+
+  if (props.thumbStatus === 0) {
+    // Not yet generated — ask the parent/grid to request generation.
+    // Guard: only emit once per mount lifecycle to prevent infinite loops
+    // when the backend fails and keeps returning status=2.
+    if (!hasRequested.value) {
+      hasRequested.value = true
+      emit('request-thumb', props.id)
+    }
+  }
 }
+
+// Re-run loadThumb only when thumbPath/thumbStatus actually gets a usable value
+// (status transitions from 0→1 or 0→3 after the parent receives batch results).
+watch(
+  () => [props.thumbPath, props.thumbStatus] as const,
+  ([newPath, newStatus]) => {
+    if (newStatus === 1 || newStatus === 3) {
+      loadThumb()
+    }
+  },
+)
 
 async function toggleFav() {
   favAnimating.value = true
@@ -134,26 +180,28 @@ async function toggleFav() {
   emit('favorite', props.id)
 }
 
-function onError() { displaySrc.value = '' }
+function onError() {
+  displaySrc.value = ''
+  isLoaded.value   = false
+}
 
-onMounted(() => {
-  if (props.thumbPath) loadThumb()
-})
+onMounted(() => loadThumb())
 </script>
 
 <style scoped>
 .media-thumb {
+  /* position:relative so thumbStyle width/height props are respected */
   position: relative;
   overflow: hidden;
   border-radius: 2px;
   background: var(--color-bg-elevated);
-  cursor: pointer;
-  flex-shrink: 0;
+  /* cursor and flex-shrink live on the parent .media-card */
 }
 .media-thumb:hover .media-thumb__fav,
 .media-thumb:hover .media-thumb__checkbox {
   opacity: 1;
 }
+
 
 .media-thumb__placeholder {
   position: absolute;
@@ -269,5 +317,12 @@ onMounted(() => {
 .checkbox.checked {
   background: var(--color-accent);
   border-color: var(--color-accent);
+}
+
+@keyframes fav-spring {
+  0%   { transform: scale(1); }
+  40%  { transform: scale(1.5); }
+  70%  { transform: scale(0.9); }
+  100% { transform: scale(1.2); }
 }
 </style>

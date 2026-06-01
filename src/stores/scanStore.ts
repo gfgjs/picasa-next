@@ -36,7 +36,9 @@ export const useScanStore = defineStore('scan', () => {
 
   async function addScanRoot(path: string, alias?: string): Promise<ScanRoot> {
     const root = await invoke<ScanRoot>(IPC.ADD_SCAN_ROOT, { path, alias: alias ?? null })
-    scanRoots.value.push(root)
+    if (!scanRoots.value.some(r => r.id === root.id)) {
+      scanRoots.value.push(root)
+    }
     return root
   }
 
@@ -54,7 +56,7 @@ export const useScanStore = defineStore('scan', () => {
     const channel = new Channel<ScanChannelPayload>()
     channel.onmessage = (msg) => {
       if (msg.type === 'progress') {
-        const p = (msg as any).progress as ScanProgressPayload
+        const p = msg as unknown as ScanProgressPayload
         progressMap.value[rootId] = {
           scanned:    p.scanned,
           total:      p.total,
@@ -94,10 +96,16 @@ export const useScanStore = defineStore('scan', () => {
     return progressMap.value[rootId] ?? null
   }
 
+  async function clearAllData() {
+    await invoke(IPC.CLEAR_ALL_DATA)
+    scanRoots.value   = []
+    progressMap.value = {}
+  }
+
   return {
     scanRoots, progressMap, isLoadingRoots,
     hasScanRoots, isAnyScanRunning,
     loadScanRoots, addScanRoot, removeScanRoot,
-    startScan, stopScan, getProgress,
+    startScan, stopScan, getProgress, clearAllData,
   }
 })

@@ -34,7 +34,7 @@ fn read_orientation_inner(path: &Path) -> Option<u32> {
 /// Returns `true` if the orientation value requires 90° / 270° rotation
 /// (i.e., width and height should be swapped).
 pub fn orientation_needs_swap(orientation: u32) -> bool {
-    matches!(orientation, 5 | 6 | 7 | 8)
+    matches!(orientation, 5..=8)
 }
 
 // ── Full EXIF parse (enrichment phase) ───────────────────────────────────────

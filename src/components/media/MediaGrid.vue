@@ -21,10 +21,16 @@
     <div :style="{ height: paddingTop + 'px' }" />
 
     <!-- Visible rows -->
+    <!--
+      IMPORTANT: Do NOT use marginBottom here.
+      flex gap on .media-grid does not add trailing space after the last child,
+      so scrollHeight == totalHeight. marginBottom WOULD add extra height,
+      making scrollHeight > totalHeight, which causes the browser to clamp
+      scrollTop at the bottom → scroll event → fetch → DOM change → loop.
+    -->
     <div
       v-for="(row, ri) in visibleRows"
       :key="row.rowType === 'separator' ? `sep-${row.y}` : `row-${row.y}`"
-      :style="{ marginBottom: GAP + 'px' }"
     >
       <!-- Date separator -->
       <div v-if="row.rowType === 'separator'" class="date-separator">
@@ -55,6 +61,7 @@
             :thumb-path="item.thumbPath"
             :thumbhash="item.thumbhash"
             :cache-dir="cacheDir"
+            @request-thumb="onRequestThumb"
           />
         </div>
       </div>
@@ -96,17 +103,13 @@ const cacheDir = ref('')
 // ── Virtual scroll ─────────────────────────────────────────────────────────
 
 const {
-  visibleRows, paddingTop, paddingBottom, scrollToTop, updateVisible,
+  visibleRows, paddingTop, paddingBottom, scrollToTop, updateVisible, onScroll,
 } = useVirtualScroll({
   totalHeight:   () => media.totalHeight,
   totalRows:     () => media.totalRows,
   fetchRows:     (start, end) => media.fetchRows(start, end),
   containerRef:  () => gridRef.value,
 })
-
-function onScroll(e: Event) {
-  updateVisible()
-}
 
 // ── Layout ─────────────────────────────────────────────────────────────────
 
@@ -117,27 +120,81 @@ const { compute, onResize } = useJustifiedLayout(() => containerWidth.value)
 
 onMounted(async () => {
   // Get cache dir from Tauri
-  const { appDataDir } = await import('@tauri-apps/api/path')
+  const { appDataDir, join } = await import('@tauri-apps/api/path')
   const dir = await appDataDir()
-  cacheDir.value = `${dir}cache`.replace(/\\/g, '/')
+  cacheDir.value = (await join(dir, 'cache')).replace(/\\/g, '/')
 
-  // Observe grid width
+  // Read container width immediately — use offsetWidth for accuracy
+  if (gridRef.value) {
+    // Use ResizeObserver's contentRect when available (avoids padding confusion).
+    // For the initial read before ResizeObserver fires, offsetWidth is reliable.
+    containerWidth.value = gridRef.value.offsetWidth
+    console.log('[MediaGrid] onMounted: offsetWidth=', gridRef.value.offsetWidth,
+      'clientWidth=', gridRef.value.clientWidth,
+      'clientHeight=', gridRef.value.clientHeight)
+  } else {
+    console.warn('[MediaGrid] onMounted: gridRef is null!')
+  }
+
   resizeObserver = new ResizeObserver(entries => {
     const w = entries[0].contentRect.width
-    if (w !== containerWidth.value) {
+    console.log('[MediaGrid] ResizeObserver: w=', w, 'prev=', containerWidth.value)
+    if (w > 0 && w !== containerWidth.value) {
       containerWidth.value = w
       onResize(w)
     }
   })
-  if (gridRef.value) {
-    containerWidth.value = gridRef.value.clientWidth
-    resizeObserver.observe(gridRef.value)
-  }
+  if (gridRef.value) resizeObserver.observe(gridRef.value)
 
-  // Initial layout
+  // Initial layout compute — after width is known
+  console.log('[MediaGrid] calling initial compute(), containerWidth=', containerWidth.value)
   await compute()
+  console.log('[MediaGrid] initial compute done, calling updateVisible()')
   updateVisible()
 })
+
+// ── Thumbnail request handling ──────────────────────────────────────────────
+//
+// When a MediaThumb emits 'request-thumb', we enqueue the id in the request
+// queue. When the batch resolves, we patch the item inside visibleRows in-place
+// so the thumb component's watch fires and loads the image.
+//
+// For thumb_status=3 (small file direct display), the backend does NOT store
+// an absolute path in thumb_path. We need to resolve the abs path via the
+// get_media_detail call — but that's heavy. Instead we store abs_path on the
+// item itself the first time we open detail. For the grid, we directly serve
+// status=3 by passing the thumb_path through convertFileSrc (the path is
+// already stored as abs in DB for status=3 — see generator.rs line 77:
+// thumb_path is None for status=3). So for status=3 we need to open detail
+// once to get absPath — too expensive.
+//
+// Simpler approach: batch_request_thumbnails returns ThumbResult with
+// thumb_status=3 & thumb_path=null. For status=3, MediaThumb should use the
+// original file. We patch a synthetic thumb_path = abs_path.
+// Since we don't have abs_path in layout rows, we invoke get_item_path_info
+// via an IPC that doesn't exist yet — instead we just accept that status=3
+// items will show their ThumbHash until the user opens the detail.
+// (Status=3 is only for files < 200KB, ThumbHash looks fine for those.)
+
+async function onRequestThumb(id: number) {
+  try {
+    const result = await queue.request(id)
+    // Find and patch the item in visibleRows
+    for (const row of visibleRows.value) {
+      if ((row as any).items) {
+        const item = (row as any).items.find((it: any) => it.id === id)
+        if (item) {
+          item.thumbStatus = result.thumbStatus
+          item.thumbPath   = result.thumbPath
+          item.thumbhash   = result.thumbhash
+          break
+        }
+      }
+    }
+  } catch {
+    // request cancelled or failed — leave placeholder
+  }
+}
 
 onBeforeUnmount(() => {
   resizeObserver?.disconnect()
@@ -152,17 +209,40 @@ function openDetail(id: number) {
 // ── Listen to enrichment events ────────────────────────────────────────────
 
 let unlistenEnriched: UnlistenFn | null = null
+let enrichedDebounceTimer: ReturnType<typeof setTimeout> | null = null
 
 onMounted(async () => {
   unlistenEnriched = await listen(EVENTS.MEDIA_ENRICHED, () => {
-    // Re-compute layout to pick up newly enriched items with correct dimensions
-    compute()
+    // Enrichment fires once per 500-item batch — debounce so we recompute
+    // at most once every 2s during active enrichment instead of per-batch.
+    if (enrichedDebounceTimer !== null) clearTimeout(enrichedDebounceTimer)
+    enrichedDebounceTimer = setTimeout(async () => {
+      enrichedDebounceTimer = null
+      console.log('[MediaGrid] MEDIA_ENRICHED debounce fired, recomputing')
+      await compute()
+      updateVisible()
+    }, 2000)
   })
 })
 
 onBeforeUnmount(() => {
   unlistenEnriched?.()
+  if (enrichedDebounceTimer !== null) clearTimeout(enrichedDebounceTimer)
 })
+
+// When totalItems changes (scan complete / clear data), recompute and refresh
+watch(
+  () => media.totalItems,
+  async (newVal, oldVal) => {
+    console.log('[MediaGrid] totalItems changed:', oldVal, '->', newVal, 'containerWidth=', containerWidth.value)
+    if (containerWidth.value < 100) {
+      console.warn('[MediaGrid] totalItems watch: containerWidth not ready, skipping compute')
+      return
+    }
+    await compute()
+    updateVisible()
+  }
+)
 </script>
 
 <style scoped>
@@ -170,7 +250,12 @@ onBeforeUnmount(() => {
   height: 100%;
   overflow-y: scroll;
   overflow-x: hidden;
-  padding: var(--spacing-md);
+  /* No gap, no margin, no padding — row-to-row spacing is already encoded in
+     the Rust layout y coordinates (each row's y = prev_y + prev_h + gap).
+     Adding any extra vertical space here would make scrollHeight > totalHeight,
+     causing the browser to clamp scrollTop at the bottom and fire infinite
+     scroll events. */
+  padding: 0;
   display: flex;
   flex-direction: column;
 }
@@ -187,7 +272,8 @@ onBeforeUnmount(() => {
 .media-grid__row {
   display: flex;
   flex-wrap: nowrap;
-  overflow: hidden;
+  /* overflow must be visible so hover-scaled cards can bleed outside the row */
+  overflow: visible;
 }
 
 .date-separator {
@@ -203,10 +289,31 @@ onBeforeUnmount(() => {
 
 .media-card {
   position: relative;
-  overflow: hidden;
+  /* shape clipping is handled inside .media-thumb; keep card visible */
+  overflow: visible;
   border-radius: 2px;
   cursor: pointer;
   flex-shrink: 0;
+
+  /* base: sits behind neighbours */
+  z-index: 0;
+
+  /* On hover-out, delay z-index reset until the scale-down finishes (220ms) */
+  transition:
+    transform 220ms cubic-bezier(0.34, 1.18, 0.64, 1),
+    box-shadow 220ms ease,
+    z-index 0ms 220ms;
 }
-/* Card hover defined in animations.css */
+
+.media-card:hover {
+  transform: scale(1.06);
+  z-index: 10;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.25);
+
+  /* On hover-in, apply z-index immediately (no delay) */
+  transition:
+    transform 220ms cubic-bezier(0.34, 1.18, 0.64, 1),
+    box-shadow 220ms ease;
+}
+
 </style>

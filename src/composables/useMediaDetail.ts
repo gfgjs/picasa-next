@@ -1,10 +1,13 @@
 // src/composables/useMediaDetail.ts
 // Component-level composable for the media detail overlay (§12.3)
+//
+// IMPORTANT: Call this ONCE at component setup time, NOT inside a computed().
+// Calling inside computed() would recreate event listeners on every reactive
+// dependency change, leaking mousemove/mouseup listeners permanently.
 
 import { ref, computed } from 'vue'
-import type { MediaDetail } from '../types/media'
 
-export function useMediaDetail(detail: MediaDetail) {
+export function useMediaDetail() {
   // Image viewer state
   const scale       = ref(1.0)
   const translateX  = ref(0)
@@ -27,10 +30,13 @@ export function useMediaDetail(detail: MediaDetail) {
     translateX.value = 0
     translateY.value = 0
   }
-  function fitToWindow(containerW: number, containerH: number) {
-    const imgW = detail.width || 1
-    const imgH = detail.height || 1
-    const s = Math.min(containerW / imgW, containerH / imgH, 1)
+
+  /**
+   * Fit the image to the container, scaling down only (never up).
+   * Call with the actual image dimensions after they are known.
+   */
+  function fitToWindow(containerW: number, containerH: number, imgW: number, imgH: number) {
+    const s = Math.min(containerW / Math.max(imgW, 1), containerH / Math.max(imgH, 1), 1)
     scale.value      = s
     translateX.value = 0
     translateY.value = 0
@@ -63,6 +69,12 @@ export function useMediaDetail(detail: MediaDetail) {
     document.removeEventListener('mouseup',   stopDrag)
   }
 
+  /** Must be called from onBeforeUnmount to avoid listener leaks. */
+  function cleanup() {
+    document.removeEventListener('mousemove', onDrag)
+    document.removeEventListener('mouseup',   stopDrag)
+  }
+
   function onWheel(e: WheelEvent) {
     e.preventDefault()
     const factor = e.deltaY < 0 ? 1.1 : 0.9
@@ -75,6 +87,6 @@ export function useMediaDetail(detail: MediaDetail) {
     scale, translateX, translateY, isDragging, showInfo, transform,
     isPlayingLive, liveVideoSrc,
     zoomIn, zoomOut, resetZoom, fitToWindow,
-    startDrag, onWheel, toggleInfo,
+    startDrag, onWheel, toggleInfo, cleanup,
   }
 }

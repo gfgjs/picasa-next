@@ -29,8 +29,6 @@
 import { onMounted } from 'vue'
 import { useTheme }    from './composables/useTheme'
 import { useUiStore }  from './stores/uiStore'
-import { useScanStore } from './stores/scanStore'
-import { useMediaStore } from './stores/mediaStore'
 
 import AppShell          from './components/layout/AppShell.vue'
 import AppSidebar        from './components/sidebar/AppSidebar.vue'
@@ -40,8 +38,6 @@ import MediaDetailOverlay from './components/media/MediaDetailOverlay.vue'
 import ToastContainer    from './components/common/ToastContainer.vue'
 
 const ui    = useUiStore()
-const scan  = useScanStore()
-const media = useMediaStore()
 
 // Init theme
 useTheme()
@@ -55,7 +51,7 @@ function onSortChange() {
 }
 
 onMounted(async () => {
-  await scan.loadScanRoots()
-  await media.loadStats()
+  // Theme init only — data loading is handled in AppSidebar.vue onMounted
+  // to keep initialization sequential and avoid double-compute races.
 })
 </script>

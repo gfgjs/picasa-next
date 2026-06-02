@@ -3,6 +3,7 @@
 //! Library entry point — module declarations and Tauri app builder.
 //! 库入口点 — 模块声明和 Tauri 应用程序构建器。
 
+pub mod ai;
 pub mod db;
 pub mod engine;
 pub mod error;
@@ -43,6 +44,12 @@ pub fn run() {
             std::fs::create_dir_all(&app_data_dir).expect("Failed to create app data dir");
 
             let db_path = app_data_dir.join("picasa_next.db");
+
+            // ── ort global init (called once per process) ─────────────────────
+            // ── ort 全局初始化（每个进程只调用一次）─────────────────────────
+            // commit() returns true if successfully initialised or already initialised.
+            // commit() 如果成功初始化或已初始化则返回 true。
+            let _ort_init_ok = ort::init().commit();
 
             // ── Write connection + migrations ─────────────────────────────
             // ── 写入连接 + 迁移 ─────────────────────────────
@@ -223,6 +230,14 @@ pub fn run() {
             ipc::system_commands::show_in_explorer,
             ipc::system_commands::open_directory,
             ipc::system_commands::move_to_trash,
+            // AI
+            // AI
+            ipc::ai_commands::detect_ai_provider,
+            ipc::ai_commands::get_ai_status,
+            ipc::ai_commands::semantic_search_cmd,
+            ipc::ai_commands::start_ai_analysis,
+            ipc::ai_commands::stop_ai_analysis,
+            ipc::ai_commands::rebuild_embeddings,
         ])
         .run(tauri::generate_context!())
         .expect("Error while running Tauri application");

@@ -9,6 +9,7 @@ use std::sync::{Mutex, RwLock};
 
 use tokio_util::sync::CancellationToken;
 
+use crate::ai::engine::AiEnginePool;
 use crate::db::{DbPool, DbWriter};
 use crate::engine::EngineArena;
 use crate::layout::LayoutCache;
@@ -51,6 +52,14 @@ pub struct AppState {
 
     /// Resolved log directory path.
     pub log_dir: PathBuf,
+
+    /// AI inference engine pool (lazily initialised, None until first use).
+    /// AI 推理引擎池（懒加载，首次使用前为 None）。
+    pub ai_engine: RwLock<Option<AiEnginePool>>,
+
+    /// Cancellation token for the background AI analysis pipeline.
+    /// 后台 AI 分析流水线的取消令牌。
+    pub ai_analysis_token: Mutex<Option<CancellationToken>>,
 }
 
 impl AppState {
@@ -80,7 +89,32 @@ impl AppState {
             thumb_gen_token: Mutex::new(None),
             cancelled_thumb_ids: Mutex::new(HashSet::new()),
             log_dir,
+            ai_engine: RwLock::new(None),
+            ai_analysis_token: Mutex::new(None),
         }
+    }
+
+    /// Create a new cancellation token for the AI analysis pipeline.
+    /// 为 AI 分析流水线创建新的取消令牌。
+    pub fn new_ai_analysis_token(&self) -> CancellationToken {
+        let token = CancellationToken::new();
+        *self.ai_analysis_token.lock().unwrap() = Some(token.clone());
+        token
+    }
+
+    /// Cancel the AI analysis pipeline if running.
+    /// 如果正在运行，取消 AI 分析流水线。
+    pub fn cancel_ai_analysis(&self) {
+        if let Some(token) = self.ai_analysis_token.lock().unwrap().take() {
+            token.cancel();
+        }
+    }
+
+    /// Check whether a higher-priority task (scan or thumb gen) is running.
+    /// 检查是否有更高优先级的任务（扫描或缩略图生成）正在运行。
+    pub fn should_yield_to_higher_priority(&self) -> bool {
+        !self.scan_tokens.lock().unwrap().is_empty()
+            || self.thumb_gen_token.lock().unwrap().is_some()
     }
 
     /// Create a new cancellation token for a scan root, replacing any existing one.

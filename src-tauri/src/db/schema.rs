@@ -207,3 +207,38 @@ CREATE TABLE IF NOT EXISTS item_tags (
     PRIMARY KEY (item_id, tag_id)
 );
 ";
+
+/// DDL deltas for schema version 2 — AI embeddings.
+/// 模式版本 2 的 DDL 增量 — AI 嵌入向量。
+///
+/// Note: `ALTER TABLE ... ADD COLUMN` with `DEFAULT 0` is safe in SQLite.
+/// 注意：带 `DEFAULT 0` 的 `ALTER TABLE ... ADD COLUMN` 在 SQLite 中是安全的。
+pub const SCHEMA_V2: &str = "
+-- ── AI embeddings ─────────────────────────────────────────────────────────────
+-- ── AI 嵌入向量 ─────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS ai_embeddings (
+    item_id      INTEGER NOT NULL REFERENCES media_items(id) ON DELETE CASCADE,
+    model_name   TEXT    NOT NULL,
+    embedding    BLOB    NOT NULL,
+    version      INTEGER NOT NULL DEFAULT 1,
+    created_at   INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+    PRIMARY KEY (item_id, model_name)
+);
+CREATE INDEX IF NOT EXISTS idx_embed_model ON ai_embeddings(model_name);
+
+-- ── ai_status on media_items ──────────────────────────────────────────────────
+-- ── media_items 上的 ai_status 字段 ──────────────────────────────────────────
+-- ai_status: 0=pending, 1=processing, 2=done, 3=error
+-- ai_status: 0=待处理, 1=处理中, 2=已完成, 3=错误
+ALTER TABLE media_items ADD COLUMN ai_status INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX IF NOT EXISTS idx_media_ai ON media_items(ai_status) WHERE ai_status < 3;
+
+-- ── AI config defaults ────────────────────────────────────────────────────────
+-- ── AI 配置默认值 ─────────────────────────────────────────────────────────────
+INSERT OR IGNORE INTO app_config (key, value) VALUES
+    ('ai_provider',     ''),
+    ('ai_gpu_name',     ''),
+    ('ai_enabled',      '1'),
+    ('ai_auto_analyze', '1'),
+    ('clip_model',      'cn-clip-vit-b16');
+";

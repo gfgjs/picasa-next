@@ -202,8 +202,8 @@ pub struct DateRange {
 }
 
 // ── Thumbnail result ─────────────────────────────────────────────────────────
-// ── 缩略图结果 ─────────────────────────────────────────────────────────
-
+/// Thumbnail result returned after thumb generation.
+/// 缩略图生成后返回的缩略图结果。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ThumbResult {
@@ -211,4 +211,81 @@ pub struct ThumbResult {
     pub thumb_status: i64,
     pub thumb_path:   Option<String>,
     pub thumbhash:    Option<Vec<u8>>,
+}
+
+// ── AI ───────────────────────────────────────────────────────────────────────
+// ── AI ───────────────────────────────────────────────────────────────────────
+
+/// AI processing status codes stored in `media_items.ai_status`.
+/// 存储在 `media_items.ai_status` 中的 AI 处理状态码。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[repr(i64)]
+pub enum AiStatus {
+    /// Not yet analysed | 尚未分析
+    Pending    = 0,
+    /// Currently being processed | 当前正在处理
+    Processing = 1,
+    /// Embedding stored | 嵌入向量已存储
+    Done       = 2,
+    /// Analysis failed (image unreadable etc.) | 分析失败
+    Error      = 3,
+}
+
+impl AiStatus {
+    pub fn as_i64(self) -> i64 { self as i64 }
+
+    pub fn from_i64(v: i64) -> Self {
+        match v {
+            0 => AiStatus::Pending,
+            1 => AiStatus::Processing,
+            2 => AiStatus::Done,
+            3 => AiStatus::Error,
+            _ => AiStatus::Error,
+        }
+    }
+}
+
+/// A single stored CLIP embedding row.
+/// 单条存储的 CLIP 嵌入向量行。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiEmbedding {
+    pub item_id:    i64,
+    pub model_name: String,
+    /// Raw f32 bytes (512 × 4 = 2048 bytes for ViT-B/16).
+    /// 原始 f32 字节（ViT-B/16 为 512 × 4 = 2048 字节）。
+    #[serde(skip)]
+    pub embedding:  Vec<u8>,
+    pub version:    i64,
+    pub created_at: i64,
+}
+
+/// Semantic search result with similarity score.
+/// 带相似度分数的语义搜索结果。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SemanticSearchResult {
+    pub id:           i64,
+    pub file_name:    String,
+    pub media_type:   String,
+    pub thumb_path:   Option<String>,
+    pub thumbhash:    Option<Vec<u8>>,
+    pub thumb_status: i64,
+    /// Cosine similarity in [0, 1] range.
+    /// [0, 1] 范围内的余弦相似度。
+    pub similarity:   f32,
+}
+
+/// AI status summary returned to the frontend.
+/// 返回给前端的 AI 状态摘要。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiStatusSummary {
+    pub provider:        String,
+    pub gpu_name:        String,
+    pub clip_loaded:     bool,
+    pub total_items:     i64,
+    pub analyzed_items:  i64,
+    pub pending_items:   i64,
+    pub is_analyzing:    bool,
 }

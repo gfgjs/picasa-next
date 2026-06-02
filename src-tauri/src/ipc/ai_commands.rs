@@ -1,0 +1,248 @@
+// src-tauri/src/ipc/ai_commands.rs
+//! IPC commands for AI inference engine management and semantic search.
+//! AI 推理引擎管理和语义搜索的 IPC 命令。
+
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use tauri::State;
+use tracing::info;
+
+use crate::ai::clip::{ClipTokenizer, MODEL_NAME};
+use crate::ai::engine::AiEnginePool;
+use crate::ai::pipeline::start_ai_pipeline;
+use crate::ai::search::semantic_search;
+use crate::db::models::{AiStatusSummary, SemanticSearchResult};
+use crate::db::queries::{
+    count_analyzed_ai_items, count_pending_ai_items, get_config, reset_ai_embeddings, set_config,
+};
+use crate::error::{AppError, Result};
+use crate::state::AppState;
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── 辅助函数 ──────────────────────────────────────────────────────────────────
+
+/// Get the models directory from app data.
+/// 从应用数据获取模型目录。
+fn models_dir(state: &AppState) -> PathBuf {
+    // We derive models_dir from the log_dir parent (= app_data_dir)
+    // 我们从 log_dir 的父目录（= app_data_dir）推导模型目录
+    let app_data_dir = state.log_dir.parent().unwrap_or(&state.log_dir);
+    app_data_dir.join("models")
+}
+
+/// Ensure the AI engine is initialised (lazy init on first call).
+/// 确保 AI 引擎已初始化（首次调用时懒加载初始化）。
+fn ensure_engine_initialised(state: &AppState) -> Result<()> {
+    // Fast path: already initialised
+    // 快速路径：已初始化
+    {
+        let guard = state.ai_engine.read().unwrap();
+        if guard.is_some() {
+            return Ok(());
+        }
+    }
+
+    // Slow path: initialise under write lock
+    // 慢速路径：在写锁下初始化
+    let mut guard = state.ai_engine.write().unwrap();
+    if guard.is_some() {
+        return Ok(());  // Race check | 竞争检查
+    }
+
+    let models = models_dir(state);
+    std::fs::create_dir_all(&models)
+        .map_err(|e| AppError::Io(format!("Cannot create models dir | 无法创建模型目录: {e}")))?;
+
+    info!("Initialising AI engine | 正在初始化 AI 引擎...");
+    let pool = AiEnginePool::init(&models)?;
+
+    // Persist detected provider to app_config
+    // 将探测到的提供者持久化到 app_config
+    {
+        let conn = state.db_writer.lock().unwrap();
+        let _ = set_config(&conn, "ai_provider", pool.provider.as_str());
+        let _ = set_config(&conn, "ai_gpu_name", &pool.gpu_name);
+    }
+
+    *guard = Some(pool);
+    info!("AI engine initialised | AI 引擎初始化完成");
+    Ok(())
+}
+
+// ── Commands ──────────────────────────────────────────────────────────────────
+// ── 命令 ──────────────────────────────────────────────────────────────────────
+
+/// Detect and initialise the best available AI provider.
+/// 探测并初始化最优的 AI 提供者。
+///
+/// Returns: `{ provider: string, gpu_name: string }`
+#[tauri::command]
+pub async fn detect_ai_provider(
+    state: State<'_, Arc<AppState>>,
+) -> std::result::Result<serde_json::Value, String> {
+    let state = Arc::clone(&state);
+
+    tokio::task::spawn_blocking(move || {
+        ensure_engine_initialised(&state)
+            .map_err(|e| e.to_string())?;
+
+        let guard = state.ai_engine.read().unwrap();
+        let pool = guard.as_ref().unwrap();
+
+        Ok(serde_json::json!({
+            "provider": pool.provider.as_str(),
+            "gpuName":  pool.gpu_name.clone(),
+            "clipLoaded": pool.clip_ready(),
+        }))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Get comprehensive AI status for the UI status bar.
+/// 获取 UI 状态栏所需的综合 AI 状态。
+#[tauri::command]
+pub async fn get_ai_status(
+    state: State<'_, Arc<AppState>>,
+) -> std::result::Result<AiStatusSummary, String> {
+    let state = Arc::clone(&state);
+
+    tokio::task::spawn_blocking(move || -> std::result::Result<AiStatusSummary, String> {
+        let conn = state.db_read_pool.get().map_err(|e| e.to_string())?;
+
+        let provider = get_config(&conn, "ai_provider")
+            .unwrap_or_default()
+            .unwrap_or_default();
+        let gpu_name = get_config(&conn, "ai_gpu_name")
+            .unwrap_or_default()
+            .unwrap_or_default();
+
+        let total_items    = count_pending_ai_items(&conn).unwrap_or(0)
+            + count_analyzed_ai_items(&conn).unwrap_or(0);
+        let analyzed_items = count_analyzed_ai_items(&conn).unwrap_or(0);
+        let pending_items  = count_pending_ai_items(&conn).unwrap_or(0);
+
+        let clip_loaded = {
+            let guard = state.ai_engine.read().unwrap();
+            guard.as_ref().map(|e| e.clip_ready()).unwrap_or(false)
+        };
+
+        let is_analyzing = state.ai_analysis_token.lock().unwrap().is_some();
+
+        Ok(AiStatusSummary {
+            provider,
+            gpu_name,
+            clip_loaded,
+            total_items,
+            analyzed_items,
+            pending_items,
+            is_analyzing,
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Perform semantic search using Chinese-CLIP text encoder.
+/// 使用 Chinese-CLIP 文本编码器执行语义搜索。
+#[tauri::command]
+pub async fn semantic_search_cmd(
+    query: String,
+    limit: Option<usize>,
+    state: State<'_, Arc<AppState>>,
+) -> std::result::Result<Vec<SemanticSearchResult>, String> {
+    let state = Arc::clone(&state);
+    let top_k = limit.unwrap_or(50).min(200);
+
+    tokio::task::spawn_blocking(move || -> std::result::Result<Vec<SemanticSearchResult>, String> {
+        // Ensure engine is ready
+        // 确保引擎就绪
+        ensure_engine_initialised(&state).map_err(|e| e.to_string())?;
+
+        let engine_guard = state.ai_engine.read().unwrap();
+        let engine = engine_guard.as_ref().unwrap();
+
+        let text_session = engine.clip_text_session.as_ref()
+            .ok_or_else(|| "Text encoder not loaded | 文本编码器未加载".to_string())?;
+
+        // Load tokenizer from models dir
+        // 从模型目录加载分词器
+        let models = models_dir(&state);
+        let vocab_path = models.join("vocab.txt");
+        let tokenizer = ClipTokenizer::from_vocab(&vocab_path)
+            .map_err(|e| e.to_string())?;
+
+        let conn = state.db_read_pool.get().map_err(|e| e.to_string())?;
+
+        semantic_search(&conn, text_session, &tokenizer, &query, top_k)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Start the background AI analysis pipeline.
+/// 启动后台 AI 分析流水线。
+#[tauri::command]
+pub async fn start_ai_analysis(
+    state: State<'_, Arc<AppState>>,
+) -> std::result::Result<(), String> {
+    let state_arc = Arc::clone(&state);
+
+    // Initialise engine first (idempotent)
+    // 首先初始化引擎（幂等）
+    tokio::task::spawn_blocking({
+        let s = Arc::clone(&state_arc);
+        move || ensure_engine_initialised(&s)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+
+    // Cancel any existing analysis before starting a new one
+    // 开始新的分析前取消任何现有的分析
+    state_arc.cancel_ai_analysis();
+
+    let token = state_arc.new_ai_analysis_token();
+    info!("Starting AI analysis pipeline | 启动 AI 分析流水线");
+    start_ai_pipeline(Arc::clone(&state_arc), token);
+
+    Ok(())
+}
+
+/// Stop the running AI analysis pipeline.
+/// 停止正在运行的 AI 分析流水线。
+#[tauri::command]
+pub async fn stop_ai_analysis(
+    state: State<'_, Arc<AppState>>,
+) -> std::result::Result<(), String> {
+    info!("Stopping AI analysis pipeline | 停止 AI 分析流水线");
+    state.cancel_ai_analysis();
+    Ok(())
+}
+
+/// Reset all embeddings and re-queue all images for analysis.
+/// 重置所有嵌入向量，将所有图像重新排入分析队列。
+#[tauri::command]
+pub async fn rebuild_embeddings(
+    state: State<'_, Arc<AppState>>,
+) -> std::result::Result<(), String> {
+    let state_arc = Arc::clone(&state);
+
+    // Stop any running pipeline first
+    // 首先停止任何正在运行的流水线
+    state_arc.cancel_ai_analysis();
+
+    tokio::task::spawn_blocking(move || {
+        let conn = state_arc.db_writer.lock().unwrap();
+        reset_ai_embeddings(&conn, MODEL_NAME)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+
+    info!("Embeddings reset, re-queuing all images | 嵌入向量已重置，重新排队所有图像");
+    Ok(())
+}

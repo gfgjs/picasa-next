@@ -1,4 +1,5 @@
 // src-tauri/src/ipc/mod.rs
+pub mod ai_commands;
 pub mod config_commands;
 pub mod layout_commands;
 pub mod media_commands;

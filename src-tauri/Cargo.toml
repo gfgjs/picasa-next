@@ -65,6 +65,16 @@ chrono   = { version = "0.4", features = ["serde"] }
 anyhow   = "1"
 crossbeam-channel = "0.5.15"
 
+# ── AI inference ───────────────────────────────────────────────────────────────
+# ONNX Runtime (load-dynamic: ONNX Runtime DLL loaded at runtime via ORT_DYLIB_PATH)
+# ONNX Runtime（load-dynamic：通过 ORT_DYLIB_PATH 在运行时动态加载 ONNX Runtime DLL）
+ort       = { version = "2.0.0-rc.12", features = ["load-dynamic", "directml"] }
+ndarray   = "0.16"
+# HuggingFace tokenizers — BERT WordPiece for Chinese-CLIP text encoder
+# HuggingFace tokenizers — 用于 Chinese-CLIP 文本编码器的 BERT WordPiece
+tokenizers = { version = "0.21", default-features = false, features = ["fancy-regex"] }
+
+
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]

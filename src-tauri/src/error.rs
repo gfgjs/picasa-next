@@ -55,6 +55,12 @@ pub enum AppError {
 
     #[error("Operation cancelled")]
     Cancelled,
+
+    #[error("AI inference error: {0}")]
+    Ai(String),
+
+    #[error("AI model not loaded: {0}")]
+    AiModelNotLoaded(String),
 }
 
 // ── Conversions ────────────────────────────────────────────────────────────
@@ -99,3 +105,9 @@ impl From<quick_xml::Error> for AppError {
 /// Convenience alias used throughout the codebase.
 /// 整个代码库中使用的便捷别名。
 pub type Result<T> = std::result::Result<T, AppError>;
+
+impl From<ort::Error> for AppError {
+    fn from(e: ort::Error) -> Self {
+        AppError::Ai(e.to_string())
+    }
+}

@@ -859,3 +859,180 @@ pub fn get_companion_item_id(conn: &Connection, item_id: i64) -> Result<Option<i
     .optional()
     .map_err(AppError::from)
 }
+
+// ── AI embeddings ─────────────────────────────────────────────────────────────
+// ── AI 嵌入向量 ─────────────────────────────────────────────────────────────
+
+/// Upsert an AI embedding for a media item.
+/// 插入或更新媒体项的 AI 嵌入向量。
+pub fn upsert_ai_embedding(
+    conn: &Connection,
+    item_id: i64,
+    model_name: &str,
+    embedding: &[u8],
+    version: i64,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO ai_embeddings (item_id, model_name, embedding, version)
+         VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(item_id, model_name) DO UPDATE SET
+             embedding=excluded.embedding,
+             version=excluded.version,
+             created_at=strftime('%s','now')",
+        params![item_id, model_name, embedding, version],
+    )?;
+    Ok(())
+}
+
+/// Batch-upsert embeddings within a single transaction.
+/// 在单个事务中批量插入或更新嵌入向量。
+pub fn batch_upsert_ai_embeddings(
+    conn: &Connection,
+    rows: &[(i64, String, Vec<u8>, i64)],  // (item_id, model_name, embedding, version)
+) -> Result<()> {
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let tx = conn.unchecked_transaction()?;
+    for (item_id, model_name, embedding, version) in rows {
+        tx.execute(
+            "INSERT INTO ai_embeddings (item_id, model_name, embedding, version)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(item_id, model_name) DO UPDATE SET
+                 embedding=excluded.embedding,
+                 version=excluded.version,
+                 created_at=strftime('%s','now')",
+            params![item_id, model_name, embedding, version],
+        )?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+/// Fetch all embeddings for a given model (used for in-memory cosine search).
+/// 获取给定模型的所有嵌入向量（用于内存余弦搜索）。
+pub fn get_all_embeddings(
+    conn: &Connection,
+    model_name: &str,
+) -> Result<Vec<(i64, Vec<u8>)>> {
+    let mut stmt = conn.prepare(
+        "SELECT item_id, embedding FROM ai_embeddings WHERE model_name=?1",
+    )?;
+    let rows = stmt.query_map(params![model_name], |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?))
+    })?;
+    rows.map(|r| r.map_err(AppError::from)).collect()
+}
+
+/// Update `ai_status` for a single media item.
+/// 更新单个媒体项的 `ai_status`。
+pub fn update_ai_status(conn: &Connection, item_id: i64, status: i64) -> Result<()> {
+    conn.execute(
+        "UPDATE media_items SET ai_status=?1, updated_at=strftime('%s','now') WHERE id=?2",
+        params![status, item_id],
+    )?;
+    Ok(())
+}
+
+/// Batch update `ai_status` for multiple items.
+/// 批量更新多个媒体项的 `ai_status`。
+pub fn batch_update_ai_status(conn: &Connection, item_ids: &[i64], status: i64) -> Result<()> {
+    if item_ids.is_empty() {
+        return Ok(());
+    }
+    let tx = conn.unchecked_transaction()?;
+    for &id in item_ids {
+        tx.execute(
+            "UPDATE media_items SET ai_status=?1, updated_at=strftime('%s','now') WHERE id=?2",
+            params![status, id],
+        )?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+/// Get items with `ai_status=0` (pending) ordered by most recent, up to `limit`.
+/// 获取 `ai_status=0`（待处理）的项，按最近顺序，最多 `limit` 条。
+pub fn get_pending_ai_items(
+    conn: &Connection,
+    limit: i64,
+) -> Result<Vec<(i64, i64)>> {  // (id, cache_key)
+    let mut stmt = conn.prepare(
+        "SELECT id, cache_key FROM media_items
+         WHERE ai_status=0 AND is_deleted=0 AND media_type='image'
+         ORDER BY created_at DESC
+         LIMIT ?1",
+    )?;
+    let rows = stmt.query_map(params![limit], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    rows.map(|r| r.map_err(AppError::from)).collect()
+}
+
+/// Count pending AI items.
+/// 统计待处理的 AI 项数量。
+pub fn count_pending_ai_items(conn: &Connection) -> Result<i64> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM media_items WHERE ai_status=0 AND is_deleted=0 AND media_type='image'",
+        [],
+        |row| row.get(0),
+    )
+    .map_err(AppError::from)
+}
+
+/// Count analysed AI items (status=2).
+/// 统计已分析的 AI 项数量（status=2）。
+pub fn count_analyzed_ai_items(conn: &Connection) -> Result<i64> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM media_items WHERE ai_status=2 AND is_deleted=0 AND media_type='image'",
+        [],
+        |row| row.get(0),
+    )
+    .map_err(AppError::from)
+}
+
+/// Reset all AI embeddings — set ai_status back to 0 and delete embeddings.
+/// 重置所有 AI 嵌入向量 — 将 ai_status 设回 0 并删除嵌入向量。
+pub fn reset_ai_embeddings(conn: &Connection, model_name: &str) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "DELETE FROM ai_embeddings WHERE model_name=?1",
+        params![model_name],
+    )?;
+    tx.execute(
+        "UPDATE media_items SET ai_status=0, updated_at=strftime('%s','now')
+         WHERE media_type='image'",
+        [],
+    )?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// Fetch media item thumbnail info for a list of IDs (for semantic search results).
+/// 获取一批 ID 的媒体项缩略图信息（用于语义搜索结果）。
+pub fn get_search_results_by_ids(
+    conn: &Connection,
+    ids: &[i64],
+) -> Result<Vec<crate::db::models::SearchResult>> {
+    if ids.is_empty() {
+        return Ok(vec![]);
+    }
+    let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{i}")).collect();
+    let sql = format!(
+        "SELECT id, file_name, media_type, thumb_path, thumbhash, thumb_status
+         FROM media_items
+         WHERE id IN ({})",
+        placeholders.join(",")
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let refs: Vec<&dyn rusqlite::ToSql> = ids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+    let rows = stmt.query_map(refs.as_slice(), |row| {
+        Ok(crate::db::models::SearchResult {
+            id:           row.get(0)?,
+            file_name:    row.get(1)?,
+            media_type:   row.get(2)?,
+            thumb_path:   row.get(3)?,
+            thumbhash:    row.get(4)?,
+            thumb_status: row.get(5)?,
+        })
+    })?;
+    rows.map(|r| r.map_err(AppError::from)).collect()
+}

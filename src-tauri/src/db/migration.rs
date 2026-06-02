@@ -13,12 +13,12 @@
 use rusqlite::Connection;
 use tracing::{info, warn};
 
-use crate::db::schema::SCHEMA_V1;
+use crate::db::schema::{SCHEMA_V1, SCHEMA_V2};
 use crate::error::{AppError, Result};
 
 /// Latest schema version supported by this binary.
 /// 此二进制文件支持的最新模式版本。
-const CURRENT_VERSION: u32 = 1;
+const CURRENT_VERSION: u32 = 2;
 
 /// Read the current schema version from the database.
 /// 从数据库读取当前的模式版本。
@@ -61,18 +61,28 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
         info!("Migration v1 complete | v1 数据库迁移完成");
     }
 
+    if version < 2 {
+        info!("Applying migration → v2 (AI embeddings) | 正在应用数据库迁移 → v2（AI 嵌入向量）");
+        conn.execute_batch(SCHEMA_V2)
+            .map_err(|e| AppError::Db(format!("Migration v2 failed: {e}")))?;
+        write_version(conn, 2)?;
+        info!("Migration v2 complete | v2 数据库迁移完成");
+    }
+
     // Future migrations follow the same pattern:
     // 未来的迁移遵循相同的模式：
-    // if version < 2 {
-    //     conn.execute_batch(SCHEMA_V2)?;
-    //     write_version(conn, 2)?;
+    // if version < 3 {
+    //     conn.execute_batch(SCHEMA_V3)?;
+    //     write_version(conn, 3)?;
     // }
 
-    if version == CURRENT_VERSION {
+    let final_version = read_version(conn);
+    if final_version == CURRENT_VERSION {
         info!("DB schema is up-to-date (v{}) | 数据库结构已是最新 (v{})", CURRENT_VERSION, CURRENT_VERSION);
     } else {
-        warn!("Post-migration version check: expected {CURRENT_VERSION}");
+        warn!("Post-migration version check: expected {CURRENT_VERSION}, got {final_version}");
     }
 
     Ok(())
 }
+

@@ -140,20 +140,32 @@ fn generate_image_thumb(
         .engine_for(format)
         .ok_or_else(|| AppError::UnsupportedFormat(format.to_string()))?;
 
+    let start_total = std::time::Instant::now();
     let mut final_webp = None;
     let mut final_hash = None;
 
     // Try fast EXIF path first
     // 首先尝试快速 EXIF 路径
+    let start_exif = std::time::Instant::now();
     if let Some((webp, hash)) = crate::thumbnail::exif_thumb::try_exif_thumb(engine.as_ref(), abs_path, config.size) {
+        tracing::debug!("try_exif_thumb for {:?} took {:?}", abs_path.file_name(), start_exif.elapsed());
         final_webp = Some(webp);
         final_hash = hash;
     } else {
+        tracing::debug!("try_exif_thumb failed or skipped for {:?}, falling back to full decode", abs_path.file_name());
         // Full decode fallback
         // 完整解码回退
+        let start_decode = std::time::Instant::now();
         let decoded = engine.decode(abs_path)?;
+        tracing::debug!("engine.decode for {:?} took {:?}", abs_path.file_name(), start_decode.elapsed());
+
+        let start_hash = std::time::Instant::now();
         final_hash = generate_thumbhash(&decoded).ok();
+        tracing::debug!("generate_thumbhash for {:?} took {:?}", abs_path.file_name(), start_hash.elapsed());
+
+        let start_encode = std::time::Instant::now();
         final_webp = Some(resize_and_encode(&decoded.pixels, decoded.width, decoded.height, config.size)?);
+        tracing::debug!("resize_and_encode for {:?} took {:?}", abs_path.file_name(), start_encode.elapsed());
     }
 
     let webp = final_webp.unwrap();
@@ -172,6 +184,8 @@ fn generate_image_thumb(
         let conn = writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
         update_thumb_result(&conn, item_id, 1, Some(&db_path), hash.as_deref())?;
     }
+
+    tracing::debug!("Total generate_image_thumb for {:?} took {:?}", abs_path.file_name(), start_total.elapsed());
 
     return Ok(ThumbResult {
         item_id,

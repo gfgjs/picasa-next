@@ -65,7 +65,13 @@
         <div class="settings-card__item">
           <div class="settings-card__info">
             <div class="settings-card__label">{{ $t('settings.thumbCacheDir') || '缓存目录' }}</div>
-            <div class="settings-card__desc">{{ thumbCacheDir || '正在获取路径...' }}</div>
+            <div 
+              class="settings-card__desc clickable-path" 
+              @click="openDirectory(thumbCacheDir)"
+              title="点击在资源管理器中打开"
+            >
+              {{ thumbCacheDir || '正在获取路径...' }}
+            </div>
           </div>
           <button class="btn btn-secondary" @click="changeCacheDir">
             {{ $t('settings.changeDir') || '更改目录' }}
@@ -193,6 +199,26 @@
 
         <div class="settings-card__item">
           <div class="settings-card__info">
+            <div class="settings-card__label">日志输出级别</div>
+            <div class="settings-card__desc">修改后需重启应用生效</div>
+          </div>
+          <div class="select-wrap">
+            <select
+              v-model="logLevel"
+              @change="saveLogLevel"
+              class="select"
+            >
+              <option value="trace">Trace (极度详细)</option>
+              <option value="debug">Debug (调试信息)</option>
+              <option value="info">Info (常规信息)</option>
+              <option value="warn">Warn (警告信息)</option>
+              <option value="error">Error (仅错误)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="settings-card__item">
+          <div class="settings-card__info">
             <div class="settings-card__label">清除缓存</div>
             <div class="settings-card__desc">清理浏览器缓存的图片并重载应用</div>
           </div>
@@ -214,7 +240,8 @@ import { useScanStore } from '../stores/scanStore'
 import { useMediaStore } from '../stores/mediaStore'
 import { useI18n } from 'vue-i18n'
 import { X, Database, Paintbrush, RotateCcw } from '@lucide/vue'
-import { open } from '@tauri-apps/plugin-dialog'
+import { open as openDialog } from '@tauri-apps/plugin-dialog'
+import { open as shellOpen } from '@tauri-apps/plugin-shell'
 import { IPC } from '../constants/ipc'
 
 const ui = useUiStore()
@@ -229,6 +256,7 @@ const thumbCacheDir = ref('')
 const timelineScrollWidth = ref(6)
 const uiFontSize = ref(16)
 const enableHoverScale = ref(true)
+const logLevel = ref('info')
 
 const thumbGenPercent = computed(() => {
   const { generated, total } = scan.thumbGenProgress
@@ -258,6 +286,9 @@ onMounted(async () => {
     } catch (e) {
       console.warn('Failed to fetch resolved cache dir', e)
     }
+
+    const val6 = await invoke<string | null>('get_app_config', { key: 'log_level' })
+    if (val6) logLevel.value = val6
   } catch (e) {
     console.error('Failed to get config:', e)
   }
@@ -279,7 +310,7 @@ async function saveThumbSize() {
 
 async function changeCacheDir() {
   try {
-    const selected = await open({
+    const selected = await openDialog({
       directory: true,
       multiple: false,
       title: '选择缩略图缓存目录',
@@ -292,6 +323,20 @@ async function changeCacheDir() {
   } catch (e) {
     console.error('Failed to select directory:', e)
   }
+}
+
+async function openDirectory(path: string) {
+  if (!path) return
+  try {
+    await shellOpen(path)
+  } catch (e) {
+    ui.addToast('error', `无法打开目录: ${e}`)
+  }
+}
+
+async function saveLogLevel() {
+  await saveConfig('log_level', logLevel.value)
+  ui.addToast('success', '日志级别已修改，重启应用后生效')
 }
 
 async function saveScrollbarWidth() {
@@ -413,6 +458,18 @@ function closeSettings() {
 /* ── Card overrides (extend global .settings-card) ─────────────────────── */
 /* The base .settings-card styles are in index.css. */
 /* Here we only add component-specific refinements. */
+
+.clickable-path {
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: transparent;
+  transition: text-decoration-color var(--transition-fast), color var(--transition-fast);
+}
+.clickable-path:hover {
+  color: var(--color-accent);
+  text-decoration-color: var(--color-accent);
+}
 
 /* ── Thumbnail generation ──────────────────────────────────────────────── */
 .thumb-gen-status {

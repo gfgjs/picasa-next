@@ -283,6 +283,7 @@ pub async fn start_full_thumbnail_generation(
 
 #[tauri::command]
 pub fn stop_full_thumbnail_generation(state: State<'_, Arc<AppState>>) -> Result<()> {
+    tracing::info!("User action: Stopping full thumbnail generation");
     state.cancel_thumb_gen();
     Ok(())
 }

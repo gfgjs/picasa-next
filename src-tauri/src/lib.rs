@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use tauri::Manager;
 use tracing::info;
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
 
 use crate::db::{create_read_pool, create_write_connection};
 use crate::db::migration::run_migrations;
@@ -26,16 +26,6 @@ use crate::state::AppState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // ── Logging ───────────────────────────────────────────────────────────
-    // ── 日志记录 ───────────────────────────────────────────────────────────
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .init();
-
-    info!("Picasa Next starting up");
-
     tauri::Builder::default()
         // ── Plugins ───────────────────────────────────────────────────────
         // ── 插件 ───────────────────────────────────────────────────────
@@ -53,7 +43,6 @@ pub fn run() {
             std::fs::create_dir_all(&app_data_dir).expect("Failed to create app data dir");
 
             let db_path = app_data_dir.join("picasa_next.db");
-            info!("Database path: {:?}", db_path);
 
             // ── Write connection + migrations ─────────────────────────────
             // ── 写入连接 + 迁移 ─────────────────────────────
@@ -72,7 +61,7 @@ pub fn run() {
 
             // ── Read persisted config ─────────────────────────────────────
             // ── 读取持久化配置 ─────────────────────────────────────
-            let (thumb_size, thumb_skip_max_kb, custom_cache_dir) = {
+            let (thumb_size, thumb_skip_max_kb, custom_cache_dir, log_level) = {
                 let pool = db_read_pool.get().expect("Pool error");
                 let size: u32 = get_config(&pool, "thumb_size")
                     .ok()
@@ -87,13 +76,47 @@ pub fn run() {
                 let cache_dir: Option<String> = get_config(&pool, "thumb_cache_dir")
                     .ok()
                     .flatten();
-                (size, skip, cache_dir)
+                let lvl: String = get_config(&pool, "log_level")
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| "debug".to_string());
+                (size, skip, cache_dir, lvl)
             };
 
             let cache_dir = custom_cache_dir
                 .map(std::path::PathBuf::from)
                 .unwrap_or_else(|| app_data_dir.join("cache"));
             std::fs::create_dir_all(&cache_dir).unwrap_or_default();
+
+            // ── Logging ───────────────────────────────────────────────────────────
+            // ── 日志记录 ───────────────────────────────────────────────────────────
+            let log_dir = app_data_dir.join("logs");
+            std::fs::create_dir_all(&log_dir).unwrap_or_default();
+
+            let file_appender = tracing_appender::rolling::daily(&log_dir, "picasa-next.log");
+            let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+            // Leak the guard so the background writer lives until the process exits
+            Box::leak(Box::new(guard));
+
+            let env_filter_term = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&log_level));
+            let env_filter_file = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&log_level));
+
+            tracing_subscriber::registry()
+                .with(
+                    tracing_subscriber::fmt::layer()
+                        .with_ansi(true)
+                        .with_filter(env_filter_term)
+                )
+                .with(
+                    tracing_subscriber::fmt::layer()
+                        .with_writer(non_blocking)
+                        .with_ansi(false)
+                        .with_filter(env_filter_file)
+                )
+                .init();
+
+            info!("Picasa Next starting up, database path: {:?}", db_path);
+            info!("Log level set to: {}", log_level);
 
             // ── Build AppState ─────────────────────────────────────────────
             // ── 构建 AppState ─────────────────────────────────────────────

@@ -9,7 +9,7 @@
     <!-- Empty state -->
     <!-- 空状态 -->
     <div v-if="media.totalRows === 0 && !media.isComputingLayout" class="empty-state">
-      <div class="empty-state__icon">🖼️</div>
+      <div class="empty-state__icon"><ImageIcon :size="48" /></div>
       <div class="empty-state__title">{{ emptyStateTitle }}</div>
       <div v-if="emptyStateDesc" class="empty-state__desc">{{ emptyStateDesc }}</div>
     </div>
@@ -109,6 +109,7 @@ import { useVirtualScroll }    from '../../composables/useVirtualScroll'
 import { useRequestQueue }     from '../../composables/useRequestQueue'
 
 import MediaThumb from './MediaThumb.vue'
+import { ImageIcon } from '@lucide/vue'
 import type { LayoutRow } from '../../types/layout'
 import { DEFAULTS, SEPARATOR_HEIGHT } from '../../constants/defaults'
 import { IPC, EVENTS } from '../../constants/ipc'
@@ -428,9 +429,9 @@ watch(
   width: 44px;
   height: 44px;
   border-radius: 50%;
-  background: var(--color-surface-elevated);
+  background: var(--color-bg-elevated);
   border: 1px solid var(--color-border);
-  color: var(--color-text);
+  color: var(--color-text-primary);
   font-size: 20px;
   cursor: pointer;
   display: flex;
@@ -443,7 +444,7 @@ watch(
 
 .fab-btn:hover {
   transform: scale(1.1);
-  background: var(--color-surface-hover);
+  background: var(--color-bg-hover);
   opacity: 1;
   box-shadow: 0 6px 16px rgba(0,0,0,0.3);
 }

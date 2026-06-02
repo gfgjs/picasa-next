@@ -1,8 +1,8 @@
 /* src/assets/styles/index.css */
 /* Master CSS entry point — import order matters */
 
-/* Google Fonts */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+/* Google Fonts — variable font for optical sizing + crisp rendering */
+@import url('https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300..700&display=swap');
 
 @import './variables.css';
 @import './theme-dark.css';
@@ -171,4 +171,166 @@
 .input:focus {
   border-color: var(--color-accent);
   outline: none;
+}
+
+/* ── Toggle Switch ───────────────────────────────────────────── */
+
+.toggle {
+  position: relative;
+  display: inline-flex;
+  width: var(--toggle-width);
+  height: var(--toggle-height);
+  border-radius: var(--radius-full);
+  background: var(--color-toggle-bg);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+  flex-shrink: 0;
+}
+.toggle input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.toggle__thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: var(--toggle-thumb);
+  height: var(--toggle-thumb);
+  border-radius: 50%;
+  background: var(--color-toggle-thumb);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  transition: transform var(--transition-fast);
+  pointer-events: none;
+}
+.toggle input:checked ~ .toggle__thumb {
+  transform: translateX(calc(var(--toggle-width) - var(--toggle-thumb) - 4px));
+}
+.toggle:has(input:checked) {
+  background: var(--color-toggle-bg-active);
+}
+.toggle:focus-within {
+  outline: var(--focus-ring-width) solid var(--color-focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* ── Custom Select ───────────────────────────────────────────── */
+
+.select {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  height: var(--select-height);
+  padding: 0 32px 0 12px;
+  border-radius: var(--radius-md);
+  background: var(--color-input-bg);
+  border: 1px solid var(--color-input-border);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  font-family: inherit;
+  cursor: pointer;
+  appearance: none;
+  transition:
+    border-color var(--transition-fast),
+    background   var(--transition-fast);
+}
+.select:hover {
+  border-color: var(--color-border-strong);
+}
+.select:focus {
+  border-color: var(--color-input-border-focus);
+  outline: none;
+}
+.select-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.select-wrap::after {
+  content: '';
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid var(--color-text-tertiary);
+  pointer-events: none;
+}
+
+/* ── Number Input ────────────────────────────────────────────── */
+
+.input-number {
+  width: 72px;
+  height: var(--input-height);
+  padding: 0 10px;
+  border-radius: var(--radius-md);
+  background: var(--color-input-bg);
+  border: 1px solid var(--color-input-border);
+  color: var(--color-text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  text-align: center;
+  transition: border-color var(--transition-fast);
+}
+.input-number:focus {
+  border-color: var(--color-input-border-focus);
+  outline: none;
+}
+.input-number::-webkit-inner-spin-button,
+.input-number::-webkit-outer-spin-button {
+  opacity: 0;
+}
+.input-number:hover::-webkit-inner-spin-button,
+.input-number:hover::-webkit-outer-spin-button {
+  opacity: 1;
+}
+
+/* ── Settings Card ───────────────────────────────────────────── */
+
+.settings-card {
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+.settings-card__header {
+  padding: var(--spacing-md) var(--spacing-lg);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-tertiary);
+}
+.settings-card__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  padding: var(--spacing-md) var(--spacing-lg);
+  border-top: 1px solid var(--color-divider);
+  transition: background var(--transition-fast);
+}
+.settings-card__item:first-child {
+  border-top: none;
+}
+.settings-card__item:hover {
+  background: var(--color-bg-hover);
+}
+.settings-card__info {
+  flex: 1;
+  min-width: 0;
+}
+.settings-card__label {
+  font-size: var(--font-size-base);
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+.settings-card__desc {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  margin-top: 2px;
+  line-height: var(--leading-relaxed);
 }

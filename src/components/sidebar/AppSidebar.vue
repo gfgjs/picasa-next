@@ -4,7 +4,7 @@
     <!-- 应用标题 + Logo -->
     <div class="sidebar__header">
       <div class="sidebar__logo">
-        <span class="sidebar__logo-icon">✦</span>
+        <span class="sidebar__logo-icon"><Aperture :size="20" /></span>
         <span class="sidebar__logo-text">Picasa Next</span>
       </div>
     </div>
@@ -20,7 +20,7 @@
             :class="{ active: ui.activeSmartAlbum === album.id && !ui.activeDirectoryId }"
             @click="handleSmartAlbumClick(album.id)"
           >
-            <span class="sidebar__nav-icon">{{ album.icon }}</span>
+            <span class="sidebar__nav-icon"><component :is="album.icon" :size="18" /></span>
             <span class="sidebar__nav-label">{{ album.label }}</span>
             <span v-if="album.count != null" class="sidebar__nav-count">{{ formatCount(album.count) }}</span>
           </button>
@@ -37,7 +37,7 @@
     <section class="sidebar__section sidebar__section--tree">
       <div class="sidebar__section-label">
         <span>{{ $t('sidebar.folders') }}</span>
-        <button class="btn-icon" :title="$t('sidebar.addFolder')" @click="addRoot">＋</button>
+        <button class="btn-icon" :title="$t('sidebar.addFolder')" @click="addRoot"><FolderPlus :size="16" /></button>
       </div>
 
       <div v-if="folderTree.nodes.value.length === 0 && !scan.hasScanRoots" class="sidebar__empty">
@@ -57,9 +57,10 @@
           @click="onNodeClick(node)"
         >
           <span class="sidebar__tree-arrow" @click.stop="folderTree.toggleNode(node)">
-            {{ node.hasChildren ? (node.expanded ? '▼' : '▶') : '　' }}
+            <ChevronRight v-if="node.hasChildren" :size="14" class="sidebar__tree-chevron" :class="{ expanded: node.expanded }" />
+            <span v-else class="sidebar__tree-chevron-spacer" />
           </span>
-          <span class="sidebar__tree-icon">📁</span>
+          <span class="sidebar__tree-icon"><Folder :size="15" /></span>
           <span class="sidebar__tree-label" :title="node.relPath">{{ node.name }}</span>
           <span class="sidebar__tree-count">{{ node.mediaCount }}</span>
         </button>
@@ -83,7 +84,8 @@
               @click="toggleScan(root.id)"
               :title="scan.getProgress(root.id)?.isRunning ? $t('sidebar.stopScan') : $t('sidebar.rescan')"
             >
-              {{ scan.getProgress(root.id)?.isRunning ? '⏹' : '⟳' }}
+              <Square v-if="scan.getProgress(root.id)?.isRunning" :size="14" />
+              <RefreshCw v-else :size="14" />
             </button>
             <button
               class="btn-icon scan-root-item__scan-btn"
@@ -91,7 +93,7 @@
               :title="$t('sidebar.removeFolder')"
               @click="removeRoot(root.id)"
             >
-              🗑️
+              <Trash2 :size="14" />
             </button>
           </div>
         </div>
@@ -118,36 +120,19 @@
     <!-- Settings / footer -->
     <!-- 设置 / 页脚 -->
     <div class="sidebar__footer">
-      <router-link to="/settings" class="btn-icon" :title="$t('sidebar.settings')" style="text-decoration: none;">⚙️</router-link>
-      <button class="btn-icon" :title="$t('sidebar.debugSettings')" @click="openSettings">🛠️</button>
+      <router-link to="/settings" class="btn-icon" :title="$t('sidebar.settings')" style="text-decoration: none;"><Settings :size="18" /></router-link>
       <button class="btn-icon" :title="$t('sidebar.toggleTheme')" @click="ui.cycleTheme()">
-        {{ ui.theme === 'dark' ? '☀️' : ui.theme === 'light' ? '🌙' : '🖥️' }}
+        <Sun v-if="ui.theme === 'dark'" :size="18" />
+        <Moon v-else-if="ui.theme === 'light'" :size="18" />
+        <Monitor v-else :size="18" />
       </button>
-      <!-- Dev-only: clear data -->
-      <!-- 仅开发：清空数据 -->
-      <button
-        class="btn-icon btn-danger-sm"
-        :title="$t('sidebar.clearDb')"
-        @click="clearDb"
-      >🗑️ {{ $t('sidebar.data') }}</button>
-      <button
-        class="btn-icon btn-danger-sm"
-        :title="$t('sidebar.clearSettings')"
-        @click="clearSettings"
-      >🗑️ {{ $t('sidebar.settings') }}</button>
-      <button
-        class="btn-icon btn-danger-sm"
-        title="清除浏览器缓存"
-        @click="clearBrowserCache"
-      >🗑️ 缓存</button>
     </div>
 
-    <SettingsModal ref="settingsModalRef" />
   </nav>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, markRaw } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { open } from '@tauri-apps/plugin-dialog'
@@ -157,7 +142,11 @@ import { useUiStore } from '../../stores/uiStore'
 import { useScanStore } from '../../stores/scanStore'
 import { useMediaStore } from '../../stores/mediaStore'
 import { useFolderTree } from '../../composables/useFolderTree'
-import SettingsModal from '../common/SettingsModal.vue'
+import {
+  Aperture, FolderPlus, ChevronRight, Folder,
+  Square, RefreshCw, Trash2, Settings,
+  Sun, Moon, Monitor, ImageIcon, Heart, Sparkles, Clock
+} from '@lucide/vue'
 
 const ui       = useUiStore()
 const scan     = useScanStore()
@@ -167,25 +156,17 @@ const router   = useRouter()
 const route    = useRoute()
 const { t }    = useI18n()
 
-const settingsModalRef = ref<InstanceType<typeof SettingsModal> | null>(null)
 
-function openSettings() {
-  settingsModalRef.value?.openModal()
-}
-
-function clearBrowserCache() {
-  window.location.href = window.location.pathname + '?clear=' + Date.now()
-}
 
 // ── Smart albums ───────────────────────────────────────────────────────────
 // ── 智能相册 ───────────────────────────────────────────────────────────
 
 const smartAlbums = computed(() => [
-  { id: 'all'         as const, icon: '🖼️', label: t('sidebar.allPhotos'),      count: media.stats?.totalItems },
-  { id: 'favorites'   as const, icon: '❤️', label: t('sidebar.favorites'),      count: media.stats?.totalFavorited },
-  { id: 'live-photos' as const, icon: '✨', label: t('sidebar.livePhotos'), count: media.stats?.totalLivePhotos },
-  { id: 'recent'      as const, icon: '🕐', label: t('sidebar.recentlyAdded'),      count: null },
-  { id: 'trash'       as const, icon: '🗑️', label: t('sidebar.trash'),    count: media.stats?.totalDeleted },
+  { id: 'all'         as const, icon: markRaw(ImageIcon), label: t('sidebar.allPhotos'),      count: media.stats?.totalItems },
+  { id: 'favorites'   as const, icon: markRaw(Heart),     label: t('sidebar.favorites'),      count: media.stats?.totalFavorited },
+  { id: 'live-photos' as const, icon: markRaw(Sparkles),  label: t('sidebar.livePhotos'), count: media.stats?.totalLivePhotos },
+  { id: 'recent'      as const, icon: markRaw(Clock),     label: t('sidebar.recentlyAdded'),      count: null },
+  { id: 'trash'       as const, icon: markRaw(Trash2),    label: t('sidebar.trash'),    count: media.stats?.totalDeleted },
 ])
 
 function formatCount(n: number | undefined | null): string {
@@ -296,27 +277,6 @@ onMounted(async () => {
   }
 })
 
-async function clearDb() {
-  if (!confirm(t('sidebar.clearDbConfirm'))) return
-  try {
-    await scan.clearDatabase()
-    folderTree.loadRoots([])
-    media.loadStats()
-    ui.addToast('success', t('sidebar.clearDbSuccess'))
-  } catch (e) {
-    ui.addToast('error', t('sidebar.clearDbFailed', { error: String(e) }))
-  }
-}
-
-async function clearSettings() {
-  if (!confirm(t('sidebar.clearSettingsConfirm'))) return
-  try {
-    await invoke(IPC.CLEAR_SETTINGS)
-    window.location.reload()
-  } catch (e) {
-    ui.addToast('error', t('sidebar.clearSettingsFailed', { error: String(e) }))
-  }
-}
 </script>
 
 <style scoped>
@@ -531,5 +491,17 @@ async function clearSettings() {
 .btn-danger-sm:hover {
   opacity: 1;
   background: rgba(248, 113, 113, 0.12);
+}
+.sidebar__tree-chevron {
+  transition: transform var(--transition-fast);
+  flex-shrink: 0;
+  color: var(--color-text-tertiary);
+}
+.sidebar__tree-chevron.expanded {
+  transform: rotate(90deg);
+}
+.sidebar__tree-chevron-spacer {
+  width: 14px;
+  flex-shrink: 0;
 }
 </style>

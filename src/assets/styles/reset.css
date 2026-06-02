@@ -10,8 +10,10 @@
 html {
   font-size: 16px;
   -webkit-text-size-adjust: 100%;
-  text-rendering: optimizeLegibility;
-  /* Removed -webkit-font-smoothing: antialiased; to allow ClearType on Windows for sharper text */
+  font-optical-sizing: auto;
+  /* text-rendering left as browser default (auto) — optimizeLegibility causes
+     sub-pixel kerning blur on Windows 125%/150% DPI scaling */
+  /* -webkit-font-smoothing left as browser default to preserve ClearType on Windows */
 }
 
 body {
@@ -70,4 +72,25 @@ ul, ol {
 }
 ::-webkit-scrollbar-thumb:hover {
   background: var(--color-scrollbar-thumb-hover);
+}
+
+/* ── Selection highlight ─────────────────────────────────────── */
+::selection {
+  background: var(--color-accent-subtle);
+  color: var(--color-text-primary);
+}
+
+/* ── Focus-visible (keyboard navigation only) ────────────────── */
+:focus-visible {
+  outline: var(--focus-ring-width) solid var(--color-focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* ── Thin scrollbar utility ──────────────────────────────────── */
+.scrollbar-auto {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-scrollbar-thumb) transparent;
 }

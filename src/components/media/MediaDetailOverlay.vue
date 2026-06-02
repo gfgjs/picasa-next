@@ -41,7 +41,7 @@
             autoplay
           />
           <div v-else class="detail-viewer__document">
-            <span>📄</span>
+            <FileText :size="48" />
             <p>{{ detail.fileName }}</p>
           </div>
 
@@ -62,10 +62,15 @@
           <!-- Left -->
           <!-- 左侧 -->
           <div class="detail-controls__left">
-            <button class="btn-icon" @click="close" :title="$t('detail.close')">✕</button>
-            <button class="btn-icon" @click="state.zoomIn()" :title="$t('detail.zoomIn')">＋</button>
-            <button class="btn-icon" @click="state.zoomOut()" :title="$t('detail.zoomOut')">－</button>
-            <button class="btn-icon" @click="handleToggleZoom" :title="zoomModeTitle">{{ zoomModeIcon }}</button>
+            <button class="btn-icon" @click="close" :title="$t('detail.close')"><X :size="18" /></button>
+            <button class="btn-icon" @click="state.zoomIn()" :title="$t('detail.zoomIn')"><ZoomIn :size="18" /></button>
+            <button class="btn-icon" @click="state.zoomOut()" :title="$t('detail.zoomOut')"><ZoomOut :size="18" /></button>
+            <button class="btn-icon" @click="handleToggleZoom" :title="zoomModeTitle">
+              <Maximize v-if="state.zoomMode.value === 'auto'" :size="18" />
+              <span v-else-if="state.zoomMode.value === 'original'" style="font-size: 12px; font-weight: 700;">1:1</span>
+              <MoveHorizontal v-else-if="state.zoomMode.value === 'fit-width'" :size="18" />
+              <MoveVertical v-else :size="18" />
+            </button>
             <button
               v-if="detail.isLivePhoto"
               class="btn-icon"
@@ -91,9 +96,9 @@
               :class="{ active: detail.isFavorited }"
               @click="toggleFav"
               title="收藏"
-            >{{ detail.isFavorited ? '❤️' : '🤍' }}</button>
-            <button class="btn-icon" @click="showInExplorer" title="在文件夹中显示">📂</button>
-            <button class="btn-icon" @click="state.toggleInfo()" :title="$t('detail.info')">ℹ️</button>
+            ><Heart :size="18" :fill="detail.isFavorited ? 'currentColor' : 'none'" :stroke-width="detail.isFavorited ? 0 : 2" /></button>
+            <button class="btn-icon" @click="showInExplorer" title="在文件夹中显示"><FolderOpen :size="18" /></button>
+            <button class="btn-icon" @click="state.toggleInfo()" :title="$t('detail.info')"><Info :size="18" /></button>
           </div>
         </div>
 
@@ -103,7 +108,7 @@
           <div v-if="state.showInfo.value" class="detail-info">
             <div class="detail-info__header">
               <span>文件信息</span>
-              <button class="btn-icon" @click="state.toggleInfo()">✕</button>
+              <button class="btn-icon" @click="state.toggleInfo()"><X :size="16" /></button>
             </div>
 
             <div class="info-section">
@@ -170,7 +175,7 @@
                   class="star"
                   :class="{ filled: n <= (detail.rating ?? 0) }"
                   @click="setRating(n)"
-                >★</button>
+                ><Star :size="20" :fill="n <= (detail.rating ?? 0) ? 'currentColor' : 'none'" :stroke-width="1.5" /></button>
               </div>
             </div>
           </div>
@@ -189,6 +194,10 @@ import { useMediaStore } from '../../stores/mediaStore'
 import { useUiStore }    from '../../stores/uiStore'
 import { useMediaDetail } from '../../composables/useMediaDetail'
 import { formatFileSize, formatDateTime, formatFocalLength, formatAperture, formatGps } from '../../utils/format'
+import {
+  X, ZoomIn, ZoomOut, Maximize, MoveHorizontal, MoveVertical,
+  Heart, FolderOpen, Info, Star, FileText
+} from '@lucide/vue'
 import { IPC } from '../../constants/ipc'
 
 const media = useMediaStore()
@@ -217,16 +226,6 @@ const zoomModeTitle = computed(() => {
     case 'fit-width': return '铺满宽 (当前) - 点击切换为铺满高'
     case 'fit-height': return '铺满高 (当前) - 点击切换为自适应'
     default: return '重置缩放'
-  }
-})
-
-const zoomModeIcon = computed(() => {
-  switch (state.zoomMode.value) {
-    case 'auto': return '◎'
-    case 'original': return '1:1'
-    case 'fit-width': return '↔'
-    case 'fit-height': return '↕'
-    default: return '◎'
   }
 })
 

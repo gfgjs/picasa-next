@@ -2,76 +2,104 @@
   <div class="settings-view">
     <header class="settings-header">
       <h1 class="settings-title">{{ $t('settings.title') }}</h1>
-      <button class="btn-close" title="关闭设置" @click="closeSettings">✕</button>
+      <button class="btn-close" title="关闭设置" @click="closeSettings"><X :size="18" /></button>
     </header>
 
     <main class="settings-content">
-      <section class="settings-section">
-        <h2 class="section-title">{{ $t('settings.general') }}</h2>
-        
-        <div class="setting-item">
-          <div class="setting-info">
-            <div class="setting-label">{{ $t('settings.language') }}</div>
-            <div class="setting-desc">{{ $t('settings.languageDesc') }}</div>
+      <!-- ── 外观 ─────────────────────────────────────────── -->
+      <div class="settings-card">
+        <div class="settings-card__header">{{ $t('settings.general') }}</div>
+
+        <div class="settings-card__item">
+          <div class="settings-card__info">
+            <div class="settings-card__label">{{ $t('settings.language') }}</div>
+            <div class="settings-card__desc">{{ $t('settings.languageDesc') }}</div>
           </div>
-          <select v-model="ui.language" @change="ui.setLanguage(ui.language)" class="setting-input">
-            <option value="zh-CN">简体中文</option>
-            <option value="en-US">English</option>
-          </select>
+          <div class="select-wrap">
+            <select
+              v-model="ui.language"
+              @change="ui.setLanguage(ui.language)"
+              class="select"
+            >
+              <option value="zh-CN">简体中文</option>
+              <option value="en-US">English</option>
+            </select>
+          </div>
         </div>
 
-        <div class="setting-item">
-          <div class="setting-info">
-            <div class="setting-label">{{ $t('settings.thumbSkipMaxKb') }}</div>
-            <div class="setting-desc">{{ $t('settings.thumbSkipDesc') }}</div>
+        <div class="settings-card__item">
+          <div class="settings-card__info">
+            <div class="settings-card__label">{{ $t('settings.uiFontSize') }}</div>
+            <div class="settings-card__desc">{{ $t('settings.uiFontSizeDesc') }}</div>
           </div>
-          <input 
-            type="number" 
-            v-model.number="thumbSkipMaxKb" 
-            min="0" 
-            max="1000000"
-            class="setting-input"
-            @change="saveConfig('thumb_skip_max_kb', thumbSkipMaxKb.toString())"
-          />
-        </div>
-
-        <div class="setting-item">
-          <div class="setting-info">
-            <div class="setting-label">{{ $t('settings.timelineScrollWidth') }}</div>
-            <div class="setting-desc">{{ $t('settings.timelineScrollDesc') }}</div>
-          </div>
-          <input 
-            type="number" 
-            v-model.number="timelineScrollWidth" 
-            min="2" 
-            max="40"
-            class="setting-input"
-            @change="saveScrollbarWidth"
-          />
-        </div>
-        <div class="setting-item">
-          <div class="setting-info">
-            <div class="setting-label">{{ $t('settings.uiFontSize') }}</div>
-            <div class="setting-desc">{{ $t('settings.uiFontSizeDesc') }}</div>
-          </div>
-          <input 
-            type="number" 
-            v-model.number="uiFontSize" 
-            min="12" 
+          <input
+            type="number"
+            v-model.number="uiFontSize"
+            min="12"
             max="24"
-            class="setting-input"
+            class="input-number"
             @change="saveFontSize"
           />
         </div>
 
-        <div class="setting-item">
-          <div class="setting-info">
-            <div class="setting-label">{{ $t('settings.fullThumbGen') }}</div>
-            <div class="setting-desc">{{ $t('settings.fullThumbGenDesc') }}</div>
+        <div class="settings-card__item">
+          <div class="settings-card__info">
+            <div class="settings-card__label">{{ $t('settings.hoverScale') }}</div>
+            <div class="settings-card__desc">{{ $t('settings.hoverScaleDesc') }}</div>
+          </div>
+          <label class="toggle">
+            <input
+              type="checkbox"
+              v-model="enableHoverScale"
+              @change="saveHoverScale"
+            />
+            <span class="toggle__thumb" />
+          </label>
+        </div>
+      </div>
+
+      <!-- ── 缩略图 ───────────────────────────────────────── -->
+      <div class="settings-card">
+        <div class="settings-card__header">{{ $t('settings.thumbnails') || '缩略图' }}</div>
+
+        <div class="settings-card__item">
+          <div class="settings-card__info">
+            <div class="settings-card__label">{{ $t('settings.thumbSkipMaxKb') }}</div>
+            <div class="settings-card__desc">{{ $t('settings.thumbSkipDesc') }}</div>
+          </div>
+          <input
+            type="number"
+            v-model.number="thumbSkipMaxKb"
+            min="0"
+            max="1000000"
+            class="input-number"
+            @change="saveConfig('thumb_skip_max_kb', thumbSkipMaxKb.toString())"
+          />
+        </div>
+
+        <div class="settings-card__item">
+          <div class="settings-card__info">
+            <div class="settings-card__label">{{ $t('settings.timelineScrollWidth') }}</div>
+            <div class="settings-card__desc">{{ $t('settings.timelineScrollDesc') }}</div>
+          </div>
+          <input
+            type="number"
+            v-model.number="timelineScrollWidth"
+            min="2"
+            max="40"
+            class="input-number"
+            @change="saveScrollbarWidth"
+          />
+        </div>
+
+        <div class="settings-card__item">
+          <div class="settings-card__info">
+            <div class="settings-card__label">{{ $t('settings.fullThumbGen') }}</div>
+            <div class="settings-card__desc">{{ $t('settings.fullThumbGenDesc') }}</div>
             <div v-if="scan.thumbGenProgress.status !== 'idle'" class="thumb-gen-status">
               <div class="progress-bar">
-                <div 
-                  class="progress-bar__fill" 
+                <div
+                  class="progress-bar__fill"
                   :class="{ 'progress-shimmer': scan.thumbGenProgress.isRunning }"
                   :style="{ width: thumbGenPercent + '%' }"
                 />
@@ -85,36 +113,58 @@
             </div>
           </div>
           <div class="setting-actions">
-            <button 
-              v-if="scan.thumbGenProgress.isRunning" 
-              class="btn btn-secondary" 
+            <button
+              v-if="scan.thumbGenProgress.isRunning"
+              class="btn btn-secondary"
               @click="scan.stopFullThumbnailGeneration()"
             >
               {{ $t('settings.stopGen') }}
             </button>
-            <button 
-              v-else 
-              class="btn btn-primary" 
+            <button
+              v-else
+              class="btn btn-primary"
               @click="scan.startFullThumbnailGeneration()"
             >
               {{ $t('settings.startGen') }}
             </button>
           </div>
         </div>
+      </div>
 
-        <div class="setting-item">
-          <div class="setting-info">
-            <div class="setting-label">{{ $t('settings.hoverScale') }}</div>
-            <div class="setting-desc">{{ $t('settings.hoverScaleDesc') }}</div>
+      <!-- ── 开发者工具 ─────────────────────────────────── -->
+      <div class="settings-card">
+        <div class="settings-card__header">{{ $t('sidebar.debugSettings') || '开发者工具' }}</div>
+
+        <div class="settings-card__item">
+          <div class="settings-card__info">
+            <div class="settings-card__label">{{ $t('sidebar.clearDb') || '清除数据库' }}</div>
+            <div class="settings-card__desc">删除所有已扫描的媒体数据和索引</div>
           </div>
-          <input 
-            type="checkbox" 
-            v-model="enableHoverScale" 
-            @change="saveHoverScale"
-            class="setting-checkbox"
-          />
+          <button class="btn btn-danger" @click="clearDb">
+            <Database :size="14" /> {{ $t('sidebar.data') || '清除' }}
+          </button>
         </div>
-      </section>
+
+        <div class="settings-card__item">
+          <div class="settings-card__info">
+            <div class="settings-card__label">{{ $t('sidebar.clearSettings') || '清除设置' }}</div>
+            <div class="settings-card__desc">重置所有应用设置为默认值</div>
+          </div>
+          <button class="btn btn-danger" @click="clearSettings">
+            <Paintbrush :size="14" /> {{ $t('sidebar.settings') || '清除' }}
+          </button>
+        </div>
+
+        <div class="settings-card__item">
+          <div class="settings-card__info">
+            <div class="settings-card__label">清除缓存</div>
+            <div class="settings-card__desc">清理浏览器缓存的图片并重载应用</div>
+          </div>
+          <button class="btn btn-danger" @click="clearBrowserCache">
+            <RotateCcw :size="14" /> 缓存
+          </button>
+        </div>
+      </div>
     </main>
   </div>
 </template>
@@ -125,16 +175,20 @@ import { useRouter } from 'vue-router'
 import { invoke } from '@tauri-apps/api/core'
 import { useUiStore } from '../stores/uiStore'
 import { useScanStore } from '../stores/scanStore'
+import { useMediaStore } from '../stores/mediaStore'
 import { useI18n } from 'vue-i18n'
+import { X, Database, Paintbrush, RotateCcw } from '@lucide/vue'
+import { IPC } from '../constants/ipc'
 
 const ui = useUiStore()
 const scan = useScanStore()
+const media = useMediaStore()
 const router = useRouter()
 const { t } = useI18n()
 
 const thumbSkipMaxKb = ref(200)
 const timelineScrollWidth = ref(6)
-const uiFontSize = ref(15)
+const uiFontSize = ref(16)
 const enableHoverScale = ref(true)
 
 const thumbGenPercent = computed(() => {
@@ -177,14 +231,14 @@ async function saveScrollbarWidth() {
 
 async function saveFontSize() {
   await saveConfig('ui_font_size', uiFontSize.value.toString())
-  const diff = uiFontSize.value - 15;
+  const diff = uiFontSize.value - 16;
   document.documentElement.style.setProperty('--font-size-xs', `${12 + diff}px`);
   document.documentElement.style.setProperty('--font-size-sm', `${13 + diff}px`);
-  document.documentElement.style.setProperty('--font-size-base', `${15 + diff}px`);
-  document.documentElement.style.setProperty('--font-size-md', `${16 + diff}px`);
-  document.documentElement.style.setProperty('--font-size-lg', `${19 + diff}px`);
-  document.documentElement.style.setProperty('--font-size-xl', `${23 + diff}px`);
-  document.documentElement.style.setProperty('--font-size-2xl', `${28 + diff}px`);
+  document.documentElement.style.setProperty('--font-size-base', `${16 + diff}px`);
+  document.documentElement.style.setProperty('--font-size-md', `${17 + diff}px`);
+  document.documentElement.style.setProperty('--font-size-lg', `${20 + diff}px`);
+  document.documentElement.style.setProperty('--font-size-xl', `${24 + diff}px`);
+  document.documentElement.style.setProperty('--font-size-2xl', `${30 + diff}px`);
 }
 
 async function saveHoverScale() {
@@ -194,6 +248,34 @@ async function saveHoverScale() {
   } else {
     document.documentElement.classList.add('disable-hover-scale')
   }
+}
+
+// ── Debug functions (moved from sidebar) ────────────────────────────────────
+// ── 调试功能（从侧边栏迁移） ──────────────────────────────────────────────
+
+async function clearDb() {
+  if (!confirm(t('sidebar.clearDbConfirm') || '确定要清除所有数据？此操作不可撤销。')) return
+  try {
+    await scan.clearDatabase()
+    media.loadStats()
+    ui.addToast('success', t('sidebar.clearDbSuccess') || '数据已清除')
+  } catch (e) {
+    ui.addToast('error', `清除数据失败: ${e}`)
+  }
+}
+
+async function clearSettings() {
+  if (!confirm(t('sidebar.clearSettingsConfirm') || '确定要重置所有设置？')) return
+  try {
+    await invoke(IPC.CLEAR_SETTINGS)
+    window.location.reload()
+  } catch (e) {
+    ui.addToast('error', `清除设置失败: ${e}`)
+  }
+}
+
+function clearBrowserCache() {
+  window.location.href = window.location.pathname + '?clear=' + Date.now()
 }
 
 function closeSettings() {
@@ -215,8 +297,9 @@ function closeSettings() {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: var(--spacing-xl) var(--spacing-2xl);
+  padding: var(--spacing-lg) var(--spacing-xl);
   border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
 }
 
 .settings-title {
@@ -233,13 +316,14 @@ function closeSettings() {
   background: var(--color-bg-elevated);
   border: 1px solid var(--color-border);
   color: var(--color-text-secondary);
-  font-size: 16px;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all var(--transition-fast);
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast),
+    border-color var(--transition-fast);
 }
-
 .btn-close:hover {
   background: var(--color-error);
   color: white;
@@ -247,80 +331,20 @@ function closeSettings() {
 }
 
 .settings-content {
-  padding: var(--spacing-xl) var(--spacing-2xl);
-  max-width: 800px;
-}
-
-.settings-section {
-  background: var(--color-bg-elevated);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  padding: var(--spacing-xl);
-  margin-bottom: var(--spacing-xl);
-}
-
-.section-title {
-  font-size: var(--font-size-lg);
-  font-weight: 500;
-  color: var(--color-text-primary);
-  margin: 0 0 var(--spacing-lg) 0;
-}
-
-.setting-item {
+  padding: var(--spacing-lg) var(--spacing-xl);
+  max-width: 640px;
+  margin: 0 auto;
+  width: 100%;
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--spacing-md);
-  padding: var(--spacing-md) 0;
-  border-bottom: 1px solid var(--color-border-subtle);
+  flex-direction: column;
+  gap: var(--spacing-lg);
 }
 
-.setting-item:last-child {
-  border-bottom: none;
-  padding-bottom: 0;
-}
+/* ── Card overrides (extend global .settings-card) ─────────────────────── */
+/* The base .settings-card styles are in index.css. */
+/* Here we only add component-specific refinements. */
 
-.setting-info {
-  flex: 1;
-}
-
-.setting-label {
-  font-size: var(--font-size-md);
-  font-weight: 500;
-  color: var(--color-text-primary);
-  margin-bottom: 4px;
-}
-
-.setting-desc {
-  font-size: var(--font-size-sm);
-  color: var(--color-text-tertiary);
-  line-height: 1.5;
-}
-
-.setting-input {
-  width: 100px;
-  padding: 8px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-bg-primary);
-  color: var(--color-text-primary);
-  text-align: right;
-  font-family: var(--font-mono);
-  font-size: var(--font-size-base);
-}
-
-.setting-input:focus {
-  outline: none;
-  border-color: var(--color-accent);
-}
-
-.setting-checkbox {
-  width: 20px;
-  height: 20px;
-  cursor: pointer;
-  accent-color: var(--color-accent);
-}
-
+/* ── Thumbnail generation ──────────────────────────────────────────────── */
 .thumb-gen-status {
   margin-top: var(--spacing-sm);
   display: flex;
@@ -357,17 +381,27 @@ function closeSettings() {
   0% { background-position: -200% 0; }
   100% { background-position: 200% 0; }
 }
+
+/* ── Buttons ───────────────────────────────────────────────────────────── */
 .setting-actions {
   display: flex;
   align-items: center;
+  flex-shrink: 0;
 }
 .btn {
-  padding: 6px 16px;
-  border-radius: var(--radius-sm);
+  padding: 7px 16px;
+  border-radius: var(--radius-md);
   font-size: var(--font-size-sm);
+  font-weight: 500;
   cursor: pointer;
   border: none;
-  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  transition:
+    background var(--transition-fast),
+    filter var(--transition-fast);
+  white-space: nowrap;
 }
 .btn-secondary {
   background: transparent;
@@ -375,7 +409,7 @@ function closeSettings() {
   border: 1px solid var(--color-border);
 }
 .btn-secondary:hover {
-  background: var(--color-sidebar-hover-bg);
+  background: var(--color-bg-hover);
 }
 .btn-primary {
   background: var(--color-accent);
@@ -383,5 +417,15 @@ function closeSettings() {
 }
 .btn-primary:hover {
   filter: brightness(1.1);
+}
+.btn-danger {
+  background: transparent;
+  color: var(--color-error);
+  border: 1px solid var(--color-border);
+}
+.btn-danger:hover {
+  background: var(--color-error);
+  color: #fff;
+  border-color: var(--color-error);
 }
 </style>

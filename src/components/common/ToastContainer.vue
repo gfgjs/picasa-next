@@ -9,7 +9,7 @@
           :class="`toast--${toast.type}`"
           @click="ui.removeToast(toast.id)"
         >
-          <span class="toast__icon">{{ iconMap[toast.type] }}</span>
+          <component :is="iconMap[toast.type]" :size="16" class="toast__icon" />
           <span class="toast__msg">{{ toast.message }}</span>
         </div>
       </TransitionGroup>
@@ -19,8 +19,10 @@
 
 <script setup lang="ts">
 import { useUiStore } from '../../stores/uiStore'
+import { Check, X, AlertTriangle, Info } from '@lucide/vue'
+
 const ui = useUiStore()
-const iconMap = { success: '✓', error: '✕', warning: '⚠', info: 'ℹ' }
+const iconMap: Record<string, any> = { success: Check, error: X, warning: AlertTriangle, info: Info }
 </script>
 
 <style scoped>

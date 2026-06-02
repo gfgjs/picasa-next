@@ -15,22 +15,22 @@
       class="chip"
       :class="{ active: filter.mediaTypes.includes('image') }"
       @click="filter.toggleMediaType('image')"
-    >🖼️ 图片</button>
+    ><ImageIcon :size="14" /> 图片</button>
     <button
       class="chip"
       :class="{ active: filter.mediaTypes.includes('video') }"
       @click="filter.toggleMediaType('video')"
-    >🎬 视频</button>
+    ><Video :size="14" /> 视频</button>
     <button
       class="chip"
       :class="{ active: filter.livePhotoOnly }"
       @click="filter.livePhotoOnly = !filter.livePhotoOnly"
-    >✨ Live</button>
+    ><Sparkles :size="14" /> Live</button>
     <button
       v-if="filter.hasActiveFilters"
       class="chip chip--clear"
       @click="filter.clearFilters()"
-    >✕ 清除筛选</button>
+    ><X :size="14" /> 清除筛选</button>
   </div>
 
   <!-- Right controls -->
@@ -43,13 +43,14 @@
       :title="ui.isFullscreen ? $t('toolbar.exitFullscreen') : $t('toolbar.fullscreen')"
       @click="ui.toggleFullscreen()"
     >
-      {{ ui.isFullscreen ? '🗗' : '🖵' }}
+      <Minimize2 v-if="ui.isFullscreen" :size="18" />
+      <Maximize2 v-else :size="18" />
     </button>
 
     <!-- Search -->
     <!-- 搜索 -->
     <div class="toolbar__search-wrap" :class="{ focused: isSearchFocused }">
-      <span class="toolbar__search-icon">🔍</span>
+      <Search :size="14" class="toolbar__search-icon" />
       <input
         ref="searchInputRef"
         class="toolbar__search"
@@ -76,7 +77,8 @@
         :title="ui.sortOrder === 'desc' ? '从新到旧' : '从旧到新'"
         @click="toggleSortOrder"
       >
-        {{ ui.sortOrder === 'desc' ? '↓' : '↑' }}
+        <ArrowDown v-if="ui.sortOrder === 'desc'" :size="16" />
+        <ArrowUp v-else :size="16" />
       </button>
     </div>
   </div>
@@ -84,6 +86,7 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import { ImageIcon, Video, Sparkles, X, Maximize2, Minimize2, Search, ArrowDown, ArrowUp } from '@lucide/vue'
 import { useUiStore } from '../../stores/uiStore'
 import { useFilterStore } from '../../stores/filterStore'
 import { useMediaStore } from '../../stores/mediaStore'
@@ -194,7 +197,7 @@ function onSortChange() {
   border-color: var(--color-accent);
   width: 280px;
 }
-.toolbar__search-icon { font-size: 13px; }
+.toolbar__search-icon { color: var(--color-text-tertiary); flex-shrink: 0; }
 .toolbar__search {
   flex: 1;
   font-size: var(--font-size-sm);

@@ -44,7 +44,7 @@
 
       <!-- Video play -->
       <!-- 视频播放 -->
-      <span v-if="mediaType === 'video'" class="badge badge-video">▶</span>
+      <span v-if="mediaType === 'video'" class="badge badge-video"><Play :size="20" fill="#fff" /></span>
       <!-- Duration -->
       <!-- 时长 -->
       <span v-if="durationMs" class="badge badge-duration">{{ formatDuration(durationMs) }}</span>
@@ -56,7 +56,7 @@
         :class="{ active: isFavorited, 'fav-animate': favAnimating }"
         @click.stop="toggleFav"
         title="收藏"
-      >{{ isFavorited ? '❤️' : '🤍' }}</button>
+      ><Heart :size="16" :fill="isFavorited ? 'currentColor' : 'none'" :stroke-width="isFavorited ? 0 : 2" /></button>
       <!-- Selection checkbox -->
       <!-- 选择复选框 -->
       <div
@@ -65,7 +65,7 @@
         @click.stop="emit('select', id)"
       >
         <div class="checkbox" :class="{ checked: isSelected }">
-          <span v-if="isSelected">✓</span>
+          <Check v-if="isSelected" :size="12" />
         </div>
       </div>
     </div>
@@ -75,6 +75,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { convertFileSrc } from '@tauri-apps/api/core'
+import { Play, Heart, Check } from '@lucide/vue'
 import { thumbhashToAverageColor } from '../../utils/thumbhash'
 import { formatDuration, formatFileSize } from '../../utils/format'
 

@@ -98,26 +98,29 @@ pub fn run() {
                 .unwrap_or_else(|| app_data_dir.join("logs"));
             std::fs::create_dir_all(&log_dir).unwrap_or_default();
 
-            let file_appender = tracing_appender::rolling::Builder::new()
-                .rotation(tracing_appender::rolling::Rotation::DAILY)
-                .filename_prefix("picasa-next")
-                .filename_suffix("log")
-                .build(&log_dir)
-                .expect("Failed to initialize rolling file appender");
-
-            // Wrapper to ensure real-time log flushing | 包装器以确保实时刷新日志
-            struct FlushWriter<W> { inner: W }
-            impl<W: std::io::Write> std::io::Write for FlushWriter<W> {
+            // Custom writer to ensure real-time NTFS metadata updates on Windows | 自定义写入器以确保在 Windows 上实时更新 NTFS 元数据
+            #[derive(Clone)]
+            struct RealTimeDailyAppender {
+                log_dir: std::path::PathBuf,
+            }
+            impl std::io::Write for RealTimeDailyAppender {
                 fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-                    let res = self.inner.write(buf);
-                    let _ = self.inner.flush();
-                    res
+                    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+                    let path = self.log_dir.join(format!("picasa-next.{}.log", today));
+                    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+                        let res = file.write(buf);
+                        let _ = file.sync_data(); // Force OS to flush metadata (size) to disk | 强制操作系统将元数据（大小）刷新到磁盘
+                        res
+                    } else {
+                        Ok(buf.len()) // Silently drop if we can't write to avoid crashing | 如果无法写入则静默丢弃，避免崩溃
+                    }
                 }
-                fn flush(&mut self) -> std::io::Result<()> { self.inner.flush() }
+                fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
             }
 
             // Use non_blocking to offload writes and flushes to a background thread | 使用 non_blocking 将写入和刷新转移到后台线程
-            let (non_blocking, guard) = tracing_appender::non_blocking(FlushWriter { inner: file_appender });
+            let appender = RealTimeDailyAppender { log_dir: log_dir.clone() };
+            let (non_blocking, guard) = tracing_appender::non_blocking(appender);
             Box::leak(Box::new(guard));
 
             let env_filter_term = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&log_level));

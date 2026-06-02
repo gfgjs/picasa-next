@@ -62,9 +62,9 @@
           <!-- Left -->
           <!-- 左侧 -->
           <div class="detail-controls__left">
-            <button class="btn-icon" @click="close" title="关闭 (Esc)">✕</button>
-            <button class="btn-icon" @click="state.zoomIn()">＋</button>
-            <button class="btn-icon" @click="state.zoomOut()">－</button>
+            <button class="btn-icon" @click="close" :title="$t('detail.close')">✕</button>
+            <button class="btn-icon" @click="state.zoomIn()" :title="$t('detail.zoomIn')">＋</button>
+            <button class="btn-icon" @click="state.zoomOut()" :title="$t('detail.zoomOut')">－</button>
             <button class="btn-icon" @click="handleToggleZoom" :title="zoomModeTitle">{{ zoomModeIcon }}</button>
             <button
               v-if="detail.isLivePhoto"
@@ -93,7 +93,7 @@
               title="收藏"
             >{{ detail.isFavorited ? '❤️' : '🤍' }}</button>
             <button class="btn-icon" @click="showInExplorer" title="在文件夹中显示">📂</button>
-            <button class="btn-icon" @click="state.toggleInfo()" title="详细信息">ℹ️</button>
+            <button class="btn-icon" @click="state.toggleInfo()" :title="$t('detail.info')">ℹ️</button>
           </div>
         </div>
 
@@ -108,19 +108,19 @@
 
             <div class="info-section">
               <div class="info-row">
-                <span class="info-label">文件名</span>
+                <span class="info-label">{{ $t('detail.fileName') }}</span>
                 <span class="info-value" :title="detail.fileName">{{ detail.fileName }}</span>
               </div>
               <div class="info-row">
-                <span class="info-label">文件大小</span>
+                <span class="info-label">{{ $t('detail.fileSize') }}</span>
                 <span class="info-value">{{ formatFileSize(detail.fileSize) }}</span>
               </div>
               <div class="info-row">
-                <span class="info-label">尺寸</span>
+                <span class="info-label">{{ $t('detail.dimensions') }}</span>
                 <span class="info-value" v-if="detail.width">{{ detail.width }} × {{ detail.height }}</span>
               </div>
               <div class="info-row">
-                <span class="info-label">格式</span>
+                <span class="info-label">{{ $t('detail.format') }}</span>
                 <span class="info-value">{{ detail.fileFormat.toUpperCase() }}</span>
               </div>
             </div>
@@ -128,33 +128,33 @@
             <!-- EXIF -->
             <!-- EXIF -->
             <div v-if="detail.imageMeta" class="info-section">
-              <div class="info-section__title">EXIF</div>
+              <div class="info-section__title">{{ $t('detail.exif') }}</div>
               <div v-if="detail.imageMeta.exifDatetime" class="info-row">
-                <span class="info-label">拍摄时间</span>
+                <span class="info-label">{{ $t('detail.datetime') }}</span>
                 <span class="info-value">{{ formatDateTime(detail.imageMeta.exifDatetime) }}</span>
               </div>
               <div v-if="detail.imageMeta.exifMake" class="info-row">
-                <span class="info-label">相机</span>
+                <span class="info-label">{{ $t('detail.camera') }}</span>
                 <span class="info-value">{{ detail.imageMeta.exifMake }} {{ detail.imageMeta.exifModel }}</span>
               </div>
               <div v-if="detail.imageMeta.exifFocalLength" class="info-row">
-                <span class="info-label">焦距</span>
+                <span class="info-label">{{ $t('detail.focalLength') }}</span>
                 <span class="info-value">{{ formatFocalLength(detail.imageMeta.exifFocalLength) }}</span>
               </div>
               <div v-if="detail.imageMeta.exifAperture" class="info-row">
-                <span class="info-label">光圈</span>
+                <span class="info-label">{{ $t('detail.aperture') }}</span>
                 <span class="info-value">{{ formatAperture(detail.imageMeta.exifAperture) }}</span>
               </div>
               <div v-if="detail.imageMeta.exifShutter" class="info-row">
-                <span class="info-label">快门</span>
+                <span class="info-label">{{ $t('detail.exposure') }}</span>
                 <span class="info-value">{{ detail.imageMeta.exifShutter }}s</span>
               </div>
               <div v-if="detail.imageMeta.exifIso" class="info-row">
-                <span class="info-label">ISO</span>
+                <span class="info-label">{{ $t('detail.iso') }}</span>
                 <span class="info-value">{{ detail.imageMeta.exifIso }}</span>
               </div>
               <div v-if="detail.imageMeta.exifGpsLat" class="info-row">
-                <span class="info-label">GPS</span>
+                <span class="info-label">{{ $t('detail.location') }}</span>
                 <span class="info-value">{{ formatGps(detail.imageMeta.exifGpsLat, detail.imageMeta.exifGpsLng!) }}</span>
               </div>
             </div>
@@ -184,6 +184,7 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { convertFileSrc } from '@tauri-apps/api/core'
+import { useI18n } from 'vue-i18n'
 import { useMediaStore } from '../../stores/mediaStore'
 import { useUiStore }    from '../../stores/uiStore'
 import { useMediaDetail } from '../../composables/useMediaDetail'
@@ -192,6 +193,7 @@ import { IPC } from '../../constants/ipc'
 
 const media = useMediaStore()
 const ui    = useUiStore()
+const { t } = useI18n()
 
 const detail  = computed(() => media.detailItem!)
 const absPath = computed(() => detail.value ? convertFileSrc(detail.value.absPath) : '')
@@ -342,7 +344,7 @@ async function toggleLive() {
       state.liveVideoSrc.value  = convertFileSrc(path)
       state.isPlayingLive.value = true
     } catch (e) {
-      ui.addToast('error', '无法加载 Live 视频')
+      ui.addToast('error', t('detail.livePhotoError'))
     }
   }
 }

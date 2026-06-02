@@ -10,15 +10,15 @@
     <!-- 空状态 -->
     <div v-if="media.totalRows === 0 && !media.isComputingLayout" class="empty-state">
       <div class="empty-state__icon">🖼️</div>
-      <div class="empty-state__title">暂无媒体文件</div>
-      <div class="empty-state__desc">在左侧边栏添加文件夹，点击扫描即可开始</div>
+      <div class="empty-state__title">{{ emptyStateTitle }}</div>
+      <div v-if="emptyStateDesc" class="empty-state__desc">{{ emptyStateDesc }}</div>
     </div>
 
     <!-- Loading -->
     <!-- 加载中 -->
     <div v-if="media.isComputingLayout" class="media-grid__loading">
       <div class="spinner" />
-      <span>正在计算布局...</span>
+      <span>{{ $t('empty.computing') }}</span>
     </div>
 
     <!-- Virtual scroll wrapper (absolute positioning) -->
@@ -83,10 +83,10 @@
   <!-- Floating Scroll Buttons -->
   <!-- 悬浮滚动按钮 -->
     <div v-if="media.totalRows > 0" class="scroll-fab">
-      <button class="fab-btn" @click="scrollGridToTop" title="回到顶部">
+      <button class="fab-btn" @click="scrollGridToTop" :title="$t('empty.scrollToTop')">
         ↑
       </button>
-      <button class="fab-btn" @click="scrollGridToBottom" title="滚到底部">
+      <button class="fab-btn" @click="scrollGridToBottom" :title="$t('empty.scrollToBottom')">
         ↓
       </button>
     </div>
@@ -94,10 +94,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, watch, onMounted, onBeforeUnmount, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import type { UnlistenFn } from '@tauri-apps/api/event'
+import { useI18n } from 'vue-i18n'
 
 import { useMediaStore } from '../../stores/mediaStore'
 import { useUiStore }    from '../../stores/uiStore'
@@ -117,6 +118,29 @@ const media  = useMediaStore()
 const ui     = useUiStore()
 const filter = useFilterStore()
 const queue  = useRequestQueue()
+const { t }  = useI18n()
+
+const emptyStateText = computed(() => {
+  if (ui.isSearching) {
+    return t('empty.search', { query: ui.searchQuery })
+  }
+  if (ui.activeDirectoryId != null) {
+    return t('empty.folder')
+  }
+  const album = ui.activeSmartAlbum
+  if (album === 'all') return t('empty.allPhotos')
+  if (album === 'recent') return t('empty.recentlyAdded')
+  if (album === 'favorites') return t('empty.favorites')
+  if (album === 'live-photos') return t('empty.livePhotos')
+  
+  return t('empty.allPhotos')
+})
+
+const emptyStateTitle = computed(() => emptyStateText.value.split('\n')[0])
+const emptyStateDesc = computed(() => {
+  const parts = emptyStateText.value.split('\n')
+  return parts.length > 1 ? parts[1] : ''
+})
 
 const gridRef  = ref<HTMLElement | null>(null)
 const cacheDir = ref('')

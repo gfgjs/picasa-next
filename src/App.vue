@@ -64,6 +64,14 @@ onMounted(async () => {
   // Load global UI configurations
   // 加载全局 UI 配置
   try {
+    const lang = await invoke<string | null>('get_app_config', { key: 'language' })
+    if (lang) {
+      ui.applyLanguage(lang)
+    } else {
+      // Default initialized language in uiStore / i18n
+      ui.applyLanguage(ui.language)
+    }
+
     const val = await invoke<string | null>('get_app_config', { key: 'timeline_scroll_width' })
     if (val) {
       document.documentElement.style.setProperty('--scrollbar-width', `${val}px`)

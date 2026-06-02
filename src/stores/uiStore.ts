@@ -7,11 +7,26 @@ import { ref, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import type { Theme, SmartAlbum, ToastMessage } from '../types/ui'
 import { IPC } from '../constants/ipc'
+import i18n from '../i18n'
 
 export const useUiStore = defineStore('ui', () => {
-  // ── Theme ──────────────────────────────────────────────────────────────
-  // ── 主题 ──────────────────────────────────────────────────────────────
+  // ── Theme & Language ───────────────────────────────────────────────────
+  // ── 主题与语言 ──────────────────────────────────────────────────────────
   const theme = ref<Theme>('dark')
+  const language = ref<string>('zh-CN')
+
+  function applyLanguage(lang: string) {
+    language.value = lang
+    document.documentElement.setAttribute('lang', lang)
+    if (i18n.global.locale.value !== lang) {
+      i18n.global.locale.value = lang as any
+    }
+  }
+
+  function setLanguage(lang: string) {
+    applyLanguage(lang)
+    invoke(IPC.SET_APP_CONFIG, { key: 'language', value: lang }).catch(console.error)
+  }
 
   function applyTheme(t: Theme) {
     const resolved = t === 'system'
@@ -124,9 +139,10 @@ export const useUiStore = defineStore('ui', () => {
   }
 
   return {
-    // theme
-    // 主题
+    // theme & language
+    // 主题与语言
     theme, setTheme, cycleTheme, applyTheme,
+    language, applyLanguage, setLanguage,
     // sidebar
     // 侧边栏
     sidebarWidth, sidebarCollapsed, setSidebarWidth, persistSidebarWidth,

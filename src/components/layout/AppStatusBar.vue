@@ -2,19 +2,19 @@
   <div class="statusbar__info">
     <span v-if="scan.isAnyScanRunning" class="statusbar__scanning">
       <span class="spinner" />
-      正在扫描...
+      {{ $t('statusbar.scanningSimple') }}
     </span>
     <span v-else-if="media.stats">
-      {{ media.totalItems.toLocaleString() }} 个项目
-      <template v-if="media.stats.totalImages > 0"> · {{ media.stats.totalImages.toLocaleString() }} 张图片</template>
-      <template v-if="media.stats.totalVideos > 0"> · {{ media.stats.totalVideos.toLocaleString() }} 段视频</template>
+      {{ $t('statusbar.items', { count: media.totalItems.toLocaleString() }) }}
+      <template v-if="media.stats.totalImages > 0"> · {{ $t('statusbar.images', { count: media.stats.totalImages.toLocaleString() }) }}</template>
+      <template v-if="media.stats.totalVideos > 0"> · {{ $t('statusbar.videos', { count: media.stats.totalVideos.toLocaleString() }) }}</template>
     </span>
   </div>
 
   <div class="statusbar__right">
     <span v-if="media.isComputingLayout" class="statusbar__computing">
       <span class="spinner" />
-      计算布局...
+      {{ $t('statusbar.computingLayout') }}
     </span>
     <span class="statusbar__version">v0.1.0</span>
   </div>

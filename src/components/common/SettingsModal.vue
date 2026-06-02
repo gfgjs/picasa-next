@@ -1,12 +1,23 @@
 <template>
   <div v-if="isOpen" class="modal-overlay" @click.self="close">
     <div class="modal-content">
-      <h2 class="modal-title">设置</h2>
+      <h2 class="modal-title">{{ $t('settings.title') }}</h2>
       
       <div class="setting-item">
         <div class="setting-info">
-          <div class="setting-label">小文件直显阈值 (KB)</div>
-          <div class="setting-desc">小于此大小的图片将不生成缩略图，直接加载原图以节省磁盘空间并提高加载速度。设为 0 则对所有图片生成缩略图。</div>
+          <div class="setting-label">{{ $t('settings.language') }}</div>
+          <div class="setting-desc">{{ $t('settings.languageDesc') }}</div>
+        </div>
+        <select v-model="ui.language" @change="ui.setLanguage(ui.language)" class="setting-input">
+          <option value="zh-CN">简体中文</option>
+          <option value="en-US">English</option>
+        </select>
+      </div>
+
+      <div class="setting-item">
+        <div class="setting-info">
+          <div class="setting-label">{{ $t('settings.thumbSkipMaxKb') }}</div>
+          <div class="setting-desc">{{ $t('settings.thumbSkipDesc') }}</div>
         </div>
         <input 
           type="number" 
@@ -29,8 +40,10 @@
 import { ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useUiStore } from '../../stores/uiStore'
+import { useI18n } from 'vue-i18n'
 
 const ui = useUiStore()
+const { t } = useI18n()
 
 const isOpen = ref(false)
 const thumbSkipMaxKb = ref(200)
@@ -50,10 +63,10 @@ async function openModal() {
 async function save() {
   try {
     await invoke('set_app_config', { key: 'thumb_skip_max_kb', value: thumbSkipMaxKb.value.toString() })
-    ui.addToast('success', '设置已保存')
+    ui.addToast('success', t('settings.saveSuccess'))
     isOpen.value = false
   } catch (e) {
-    ui.addToast('error', '保存失败: ' + e)
+    ui.addToast('error', t('settings.saveFailed', { error: String(e) }))
   }
 }
 

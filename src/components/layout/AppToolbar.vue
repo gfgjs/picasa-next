@@ -40,7 +40,7 @@
     <!-- 全屏 -->
     <button
       class="btn-icon"
-      :title="ui.isFullscreen ? '退出全屏 (F11)' : '全屏 (F11)'"
+      :title="ui.isFullscreen ? $t('toolbar.exitFullscreen') : $t('toolbar.fullscreen')"
       @click="ui.toggleFullscreen()"
     >
       {{ ui.isFullscreen ? '🗗' : '🖵' }}
@@ -57,7 +57,7 @@
         @input="onSearchInput"
         @focus="isSearchFocused = true"
         @blur="isSearchFocused = false"
-        placeholder="搜索文件名..."
+        :placeholder="$t('toolbar.searchPlaceholder')"
         type="search"
       />
     </div>
@@ -66,10 +66,10 @@
     <!-- 视图排序 -->
     <div class="toolbar__sort">
       <select class="toolbar__select" v-model="ui.sortBy" @change="onSortChange">
-        <option value="sort_datetime">按拍摄时间</option>
+        <option value="sort_datetime">{{ $t('toolbar.sortByDate') }}</option>
         <option value="file_mtime">按修改时间</option>
-        <option value="file_name">按文件名</option>
-        <option value="file_size">按文件大小</option>
+        <option value="file_name">{{ $t('toolbar.sortByName') }}</option>
+        <option value="file_size">{{ $t('toolbar.sortBySize') }}</option>
       </select>
       <button
         class="btn-icon"

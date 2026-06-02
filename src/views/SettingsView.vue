@@ -1,18 +1,29 @@
 <template>
   <div class="settings-view">
     <header class="settings-header">
-      <h1 class="settings-title">设置</h1>
+      <h1 class="settings-title">{{ $t('settings.title') }}</h1>
       <button class="btn-close" title="关闭设置" @click="closeSettings">✕</button>
     </header>
 
     <main class="settings-content">
       <section class="settings-section">
-        <h2 class="section-title">通用</h2>
+        <h2 class="section-title">{{ $t('settings.general') }}</h2>
         
         <div class="setting-item">
           <div class="setting-info">
-            <div class="setting-label">小文件直显阈值 (KB)</div>
-            <div class="setting-desc">小于此大小的图片将不生成缩略图，直接加载原图以节省磁盘空间并提高加载速度。设为 0 则对所有图片生成缩略图。</div>
+            <div class="setting-label">{{ $t('settings.language') }}</div>
+            <div class="setting-desc">{{ $t('settings.languageDesc') }}</div>
+          </div>
+          <select v-model="ui.language" @change="ui.setLanguage(ui.language)" class="setting-input">
+            <option value="zh-CN">简体中文</option>
+            <option value="en-US">English</option>
+          </select>
+        </div>
+
+        <div class="setting-item">
+          <div class="setting-info">
+            <div class="setting-label">{{ $t('settings.thumbSkipMaxKb') }}</div>
+            <div class="setting-desc">{{ $t('settings.thumbSkipDesc') }}</div>
           </div>
           <input 
             type="number" 
@@ -26,8 +37,8 @@
 
         <div class="setting-item">
           <div class="setting-info">
-            <div class="setting-label">右侧滚动块宽度 (px)</div>
-            <div class="setting-desc">调整右侧时间轴滚动条的宽度大小，方便拖拽。</div>
+            <div class="setting-label">{{ $t('settings.timelineScrollWidth') }}</div>
+            <div class="setting-desc">{{ $t('settings.timelineScrollDesc') }}</div>
           </div>
           <input 
             type="number" 
@@ -40,8 +51,8 @@
         </div>
         <div class="setting-item">
           <div class="setting-info">
-            <div class="setting-label">界面文字大小 (px)</div>
-            <div class="setting-desc">调整整个应用的基础字体大小（建议 12 - 20），默认 15px。</div>
+            <div class="setting-label">{{ $t('settings.uiFontSize') }}</div>
+            <div class="setting-desc">{{ $t('settings.uiFontSizeDesc') }}</div>
           </div>
           <input 
             type="number" 
@@ -55,8 +66,8 @@
 
         <div class="setting-item">
           <div class="setting-info">
-            <div class="setting-label">鼠标划过缩略图时放大</div>
-            <div class="setting-desc">开启后，鼠标悬停在瀑布流缩略图上时会略微放大。如果觉得卡顿可以关闭。</div>
+            <div class="setting-label">{{ $t('settings.hoverScale') }}</div>
+            <div class="setting-desc">{{ $t('settings.hoverScaleDesc') }}</div>
           </div>
           <input 
             type="checkbox" 
@@ -75,9 +86,11 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { invoke } from '@tauri-apps/api/core'
 import { useUiStore } from '../stores/uiStore'
+import { useI18n } from 'vue-i18n'
 
 const ui = useUiStore()
 const router = useRouter()
+const { t } = useI18n()
 
 const thumbSkipMaxKb = ref(200)
 const timelineScrollWidth = ref(6)
@@ -105,9 +118,9 @@ onMounted(async () => {
 async function saveConfig(key: string, value: string) {
   try {
     await invoke('set_app_config', { key, value })
-    ui.addToast('success', '设置已保存')
+    ui.addToast('success', t('settings.saveSuccess'))
   } catch (e) {
-    ui.addToast('error', '保存失败: ' + e)
+    ui.addToast('error', t('settings.saveFailed', { error: String(e) }))
   }
 }
 

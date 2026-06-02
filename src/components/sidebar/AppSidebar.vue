@@ -12,7 +12,7 @@
     <!-- Smart albums -->
     <!-- 智能相册 -->
     <section class="sidebar__section">
-      <div class="sidebar__section-label">媒体库</div>
+      <div class="sidebar__section-label">{{ $t('sidebar.library') }}</div>
       <ul class="sidebar__nav">
         <li v-for="album in smartAlbums" :key="album.id">
           <button
@@ -36,12 +36,12 @@
     <!-- 扫描根目录 / 文件夹树 -->
     <section class="sidebar__section sidebar__section--tree">
       <div class="sidebar__section-label">
-        <span>文件夹</span>
-        <button class="btn-icon" title="添加文件夹" @click="addRoot">＋</button>
+        <span>{{ $t('sidebar.folders') }}</span>
+        <button class="btn-icon" :title="$t('sidebar.addFolder')" @click="addRoot">＋</button>
       </div>
 
       <div v-if="folderTree.nodes.value.length === 0 && !scan.hasScanRoots" class="sidebar__empty">
-        <span>暂无文件夹</span>
+        <span>{{ $t('sidebar.noFolders') }}</span>
       </div>
 
       <div class="sidebar__tree" v-if="folderTree.nodes.value.length > 0">
@@ -81,14 +81,14 @@
               class="btn-icon scan-root-item__scan-btn"
               :class="{ active: scan.getProgress(root.id)?.isRunning }"
               @click="toggleScan(root.id)"
-              :title="scan.getProgress(root.id)?.isRunning ? '停止扫描' : '重新扫描'"
+              :title="scan.getProgress(root.id)?.isRunning ? $t('sidebar.stopScan') : $t('sidebar.rescan')"
             >
               {{ scan.getProgress(root.id)?.isRunning ? '⏹' : '⟳' }}
             </button>
             <button
               class="btn-icon scan-root-item__scan-btn"
               style="color: var(--color-error); opacity: 0.7;"
-              title="移除该文件夹"
+              :title="$t('sidebar.removeFolder')"
               @click="removeRoot(root.id)"
             >
               🗑️
@@ -112,23 +112,23 @@
     <!-- Settings / footer -->
     <!-- 设置 / 页脚 -->
     <div class="sidebar__footer">
-      <router-link to="/settings" class="btn-icon" title="设置" style="text-decoration: none;">⚙️</router-link>
-      <button class="btn-icon" title="[调试] 弹窗设置" @click="openSettings">🛠️</button>
-      <button class="btn-icon" title="切换主题" @click="ui.cycleTheme()">
+      <router-link to="/settings" class="btn-icon" :title="$t('sidebar.settings')" style="text-decoration: none;">⚙️</router-link>
+      <button class="btn-icon" :title="$t('sidebar.debugSettings')" @click="openSettings">🛠️</button>
+      <button class="btn-icon" :title="$t('sidebar.toggleTheme')" @click="ui.cycleTheme()">
         {{ ui.theme === 'dark' ? '☀️' : ui.theme === 'light' ? '🌙' : '🖥️' }}
       </button>
       <!-- Dev-only: clear data -->
       <!-- 仅开发：清空数据 -->
       <button
         class="btn-icon btn-danger-sm"
-        title="[开发] 清空数据库"
+        :title="$t('sidebar.clearDb')"
         @click="clearDb"
-      >🗑️ 数据</button>
+      >🗑️ {{ $t('sidebar.data') }}</button>
       <button
         class="btn-icon btn-danger-sm"
-        title="[开发] 清空设置"
+        :title="$t('sidebar.clearSettings')"
         @click="clearSettings"
-      >🗑️ 设置</button>
+      >🗑️ {{ $t('sidebar.settings') }}</button>
     </div>
 
     <SettingsModal ref="settingsModalRef" />
@@ -138,15 +138,15 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { open } from '@tauri-apps/plugin-dialog'
+import { invoke } from '@tauri-apps/api/core'
+import { IPC } from '../../constants/ipc'
 import { useUiStore } from '../../stores/uiStore'
 import { useScanStore } from '../../stores/scanStore'
 import { useMediaStore } from '../../stores/mediaStore'
 import { useFolderTree } from '../../composables/useFolderTree'
 import SettingsModal from '../common/SettingsModal.vue'
-import type { DirNode } from '../../types/media'
-import { invoke } from '@tauri-apps/api/core'
-import { IPC } from '../../constants/ipc'
 
 const ui       = useUiStore()
 const scan     = useScanStore()
@@ -154,6 +154,7 @@ const media    = useMediaStore()
 const folderTree = useFolderTree()
 const router   = useRouter()
 const route    = useRoute()
+const { t }    = useI18n()
 
 const settingsModalRef = ref<InstanceType<typeof SettingsModal> | null>(null)
 
@@ -165,11 +166,11 @@ function openSettings() {
 // ── 智能相册 ───────────────────────────────────────────────────────────
 
 const smartAlbums = computed(() => [
-  { id: 'all'         as const, icon: '🖼️', label: '全部',      count: media.stats?.totalItems },
-  { id: 'favorites'   as const, icon: '❤️', label: '收藏',      count: media.stats?.totalFavorited },
-  { id: 'live-photos' as const, icon: '✨', label: 'Live 照片', count: media.stats?.totalLivePhotos },
-  { id: 'recent'      as const, icon: '🕐', label: '最近',      count: null },
-  { id: 'trash'       as const, icon: '🗑️', label: '回收站',    count: media.stats?.totalDeleted },
+  { id: 'all'         as const, icon: '🖼️', label: t('sidebar.allPhotos'),      count: media.stats?.totalItems },
+  { id: 'favorites'   as const, icon: '❤️', label: t('sidebar.favorites'),      count: media.stats?.totalFavorited },
+  { id: 'live-photos' as const, icon: '✨', label: t('sidebar.livePhotos'), count: media.stats?.totalLivePhotos },
+  { id: 'recent'      as const, icon: '🕐', label: t('sidebar.recentlyAdded'),      count: null },
+  { id: 'trash'       as const, icon: '🗑️', label: t('sidebar.trash'),    count: media.stats?.totalDeleted },
 ])
 
 function formatCount(n: number | undefined | null): string {
@@ -181,7 +182,7 @@ function formatCount(n: number | undefined | null): string {
 // ── Folder tree ────────────────────────────────────────────────────────────
 // ── 文件夹树 ────────────────────────────────────────────────────────────
 
-function onNodeClick(node: DirNode) {
+function onNodeClick(node: any) {
   ui.setActiveDirectory(node.id)
   if (route.path !== '/') {
     router.push('/')
@@ -197,12 +198,6 @@ function handleSmartAlbumClick(albumId: string) {
 
 // ── Watch scan roots for live updates (NOT immediate — onMounted handles init) ─
 // ── 监听扫描根目录以进行实时更新（非 immediate — onMounted 处理初始化） ─
-// Using immediate:true here causes a double-load: the watch fires once before
-// 在这里使用 immediate:true 会导致双重加载：watch 在 onMounted 之前触发一次
-// onMounted (with empty array) and again after loadScanRoots() resolves,
-// （空数组），在 loadScanRoots() 解析后再次触发，
-// making loadRoots() called twice and duplicating folder entries.
-// 导致 loadRoots() 被调用两次并重复文件夹条目。
 watch(() => scan.scanRoots, (roots) => {
   // Only react to changes that happen AFTER initial mount (scan add/remove)
   // 仅对初始挂载之后发生的变化（扫描添加/删除）做出反应
@@ -231,26 +226,38 @@ async function toggleScan(rootId: number) {
 }
 
 async function addRoot() {
-  const selected = await open({
-    directory: true,
-    multiple:  false,
-    title:     '选择媒体文件夹',
-  })
-  if (!selected) return
-  const path = typeof selected === 'string' ? selected : selected[0]
-  if (!path) return
-  const root = await scan.addScanRoot(path)
-  await scan.startScan(root.id, () => {
-    media.loadStats()
-    folderTree.loadRoots(scan.scanRoots)
-  })
+  try {
+    const selected = await open({
+      directory: true,
+      multiple:  false,
+      title:     t('sidebar.chooseDir'),
+    })
+    if (!selected) return
+    const path = typeof selected === 'string' ? selected : selected[0]
+    if (!path) return
+    try {
+      const root = await scan.addScanRoot(path)
+      await scan.startScan(root.id, () => {
+        media.loadStats()
+        folderTree.loadRoots(scan.scanRoots)
+      })
+    } catch (e) {
+      ui.addToast('error', t('sidebar.addFolderFailed') + ' ' + e)
+    }
+  } catch (e) {
+    ui.addToast('error', t('sidebar.chooseDirFailed') + ' ' + e)
+  }
 }
 
 async function removeRoot(id: number) {
-  if (!confirm('确定要移除此文件夹吗？它的所有媒体信息将从库中删除，但不会删除本地文件。')) return
-  await scan.removeScanRoot(id)
-  media.loadStats()
-  folderTree.loadRoots(scan.scanRoots)
+  if (!confirm(t('sidebar.confirmRemove'))) return
+  try {
+    await scan.removeScanRoot(id)
+    media.loadStats()
+    folderTree.loadRoots(scan.scanRoots)
+  } catch (e) {
+    ui.addToast('error', t('sidebar.removeFolderFailed') + ' ' + e)
+  }
 }
 
 onMounted(async () => {
@@ -264,24 +271,24 @@ onMounted(async () => {
 })
 
 async function clearDb() {
-  if (!confirm('确定清空数据库吗？\n\n这将删除所有扫描根目录、媒体库记录、缩略图索引。\n本地文件不受影响。')) return
+  if (!confirm(t('sidebar.clearDbConfirm'))) return
   try {
     await scan.clearDatabase()
     folderTree.loadRoots([])
     media.loadStats()
-    ui.addToast('success', '数据库已清空')
+    ui.addToast('success', t('sidebar.clearDbSuccess'))
   } catch (e) {
-    ui.addToast('error', '清空失败: ' + e)
+    ui.addToast('error', t('sidebar.clearDbFailed', { error: String(e) }))
   }
 }
 
 async function clearSettings() {
-  if (!confirm('确定清空设置吗？\n\n这将重置主题、偏好设置等，并刷新页面。')) return
+  if (!confirm(t('sidebar.clearSettingsConfirm'))) return
   try {
     await invoke(IPC.CLEAR_SETTINGS)
     window.location.reload()
   } catch (e) {
-    ui.addToast('error', '清空设置失败: ' + e)
+    ui.addToast('error', t('sidebar.clearSettingsFailed', { error: String(e) }))
   }
 }
 </script>

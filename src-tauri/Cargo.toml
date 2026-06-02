@@ -14,7 +14,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 # ── Tauri core ──────────────────────────────────────────────────────────────
-tauri          = { version = "2", features = ["protocol-asset", "unstable"] }
+tauri          = { version = "2", features = ["protocol-asset", "unstable", "devtools"] }
 tauri-plugin-dialog       = "2"
 tauri-plugin-fs           = "2"
 tauri-plugin-shell        = "2"
@@ -63,10 +63,12 @@ tracing-appender   = "0.2"
 # ── Utilities ─────────────────────────────────────────────────────────────────
 chrono   = { version = "0.4", features = ["serde"] }
 anyhow   = "1"
+crossbeam-channel = "0.5.15"
 
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
+devtools = []
 
 [profile.dev]
 incremental = true
@@ -78,7 +80,9 @@ opt-level = 3
 
 [profile.release]
 panic    = "abort"
-codegen-units = 1
-lto      = true
+# Use multiple codegen units for faster parallel builds (default is 16)
+# codegen-units = 1
+# Use thin LTO instead of fat LTO (huge speedup in link time)
+lto      = "thin"
 opt-level = 3
 strip    = true

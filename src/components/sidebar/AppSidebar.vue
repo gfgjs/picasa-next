@@ -32,6 +32,40 @@
     <!-- 分隔线 -->
     <div class="sidebar__divider" />
 
+    <!-- Tools -->
+    <section class="sidebar__section">
+      <div class="sidebar__section-label">工具 / TOOLS</div>
+      <ul class="sidebar__nav">
+        <li>
+          <div class="sidebar__nav-item" style="flex-direction: column; align-items: flex-start; gap: 8px; cursor: default;">
+            <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span class="sidebar__nav-icon"><Zap :size="18" /></span>
+                <span class="sidebar__nav-label">全量生成缩略图</span>
+              </div>
+              <button class="btn-icon" @click="toggleThumbGen" :title="scan.thumbGenProgress.isRunning ? '停止生成' : '开始生成'">
+                <Square v-if="scan.thumbGenProgress.isRunning" :size="14" />
+                <Play v-else :size="14" />
+              </button>
+            </div>
+            
+            <div v-if="scan.thumbGenProgress.isRunning || scan.thumbGenProgress.status === 'completed'" style="width: 100%; font-size: 12px; color: var(--color-text-tertiary);">
+              <div v-if="scan.thumbGenProgress.isRunning" class="progress-bar" style="margin-bottom: 4px;">
+                <div class="progress-bar__fill" style="background: var(--color-accent);" :style="{ width: ((scan.thumbGenProgress.generated / Math.max(scan.thumbGenProgress.total, 1)) * 100) + '%' }" />
+              </div>
+              <div style="display: flex; justify-content: space-between;">
+                <span>{{ scan.thumbGenProgress.generated }} / {{ scan.thumbGenProgress.total }}</span>
+                <span v-if="elapsedTimeStr" style="font-family: monospace;">{{ elapsedTimeStr }}</span>
+              </div>
+            </div>
+          </div>
+        </li>
+      </ul>
+    </section>
+
+    <!-- Divider -->
+    <div class="sidebar__divider" />
+
     <!-- Scan roots / folder tree -->
     <!-- 扫描根目录 / 文件夹树 -->
     <section class="sidebar__section sidebar__section--tree">
@@ -145,7 +179,7 @@ import { useFolderTree } from '../../composables/useFolderTree'
 import {
   Aperture, FolderPlus, ChevronRight, Folder,
   Square, RefreshCw, Trash2, Settings,
-  Sun, Moon, Monitor, ImageIcon, Heart, Sparkles, Clock
+  Sun, Moon, Monitor, ImageIcon, Heart, Sparkles, Clock, Play, Zap
 } from '@lucide/vue'
 
 const ui       = useUiStore()
@@ -189,6 +223,50 @@ function handleSmartAlbumClick(albumId: string) {
   ui.setSmartAlbum(albumId as any)
   if (route.path !== '/') {
     router.push('/')
+  }
+}
+
+// ── Thumbnail Gen Controls ──────────────────────────────────────────────────
+const thumbGenStartTime = ref<number | null>(null)
+const thumbGenElapsedTime = ref<number>(0)
+
+const elapsedTimeStr = computed(() => {
+  if (thumbGenElapsedTime.value === 0 && !scan.thumbGenProgress.isRunning && scan.thumbGenProgress.status !== 'completed') return ''
+  const secs = Math.floor(thumbGenElapsedTime.value / 1000)
+  const m = Math.floor(secs / 60)
+  const s = secs % 60
+  return `${m}m ${s}s`
+})
+
+let timerInterval: number | null = null
+
+watch(() => scan.thumbGenProgress.isRunning, (isRunning) => {
+  if (isRunning) {
+    thumbGenStartTime.value = Date.now()
+    thumbGenElapsedTime.value = 0
+    if (timerInterval) clearInterval(timerInterval)
+    timerInterval = window.setInterval(() => {
+      if (thumbGenStartTime.value) {
+        thumbGenElapsedTime.value = Date.now() - thumbGenStartTime.value
+      }
+    }, 1000)
+  } else {
+    if (timerInterval) {
+      clearInterval(timerInterval)
+      timerInterval = null
+      if (thumbGenStartTime.value) {
+        // Final exact time calculation
+        thumbGenElapsedTime.value = Date.now() - thumbGenStartTime.value
+      }
+    }
+  }
+})
+
+function toggleThumbGen() {
+  if (scan.thumbGenProgress.isRunning) {
+    scan.stopFullThumbnailGeneration()
+  } else {
+    scan.startFullThumbnailGeneration()
   }
 }
 

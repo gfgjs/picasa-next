@@ -2484,6 +2484,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "crossbeam-channel",
  "fast_image_resize",
  "image",
  "kamadak-exif",

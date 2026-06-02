@@ -2,6 +2,8 @@
 // Frontend formatting utilities
 // 前端格式化工具
 
+import { convertFileSrc } from '@tauri-apps/api/core'
+
 /**
  * Format bytes to a human-readable string (e.g. "4.2 MB").
  * 格式化字节数为人类可读的字符串（例如 "4.2 MB"）。
@@ -93,7 +95,6 @@ export async function thumbUrl(
   size: number = 300,
 ): Promise<string> {
   if (!thumbPath) return ''
-  const { convertFileSrc } = await import('@tauri-apps/api/core')
   const abs = `${cacheDir}/thumbnails/${thumbPath}`.replace(/\\/g, '/')
   return convertFileSrc(abs)
 }

@@ -471,6 +471,16 @@ pub fn get_pending_thumb_items(conn: &Connection, limit: i64) -> Result<Vec<(i64
     rows.map(|r| r.map_err(AppError::from)).collect()
 }
 
+pub fn get_all_pending_thumb_ids(conn: &Connection) -> Result<Vec<i64>> {
+    let mut stmt = conn.prepare(
+        "SELECT id FROM media_items
+         WHERE thumb_status=0 AND is_deleted=0
+         ORDER BY created_at DESC"
+    )?;
+    let rows = stmt.query_map([], |row| row.get(0))?;
+    rows.map(|r| r.map_err(AppError::from)).collect()
+}
+
 pub fn count_pending_thumb_items(conn: &Connection) -> Result<i64> {
     conn.query_row(
         "SELECT COUNT(*) FROM media_items WHERE thumb_status=0 AND is_deleted=0",

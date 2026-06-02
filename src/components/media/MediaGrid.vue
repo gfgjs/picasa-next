@@ -99,6 +99,7 @@ import { ref, watch, onMounted, onBeforeUnmount, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import type { UnlistenFn } from '@tauri-apps/api/event'
+import { appDataDir, join } from '@tauri-apps/api/path'
 import { useI18n } from 'vue-i18n'
 
 import { useMediaStore } from '../../stores/mediaStore'
@@ -202,7 +203,6 @@ const { compute, onResize } = useJustifiedLayout(() => containerWidth.value)
 onMounted(async () => {
   // Get cache dir from Tauri
   // 从 Tauri 获取缓存目录
-  const { appDataDir, join } = await import('@tauri-apps/api/path')
   const dir = await appDataDir()
   cacheDir.value = (await join(dir, 'cache')).replace(/\\/g, '/')
 

@@ -5,6 +5,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import type { Theme, SmartAlbum, ToastMessage } from '../types/ui'
 import { IPC } from '../constants/ipc'
 import i18n from '../i18n'
@@ -127,7 +128,6 @@ export const useUiStore = defineStore('ui', () => {
 
   async function initFullscreen() {
     try {
-      const { getCurrentWindow } = await import('@tauri-apps/api/window')
       const appWindow = getCurrentWindow()
       isFullscreen.value = await appWindow.isFullscreen()
     } catch {
@@ -137,7 +137,6 @@ export const useUiStore = defineStore('ui', () => {
 
   async function toggleFullscreen() {
     try {
-      const { getCurrentWindow } = await import('@tauri-apps/api/window')
       const appWindow = getCurrentWindow()
       const current = await appWindow.isFullscreen()
       await appWindow.setFullscreen(!current)

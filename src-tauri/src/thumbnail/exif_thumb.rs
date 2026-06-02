@@ -1,33 +1,18 @@
-// src-tauri/src/thumbnail/exif_thumb.rs
-//! EXIF embedded thumbnail extraction (fast path).
-//! EXIF 内嵌缩略图提取（快速路径）。
-//!
-//! For JPEG files with an embedded EXIF thumbnail:
-//! 对于带有内嵌 EXIF 缩略图的 JPEG 文件：
-//!   1. Extract the embedded JPEG (~5ms)
-//!   1. 提取内嵌的 JPEG（约 5ms）
-//!   2. Validate size is ≥ target dimension
-//!   2. 验证尺寸是否 ≥ 目标尺寸
-//!   3. Resize if needed and encode as WebP
-//!   3. 如果需要，进行调整大小并编码为 WebP
-//!
-//! Falls back to full decode if the embedded thumb is too small or absent.
-//! 如果内嵌的缩略图太小或不存在，则回退到完整解码。
-
 use std::path::Path;
 
-use crate::engine::traits::ImageEngine;
+use crate::engine::traits::{ImageEngine, DecodedImage};
 use crate::error::{AppError, Result};
 
 use crate::scanner::metadata::read_jpeg_orientation;
+use crate::thumbnail::thumbhash::generate_thumbhash;
 
-/// Attempt the EXIF fast path. Returns encoded WebP bytes, or `None` to fall back.
-/// 尝试 EXIF 快速路径。返回编码后的 WebP 字节，如果需要回退则返回 `None`。
+/// Attempt the EXIF fast path. Returns encoded WebP bytes and optional ThumbHash, or `None` to fall back.
+/// 尝试 EXIF 快速路径。返回编码后的 WebP 字节和可选的 ThumbHash，如果需要回退则返回 `None`。
 pub fn try_exif_thumb(
     engine: &dyn ImageEngine,
     path: &Path,
     target_size: u32,
-) -> Option<Vec<u8>> {
+) -> Option<(Vec<u8>, Option<Vec<u8>>)> {
     let embedded = engine.extract_embedded_thumb(path).ok()??;
 
     // Decode the embedded JPEG
@@ -63,7 +48,27 @@ pub fn try_exif_thumb(
 
     // Resize and encode
     // 调整大小并编码
-    encode_webp_from_dynamic(img, target_size).ok()
+    let (new_w, new_h) = if w >= h {
+        let ratio = target_size as f32 / w as f32;
+        (target_size, (h as f32 * ratio).round() as u32)
+    } else {
+        let ratio = target_size as f32 / h as f32;
+        ((w as f32 * ratio).round() as u32, target_size)
+    };
+
+    let resized = img.resize(new_w, new_h, image::imageops::FilterType::Lanczos3);
+    let rgba = resized.to_rgba8();
+
+    let decoded_for_hash = DecodedImage {
+        pixels: rgba.clone().into_raw(),
+        width: new_w,
+        height: new_h,
+    };
+    let hash = generate_thumbhash(&decoded_for_hash).ok();
+
+    let webp_bytes = encode_as_webp(&rgba, new_w, new_h).ok()?;
+
+    Some((webp_bytes, hash))
 }
 
 /// Resize a `DynamicImage` to fit within `target_size` (longest edge) and encode as WebP.

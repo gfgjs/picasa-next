@@ -140,14 +140,23 @@ fn generate_image_thumb(
         .engine_for(format)
         .ok_or_else(|| AppError::UnsupportedFormat(format.to_string()))?;
 
-    // Full decode
-    // 完整解码
-    let decoded = engine.decode(abs_path)?;
-    let hash_result = generate_thumbhash(&decoded);
+    let mut final_webp = None;
+    let mut final_hash = None;
 
-    // Resize with fast_image_resize
-    // 使用 fast_image_resize 调整大小
-    let webp = resize_and_encode(&decoded.pixels, decoded.width, decoded.height, config.size)?;
+    // Try fast EXIF path first
+    // 首先尝试快速 EXIF 路径
+    if let Some((webp, hash)) = crate::thumbnail::exif_thumb::try_exif_thumb(engine.as_ref(), abs_path, config.size) {
+        final_webp = Some(webp);
+        final_hash = hash;
+    } else {
+        // Full decode fallback
+        // 完整解码回退
+        let decoded = engine.decode(abs_path)?;
+        final_hash = generate_thumbhash(&decoded).ok();
+        final_webp = Some(resize_and_encode(&decoded.pixels, decoded.width, decoded.height, config.size)?);
+    }
+
+    let webp = final_webp.unwrap();
 
     // Write WebP to disk
     // 将 WebP 写入磁盘
@@ -157,7 +166,7 @@ fn generate_image_thumb(
     std::fs::write(&disk_path, &webp).map_err(AppError::from)?;
 
     let db_path = thumb_db_path(config.size, cache_key);
-    let hash = hash_result.ok();
+    let hash = final_hash;
 
     {
         let conn = writer.lock().map_err(|e| AppError::Db(e.to_string()))?;

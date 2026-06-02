@@ -64,6 +64,16 @@
 
         <div class="settings-card__item">
           <div class="settings-card__info">
+            <div class="settings-card__label">{{ $t('settings.thumbCacheDir') || '缓存目录' }}</div>
+            <div class="settings-card__desc">{{ thumbCacheDir || '正在获取路径...' }}</div>
+          </div>
+          <button class="btn btn-secondary" @click="changeCacheDir">
+            {{ $t('settings.changeDir') || '更改目录' }}
+          </button>
+        </div>
+
+        <div class="settings-card__item">
+          <div class="settings-card__info">
             <div class="settings-card__label">{{ $t('settings.thumbSize') || '缩略图大小' }}</div>
             <div class="settings-card__desc">{{ $t('settings.thumbSizeDesc') || '生成的缩略图的最大边长 (像素)' }}</div>
           </div>
@@ -204,6 +214,7 @@ import { useScanStore } from '../stores/scanStore'
 import { useMediaStore } from '../stores/mediaStore'
 import { useI18n } from 'vue-i18n'
 import { X, Database, Paintbrush, RotateCcw } from '@lucide/vue'
+import { open } from '@tauri-apps/plugin-dialog'
 import { IPC } from '../constants/ipc'
 
 const ui = useUiStore()
@@ -214,6 +225,7 @@ const { t } = useI18n()
 
 const thumbSkipMaxKb = ref(200)
 const thumbSize = ref(300)
+const thumbCacheDir = ref('')
 const timelineScrollWidth = ref(6)
 const uiFontSize = ref(16)
 const enableHoverScale = ref(true)
@@ -240,6 +252,12 @@ onMounted(async () => {
 
     const val5 = await invoke<string | null>('get_app_config', { key: 'thumb_size' })
     if (val5) thumbSize.value = parseInt(val5, 10)
+
+    try {
+      thumbCacheDir.value = await invoke<string>('get_thumb_cache_dir')
+    } catch (e) {
+      console.warn('Failed to fetch resolved cache dir', e)
+    }
   } catch (e) {
     console.error('Failed to get config:', e)
   }
@@ -256,8 +274,24 @@ async function saveConfig(key: string, value: string) {
 
 async function saveThumbSize() {
   await saveConfig('thumb_size', thumbSize.value.toString())
-  // 提示用户可能需要重新生成缩略图
   ui.addToast('success', '已修改生成尺寸，新尺寸将在生成新缩略图时生效')
+}
+
+async function changeCacheDir() {
+  try {
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      title: '选择缩略图缓存目录',
+    })
+    if (selected && typeof selected === 'string') {
+      await saveConfig('thumb_cache_dir', selected)
+      thumbCacheDir.value = selected
+      ui.addToast('success', '缓存目录已更改，旧缓存不会自动移动，请根据需要手动清理。')
+    }
+  } catch (e) {
+    console.error('Failed to select directory:', e)
+  }
 }
 
 async function saveScrollbarWidth() {

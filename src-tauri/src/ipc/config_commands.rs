@@ -32,7 +32,24 @@ pub async fn set_app_config(key: String, value: String, state: State<'_, Arc<App
             let mut config = state.thumb_config.write().unwrap();
             config.skip_max_bytes = val * 1024;
         }
+    } else if key == "thumb_size" {
+        if let Ok(val) = value.parse::<u32>() {
+            let mut config = state.thumb_config.write().unwrap();
+            config.size = val;
+        }
+    } else if key == "thumb_cache_dir" {
+        let mut config = state.thumb_config.write().unwrap();
+        config.cache_dir = std::path::PathBuf::from(&value);
+        std::fs::create_dir_all(&config.cache_dir).unwrap_or_default();
     }
 
     Ok(())
+}
+
+/// Get the resolved absolute thumbnail cache directory.
+/// 获取解析后的绝对路径缩略图缓存目录。
+#[tauri::command]
+pub async fn get_thumb_cache_dir(state: State<'_, Arc<AppState>>) -> Result<String> {
+    let path = state.thumb_config.read().unwrap().cache_dir.clone();
+    Ok(path.to_string_lossy().to_string())
 }

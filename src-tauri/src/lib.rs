@@ -72,7 +72,7 @@ pub fn run() {
 
             // ── Read persisted config ─────────────────────────────────────
             // ── 读取持久化配置 ─────────────────────────────────────
-            let (thumb_size, thumb_skip_max_kb) = {
+            let (thumb_size, thumb_skip_max_kb, custom_cache_dir) = {
                 let pool = db_read_pool.get().expect("Pool error");
                 let size: u32 = get_config(&pool, "thumb_size")
                     .ok()
@@ -84,15 +84,23 @@ pub fn run() {
                     .flatten()
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(200);
-                (size, skip)
+                let cache_dir: Option<String> = get_config(&pool, "thumb_cache_dir")
+                    .ok()
+                    .flatten();
+                (size, skip, cache_dir)
             };
+
+            let cache_dir = custom_cache_dir
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| app_data_dir.join("cache"));
+            std::fs::create_dir_all(&cache_dir).unwrap_or_default();
 
             // ── Build AppState ─────────────────────────────────────────────
             // ── 构建 AppState ─────────────────────────────────────────────
             let app_state = AppState::new(
                 db_writer,
                 db_read_pool,
-                app_data_dir,
+                cache_dir,
                 thumb_size,
                 thumb_skip_max_kb,
             );
@@ -144,6 +152,7 @@ pub fn run() {
             // config
             ipc::config_commands::get_app_config,
             ipc::config_commands::set_app_config,
+            ipc::config_commands::get_thumb_cache_dir,
             // system
             // system
             ipc::system_commands::show_in_explorer,

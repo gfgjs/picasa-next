@@ -54,12 +54,10 @@ impl AppState {
     pub fn new(
         db_writer: DbWriter,
         db_read_pool: DbPool,
-        app_data_dir: PathBuf,
+        cache_dir: PathBuf,
         thumb_size: u32,
         thumb_skip_max_kb: u64,
     ) -> Self {
-        let cache_dir = app_data_dir.join("cache");
-
         Self {
             db_writer,
             db_read_pool,

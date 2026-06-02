@@ -260,6 +260,43 @@
   pointer-events: none;
 }
 
+/* ── Range Slider ────────────────────────────────────────────── */
+
+.setting-slider-group {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.input-range {
+  -webkit-appearance: none;
+  width: 140px;
+  height: 4px;
+  background: var(--color-border);
+  border-radius: var(--radius-full);
+  outline: none;
+}
+
+.input-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  transition: transform var(--transition-fast);
+}
+
+.input-range::-webkit-slider-thumb:hover {
+  transform: scale(1.1);
+}
+
+.input-range:active::-webkit-slider-thumb {
+  transform: scale(0.95);
+}
+
 /* ── Number Input ────────────────────────────────────────────── */
 
 .input-number {

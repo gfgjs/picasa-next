@@ -67,14 +67,25 @@
             <div class="settings-card__label">{{ $t('settings.thumbSize') || '缩略图大小' }}</div>
             <div class="settings-card__desc">{{ $t('settings.thumbSizeDesc') || '生成的缩略图的最大边长 (像素)' }}</div>
           </div>
-          <input
-            type="number"
-            v-model.number="thumbSize"
-            min="4"
-            max="1024"
-            class="input-number"
-            @change="saveThumbSize"
-          />
+          <div class="setting-slider-group">
+            <input
+              type="range"
+              v-model.number="thumbSize"
+              min="4"
+              max="1024"
+              step="1"
+              class="input-range"
+              @change="saveThumbSize"
+            />
+            <input
+              type="number"
+              v-model.number="thumbSize"
+              min="4"
+              max="1024"
+              class="input-number"
+              @change="saveThumbSize"
+            />
+          </div>
         </div>
 
         <div class="settings-card__item">

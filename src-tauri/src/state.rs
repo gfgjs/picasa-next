@@ -3,7 +3,7 @@
 //! Application state shared across all Tauri commands.
 //! 在所有 Tauri 命令之间共享的应用程序状态。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Mutex, RwLock};
 
@@ -41,6 +41,13 @@ pub struct AppState {
     /// Thumbnail configuration (cache dir, size, skip threshold).
     /// 缩略图配置（缓存目录、大小、跳过阈值）。
     pub thumb_config: RwLock<ThumbConfig>,
+
+    /// Cancellation token for full thumbnail generation task.
+    /// 全量缩略图生成任务的取消令牌。
+    pub thumb_gen_token: Mutex<Option<CancellationToken>>,
+
+    /// Cancelled thumbnail item IDs for viewport scrolling aborts.
+    pub cancelled_thumb_ids: Mutex<HashSet<i64>>,
 }
 
 impl AppState {
@@ -64,6 +71,8 @@ impl AppState {
                 size: thumb_size,
                 skip_max_bytes: thumb_skip_max_kb * 1024,
             }),
+            thumb_gen_token: Mutex::new(None),
+            cancelled_thumb_ids: Mutex::new(HashSet::new()),
         }
     }
 
@@ -94,5 +103,21 @@ impl AppState {
             token.cancel();
         }
         map.clear();
+    }
+
+    /// Create a new cancellation token for full thumbnail generation.
+    /// 为全量缩略图生成创建一个新的取消令牌。
+    pub fn new_thumb_gen_token(&self) -> CancellationToken {
+        let token = CancellationToken::new();
+        *self.thumb_gen_token.lock().unwrap() = Some(token.clone());
+        token
+    }
+
+    /// Cancel the full thumbnail generation task if running.
+    /// 如果正在运行，取消全量缩略图生成任务。
+    pub fn cancel_thumb_gen(&self) {
+        if let Some(token) = self.thumb_gen_token.lock().unwrap().take() {
+            token.cancel();
+        }
     }
 }

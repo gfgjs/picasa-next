@@ -20,6 +20,7 @@ export default {
     chooseDir: '选择媒体文件夹',
     rescan: '重新扫描',
     stopScan: '停止扫描',
+    discoveringFiles: '正在检索... 已发现 {count} 个文件',
     removeFolder: '移除该文件夹',
     debugSettings: '[调试] 弹窗设置',
     toggleTheme: '切换主题',
@@ -97,7 +98,15 @@ export default {
     clearSuccess: '清除成功',
     clearFailed: '清除失败: {error}',
     saveSuccess: '设置已保存',
-    saveFailed: '保存失败: {error}'
+    saveFailed: '保存失败: {error}',
+    fullThumbGen: '全量生成缩略图',
+    fullThumbGenDesc: '在后台为图库中尚未生成缩略图的所有多媒体项生成缩略图，以便后续快速浏览。',
+    startGen: '开始生成',
+    stopGen: '停止生成',
+    genStatusRunning: '正在生成: {generated} / {total}',
+    genStatusCompleted: '生成完成！',
+    genStatusCancelled: '生成已取消',
+    genStatusError: '生成发生错误'
   },
   empty: {
     allPhotos: '这里空空如也\n点击左侧"添加文件夹"开始导入照片。',

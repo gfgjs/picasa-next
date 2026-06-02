@@ -52,6 +52,7 @@ pub struct ScanProgressPayload {
     pub scanned:     u64,
     pub total:       u64,
     pub current_dir: String,
+    pub status:      String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -192,7 +193,18 @@ pub fn run_fast_scan(
 
     // ── Step 1: Walk files ────────────────────────────────────────────────
     // ── 第 1 步：遍历文件 ────────────────────────────────────────────────
-    let walked_files = walk_media_files(root);
+    let walked_files = walk_media_files(root, cancel, |count| {
+        let _ = channel.send(ScanChannelPayload::Progress(ScanProgressPayload {
+            root_id,
+            scanned: count as u64,
+            total: 0,
+            current_dir: String::new(),
+            status: "discovering".to_string(),
+        }));
+    })?;
+    if cancel.is_cancelled() {
+        return Err(AppError::Cancelled);
+    }
     let total = walked_files.len() as u64;
     info!("Walker found {} files", total);
 
@@ -276,6 +288,7 @@ pub fn run_fast_scan(
                 scanned: batch_count as u64,
                 total,
                 current_dir: String::new(),
+                status: "scanning".to_string(),
             }));
 
             // Update DB scan status

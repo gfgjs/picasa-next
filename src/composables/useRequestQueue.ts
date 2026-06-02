@@ -5,10 +5,11 @@
 // 收集项目 ID 并以 THUMB_BATCH_SIZE 为批次进行刷新。
 
 import { ref } from 'vue'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke, Channel } from '@tauri-apps/api/core'
 import type { ThumbResult } from '../types/media'
 import { IPC } from '../constants/ipc'
 import { DEFAULTS } from '../constants/defaults'
+import { useScanStore } from '../stores/scanStore'
 
 type Resolver = (result: ThumbResult) => void
 
@@ -24,26 +25,38 @@ export function useRequestQueue() {
   const inFlight = new Set<number>()
   const resolvers = new Map<number, { resolve: Resolver, reject: (err: unknown) => void }[]>()
 
+  let isFlushing = false
+
   function flush() {
     flushTimer = null
     if (queue.value.length === 0) return
 
+    isFlushing = true
     const batch = queue.value.splice(0, DEFAULTS.THUMB_BATCH_SIZE)
     batch.forEach(id => inFlight.add(id))
 
-    invoke<ThumbResult[]>(IPC.BATCH_REQUEST_THUMBNAILS, { itemIds: batch })
-      .then(results => {
-        results.forEach((r, i) => {
-          const id = batch[i]
-          inFlight.delete(id)
-          const cbs = resolvers.get(id)
-          if (cbs) {
-            cbs.forEach(cb => cb.resolve(r))
-            resolvers.delete(id)
-          }
-        })
+    const scan = useScanStore()
+    scan.autoThumbQueueSize = queue.value.length
+    scan.autoThumbInFlight = inFlight.size
+    
+    console.log(`[useRequestQueue] flush: starting batch of ${batch.length}, inFlight=${inFlight.size}, queue=${queue.value.length}`)
+
+    const onResult = new Channel<ThumbResult>()
+    onResult.onmessage = (r) => {
+      inFlight.delete(r.itemId)
+      const cbs = resolvers.get(r.itemId)
+      if (cbs) {
+        cbs.forEach(cb => cb.resolve(r))
+        resolvers.delete(r.itemId)
+      }
+    }
+
+    invoke(IPC.BATCH_REQUEST_THUMBNAILS, { itemIds: batch, onResult })
+      .then(() => {
+        console.log(`[useRequestQueue] batch finished`)
       })
       .catch(err => {
+        console.error(`[useRequestQueue] batch failed: ${err}`, batch)
         batch.forEach(id => {
           inFlight.delete(id)
           const cbs = resolvers.get(id)
@@ -54,13 +67,16 @@ export function useRequestQueue() {
         })
       })
       .finally(() => {
+        isFlushing = false
+        scan.autoThumbInFlight = inFlight.size
         if (queue.value.length > 0) scheduleFlush()
       })
   }
 
   function scheduleFlush() {
     if (flushTimer !== null) return
-    flushTimer = setTimeout(flush, 16)
+    if (isFlushing) return
+    flushTimer = setTimeout(flush, 50)
   }
 
   function request(id: number): Promise<ThumbResult> {
@@ -77,6 +93,7 @@ export function useRequestQueue() {
 
       if (!queue.value.includes(id)) {
         queue.value.push(id)
+        useScanStore().autoThumbQueueSize = queue.value.length
         scheduleFlush()
       }
     })
@@ -86,11 +103,15 @@ export function useRequestQueue() {
     const idx = queue.value.indexOf(id)
     if (idx >= 0) {
       queue.value.splice(idx, 1)
+      useScanStore().autoThumbQueueSize = queue.value.length
       const cbs = resolvers.get(id)
       if (cbs) {
         cbs.forEach(cb => cb.reject(new Error('cancelled')))
         resolvers.delete(id)
       }
+    } else if (inFlight.has(id)) {
+      // If it's already sent to the backend but the user scrolled away, abort the heavy decode.
+      invoke(IPC.CANCEL_THUMBNAIL_REQUEST, { id }).catch(console.error)
     }
   }
 

@@ -99,11 +99,17 @@
           <div class="progress-bar">
             <div
               class="progress-bar__fill progress-shimmer"
-              :style="{ width: progressPercent(root.id) + '%' }"
+              :style="{ width: (scan.getProgress(root.id)?.status === 'discovering' ? 100 : progressPercent(root.id)) + '%' }"
+              :class="{ 'progress-bar__fill--discovering': scan.getProgress(root.id)?.status === 'discovering' }"
             />
           </div>
           <span class="scan-root-item__count">
-            {{ scan.getProgress(root.id)?.scanned ?? 0 }} / {{ scan.getProgress(root.id)?.total ?? 0 }}
+            <template v-if="scan.getProgress(root.id)?.status === 'discovering'">
+              {{ $t('sidebar.discoveringFiles', { count: scan.getProgress(root.id)?.scanned ?? 0 }) }}
+            </template>
+            <template v-else>
+              {{ scan.getProgress(root.id)?.scanned ?? 0 }} / {{ scan.getProgress(root.id)?.total ?? 0 }}
+            </template>
           </span>
         </div>
       </div>
@@ -129,6 +135,11 @@
         :title="$t('sidebar.clearSettings')"
         @click="clearSettings"
       >🗑️ {{ $t('sidebar.settings') }}</button>
+      <button
+        class="btn-icon btn-danger-sm"
+        title="清除浏览器缓存"
+        @click="clearBrowserCache"
+      >🗑️ 缓存</button>
     </div>
 
     <SettingsModal ref="settingsModalRef" />
@@ -160,6 +171,10 @@ const settingsModalRef = ref<InstanceType<typeof SettingsModal> | null>(null)
 
 function openSettings() {
   settingsModalRef.value?.openModal()
+}
+
+function clearBrowserCache() {
+  window.location.href = window.location.pathname + '?clear=' + Date.now()
 }
 
 // ── Smart albums ───────────────────────────────────────────────────────────
@@ -209,7 +224,7 @@ watch(() => scan.scanRoots, (roots) => {
 
 function progressPercent(rootId: number): number {
   const p = scan.getProgress(rootId)
-  if (!p || !p.total) return 0
+  if (!p || !p.total || p.status === 'discovering') return 0
   return Math.round((p.scanned / p.total) * 100)
 }
 
@@ -237,6 +252,17 @@ async function addRoot() {
     if (!path) return
     try {
       const root = await scan.addScanRoot(path)
+      
+      // 立即重新加载目录树，并在左侧选中该文件夹
+      await scan.loadScanRoots()
+      await folderTree.loadRoots(scan.scanRoots)
+      
+      const targetNode = folderTree.nodes.value.find(n => n.rootId === root.id && n.parentId === null)
+      if (targetNode) {
+        ui.setActiveDirectory(targetNode.id)
+        if (route.path !== '/') router.push('/')
+      }
+
       await scan.startScan(root.id, () => {
         media.loadStats()
         folderTree.loadRoots(scan.scanRoots)
@@ -470,6 +496,15 @@ async function clearSettings() {
   height: 100%;
   border-radius: 2px;
   transition: width 100ms linear;
+}
+.progress-bar__fill--discovering {
+  width: 100%;
+  background: var(--color-accent);
+  animation: breathe 1.5s ease-in-out infinite;
+}
+@keyframes breathe {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
 }
 .scan-root-item__count { font-size: 10px; color: var(--color-text-tertiary); white-space: nowrap; }
 

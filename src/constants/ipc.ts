@@ -36,6 +36,9 @@ export const IPC = {
   // ── 缩略图 ─────────────────────────────────────────────────────────
   BATCH_REQUEST_THUMBNAILS:  'batch_request_thumbnails',
   REQUEST_THUMBNAIL:         'request_thumbnail',
+  START_FULL_THUMBNAIL_GENERATION: 'start_full_thumbnail_generation',
+  STOP_FULL_THUMBNAIL_GENERATION:  'stop_full_thumbnail_generation',
+  CANCEL_THUMBNAIL_REQUEST: 'cancel_thumbnail_request',
 
   // ── Search ────────────────────────────────────────────────────────────
   // ── 搜索 ────────────────────────────────────────────────────────────

@@ -7,7 +7,9 @@
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 use walkdir::{DirEntry, WalkDir};
+use tokio_util::sync::CancellationToken;
 
+use crate::error::{AppError, Result};
 use crate::utils::format::{classify_media_type, MediaType};
 
 /// A single discovered file entry.
@@ -46,7 +48,11 @@ fn is_hidden(entry: &DirEntry) -> bool {
 /// 递归遍历 `root` 并返回所有可识别的媒体文件。
 /// Hidden entries (dot-prefixed) are skipped.
 /// 隐藏条目（点前缀）将被跳过。
-pub fn walk_media_files(root: &Path) -> Vec<WalkedFile> {
+pub fn walk_media_files(
+    root: &Path,
+    cancel: &CancellationToken,
+    mut progress_cb: impl FnMut(usize),
+) -> Result<Vec<WalkedFile>> {
     let mut results = Vec::new();
 
     for entry in WalkDir::new(root)
@@ -55,6 +61,10 @@ pub fn walk_media_files(root: &Path) -> Vec<WalkedFile> {
         .filter_entry(|e| !is_hidden(e))
         .filter_map(|e| e.ok())
     {
+        if cancel.is_cancelled() {
+            return Err(AppError::Cancelled);
+        }
+
         if !entry.file_type().is_file() {
             continue;
         }
@@ -99,7 +109,14 @@ pub fn walk_media_files(root: &Path) -> Vec<WalkedFile> {
             file_size,
             file_mtime,
         });
+
+        if results.len() % 1000 == 0 {
+            progress_cb(results.len());
+        }
     }
 
-    results
+    // Emit final count
+    progress_cb(results.len());
+
+    Ok(results)
 }

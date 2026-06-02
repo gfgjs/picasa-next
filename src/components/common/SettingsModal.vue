@@ -28,6 +28,14 @@
         />
       </div>
 
+      <div class="setting-item">
+        <div class="setting-info">
+          <div class="setting-label">{{ $t('settings.clearCache') || '清除缓存' }}</div>
+          <div class="setting-desc">{{ $t('settings.clearCacheDesc') || '强制清理浏览器缓存的图片并重载应用' }}</div>
+        </div>
+        <button class="btn btn-secondary" @click="clearBrowserCache">清除</button>
+      </div>
+
       <div class="modal-actions">
         <button class="btn btn-secondary" @click="close">取消</button>
         <button class="btn btn-primary" @click="save">保存</button>
@@ -72,6 +80,10 @@ async function save() {
 
 function close() {
   isOpen.value = false
+}
+
+function clearBrowserCache() {
+  window.location.href = window.location.pathname + '?clear=' + Date.now()
 }
 
 defineExpose({ openModal })
@@ -164,5 +176,46 @@ defineExpose({ openModal })
 }
 .btn-primary:hover {
   filter: brightness(1.1);
+}
+
+.thumb-gen-status {
+  margin-top: var(--spacing-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.progress-bar {
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--color-border);
+  overflow: hidden;
+}
+.progress-bar__fill {
+  height: 100%;
+  background: var(--color-accent);
+  transition: width 100ms linear;
+}
+.progress-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--color-accent) 0%,
+    var(--color-accent-hover) 50%,
+    var(--color-accent) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+.thumb-gen-text {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.setting-actions {
+  display: flex;
+  align-items: center;
 }
 </style>

@@ -134,8 +134,8 @@ export function useVirtualScroll(opts: UseVirtualScrollOptions) {
       return
     }
 
-    const bufferH = 3000 // 3000px buffer for smooth scrolling
-                         // 3000px 缓冲区以实现平滑滚动
+    const bufferH = 1000 // 1000px buffer for smooth scrolling
+                         // 1000px 缓冲区以实现平滑滚动
     const topY    = Math.max(0, scrollY - bufferH)
     const bottomY = scrollY + viewH + bufferH
 
@@ -153,8 +153,8 @@ export function useVirtualScroll(opts: UseVirtualScrollOptions) {
 
     // We need a new superset. Let's fetch a slightly larger box.
     // 我们需要一个新的超集。让我们获取一个稍大的框。
-    const requestTop    = Math.max(0, scrollY - bufferH * 1.5)
-    const requestBottom = scrollY + viewH + bufferH * 1.5
+    const requestTop    = Math.max(0, scrollY - bufferH * 1.2)
+    const requestBottom = scrollY + viewH + bufferH * 1.2
 
     lastFetchedTop    = requestTop
     lastFetchedBottom = requestBottom

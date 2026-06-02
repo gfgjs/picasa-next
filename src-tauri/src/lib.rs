@@ -134,7 +134,9 @@ pub fn run() {
             // thumbnails
             // thumbnails
             ipc::thumbnail_commands::batch_request_thumbnails,
-            ipc::thumbnail_commands::request_thumbnail,
+            ipc::thumbnail_commands::start_full_thumbnail_generation,
+            ipc::thumbnail_commands::stop_full_thumbnail_generation,
+            ipc::thumbnail_commands::cancel_thumbnail_request,
             // search
             // search
             ipc::search_commands::search_media,

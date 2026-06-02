@@ -7,6 +7,7 @@ export interface LayoutRowItem {
   x:           number
   w:           number
   h:           number
+  fileSize:    number
   fileFormat:  string
   mediaType:   string
   isLivePhoto: boolean

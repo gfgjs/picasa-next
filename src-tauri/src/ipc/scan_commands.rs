@@ -39,6 +39,18 @@ pub async fn add_scan_root(
 
     let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
     let id = q::insert_scan_root(&conn, &norm, alias.as_deref())?;
+
+    // 立即创建顶级目录记录，以便前端可以立刻加载和选中
+    // Immediately create the top-level directory record so the frontend can load and select it immediately
+    let dir_name = alias.clone().unwrap_or_else(|| {
+        std::path::Path::new(&norm)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string()
+    });
+    q::upsert_directory(&conn, id, None, "", &dir_name, 0, None)?;
+
     let root = q::get_scan_root(&conn, id)?;
     info!("Scan root added: id={id} path={norm}");
     Ok(root)

@@ -31,9 +31,17 @@
     <!-- Overlays -->
     <!-- 覆盖层 -->
     <div class="media-thumb__overlays">
-      <!-- LIVE badge -->
-      <!-- LIVE 徽标 -->
-      <span v-if="isLivePhoto" class="badge badge-live">LIVE</span>
+      <!-- Source / Thumb indicator -->
+      <!-- 源文件 / 缩略图 指示器 -->
+      <span v-if="isLoaded && thumbStatus === 3" class="badge badge-source" title="直接渲染原图">ORIG</span>
+      <span v-if="isLoaded && thumbStatus === 1" class="badge badge-thumb" title="渲染缩略图">THUMB</span>
+      
+      <!-- Top Left Badges (Size + Live) -->
+      <div class="media-thumb__top-left">
+        <span v-if="fileSize" class="badge badge-size">{{ formatFileSize(fileSize) }}</span>
+        <span v-if="isLivePhoto" class="badge badge-live">LIVE</span>
+      </div>
+
       <!-- Video play -->
       <!-- 视频播放 -->
       <span v-if="mediaType === 'video'" class="badge badge-video">▶</span>
@@ -68,7 +76,7 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { thumbhashToAverageColor } from '../../utils/thumbhash'
-import { formatDuration } from '../../utils/format'
+import { formatDuration, formatFileSize } from '../../utils/format'
 
 interface Props {
   id:              number
@@ -81,6 +89,7 @@ interface Props {
   thumbPath?:      string | null
   thumbhash?:      number[] | null
   fileFormat?:     string
+  fileSize?:       number
   isFavorited?:    boolean
   isSelected?:     boolean
   isSelectionMode?: boolean
@@ -105,11 +114,15 @@ const emit = defineEmits<{
   (e: 'cancel-thumb', id: number): void
 }>()
 
+const urlParams = new URLSearchParams(window.location.search)
+const cacheBuster = urlParams.get('clear') ? `?t=${urlParams.get('clear')}` : ''
+
 const isLoaded      = ref(false)
 const displaySrc    = ref('')
 const showFavorite  = ref(false)
 const favAnimating  = ref(false)
 const hasRequested  = ref(false)  // guard: only request once per mount // 守卫：每次挂载仅请求一次
+let decodingImg: HTMLImageElement | null = null
 
 const thumbStyle = computed(() => ({
   width:  `${props.w}px`,
@@ -141,8 +154,9 @@ async function loadThumb() {
     // 从缓存目录加载生成的缩略图
     try {
       const abs = `${props.cacheDir}/thumbnails/${props.thumbPath}`.replace(/\\/g, '/')
-      const src = convertFileSrc(abs)
+      const src = convertFileSrc(abs) + cacheBuster
       const img = new Image()
+      decodingImg = img
       img.src = src
       try {
         await img.decode()
@@ -150,6 +164,7 @@ async function loadThumb() {
         // console.warn('MediaThumb decode() failed, falling back to DOM load', e)
         // console.warn('MediaThumb decode() 失败，回退到 DOM 加载', e)
       }
+      if (decodingImg !== img) return
       displaySrc.value = src
       isLoaded.value   = true
     } catch (e) {
@@ -164,8 +179,9 @@ async function loadThumb() {
       // Small file: thumbPath holds the absolute path to the original file
       // 小文件: thumbPath 保存了原始文件的绝对路径
       try {
-        const src = convertFileSrc(props.thumbPath.replace(/\\/g, '/'))
+        const src = convertFileSrc(props.thumbPath.replace(/\\/g, '/')) + cacheBuster
         const img = new Image()
+        decodingImg = img
         img.src = src
         try {
           await img.decode()
@@ -173,6 +189,7 @@ async function loadThumb() {
           // console.warn('MediaThumb decode() failed, falling back to DOM load', e)
           // console.warn('MediaThumb decode() 失败，回退到 DOM 加载', e)
         }
+        if (decodingImg !== img) return
         displaySrc.value = src
         isLoaded.value   = true
       } catch (e) {
@@ -234,6 +251,10 @@ function onError() {
 onMounted(() => loadThumb())
 
 onBeforeUnmount(() => {
+  if (decodingImg) {
+    decodingImg.src = ''
+    decodingImg = null
+  }
   if (hasRequested.value && !isLoaded.value) {
     emit('cancel-thumb', props.id)
   }
@@ -302,11 +323,38 @@ onBeforeUnmount(() => {
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
 }
-.badge-live {
+.badge-source {
+  top: 6px;
+  right: 6px;
+  background: rgba(30, 136, 229, 0.85); /* Blue for orig */
+  color: #fff;
+  font-size: 9px;
+}
+.badge-thumb {
+  top: 6px;
+  right: 6px;
+  background: rgba(67, 160, 71, 0.85); /* Green for thumb */
+  color: #fff;
+  font-size: 9px;
+}
+.media-thumb__top-left {
+  position: absolute;
   top: 6px;
   left: 6px;
+  display: flex;
+  gap: 4px;
+}
+.badge-live {
+  position: static;
   background: var(--color-badge-live);
   color: #fff;
+}
+.badge-size {
+  position: static;
+  background: rgba(0, 0, 0, 0.4);
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 9px;
 }
 .badge-video {
   top: 50%;

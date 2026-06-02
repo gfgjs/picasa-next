@@ -12,6 +12,7 @@ export interface ScanProgressPayload {
   scanned:    number
   total:      number
   currentDir: string
+  status:     'discovering' | 'scanning'
 }
 
 export interface ScanCompletedPayload {
@@ -61,4 +62,11 @@ export interface ComputeLayoutParams {
   containerWidth:  number
   rowHeight:       number
   gap:             number
+}
+
+export interface FullThumbProgressPayload {
+  generated: number
+  total:     number
+  status:    'running' | 'completed' | 'cancelled'
+  currentItem?: string
 }

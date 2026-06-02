@@ -70,6 +70,7 @@
               :thumb-path="item.thumbPath"
               :thumbhash="item.thumbhash"
               :file-format="item.fileFormat"
+              :file-size="item.fileSize"
               :cache-dir="cacheDir"
               @request-thumb="onRequestThumb"
               @cancel-thumb="onCancelThumb"

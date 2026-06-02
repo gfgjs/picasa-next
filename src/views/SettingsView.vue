@@ -66,6 +66,44 @@
 
         <div class="setting-item">
           <div class="setting-info">
+            <div class="setting-label">{{ $t('settings.fullThumbGen') }}</div>
+            <div class="setting-desc">{{ $t('settings.fullThumbGenDesc') }}</div>
+            <div v-if="scan.thumbGenProgress.status !== 'idle'" class="thumb-gen-status">
+              <div class="progress-bar">
+                <div 
+                  class="progress-bar__fill" 
+                  :class="{ 'progress-shimmer': scan.thumbGenProgress.isRunning }"
+                  :style="{ width: thumbGenPercent + '%' }"
+                />
+              </div>
+              <div class="thumb-gen-text">
+                <span v-if="scan.thumbGenProgress.isRunning">{{ $t('settings.genStatusRunning', { generated: scan.thumbGenProgress.generated, total: scan.thumbGenProgress.total }) }}</span>
+                <span v-else-if="scan.thumbGenProgress.status === 'completed'">{{ $t('settings.genStatusCompleted') }}</span>
+                <span v-else-if="scan.thumbGenProgress.status === 'cancelled'">{{ $t('settings.genStatusCancelled') }}</span>
+                <span v-else-if="scan.thumbGenProgress.status === 'error'">{{ $t('settings.genStatusError') }}</span>
+              </div>
+            </div>
+          </div>
+          <div class="setting-actions">
+            <button 
+              v-if="scan.thumbGenProgress.isRunning" 
+              class="btn btn-secondary" 
+              @click="scan.stopFullThumbnailGeneration()"
+            >
+              {{ $t('settings.stopGen') }}
+            </button>
+            <button 
+              v-else 
+              class="btn btn-primary" 
+              @click="scan.startFullThumbnailGeneration()"
+            >
+              {{ $t('settings.startGen') }}
+            </button>
+          </div>
+        </div>
+
+        <div class="setting-item">
+          <div class="setting-info">
             <div class="setting-label">{{ $t('settings.hoverScale') }}</div>
             <div class="setting-desc">{{ $t('settings.hoverScaleDesc') }}</div>
           </div>
@@ -82,13 +120,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { invoke } from '@tauri-apps/api/core'
 import { useUiStore } from '../stores/uiStore'
+import { useScanStore } from '../stores/scanStore'
 import { useI18n } from 'vue-i18n'
 
 const ui = useUiStore()
+const scan = useScanStore()
 const router = useRouter()
 const { t } = useI18n()
 
@@ -96,6 +136,12 @@ const thumbSkipMaxKb = ref(200)
 const timelineScrollWidth = ref(6)
 const uiFontSize = ref(15)
 const enableHoverScale = ref(true)
+
+const thumbGenPercent = computed(() => {
+  const { generated, total } = scan.thumbGenProgress
+  if (!total) return 0
+  return Math.min(100, Math.round((generated / total) * 100))
+})
 
 onMounted(async () => {
   try {
@@ -126,8 +172,6 @@ async function saveConfig(key: string, value: string) {
 
 async function saveScrollbarWidth() {
   await saveConfig('timeline_scroll_width', timelineScrollWidth.value.toString())
-  // Apply globally immediately
-  // 立即全局应用
   document.documentElement.style.setProperty('--scrollbar-width', `${timelineScrollWidth.value}px`)
 }
 
@@ -275,5 +319,69 @@ function closeSettings() {
   height: 20px;
   cursor: pointer;
   accent-color: var(--color-accent);
+}
+
+.thumb-gen-status {
+  margin-top: var(--spacing-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.progress-bar {
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--color-border);
+  overflow: hidden;
+}
+.progress-bar__fill {
+  height: 100%;
+  background: var(--color-accent);
+  transition: width 100ms linear;
+}
+.progress-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--color-accent) 0%,
+    var(--color-accent-hover) 50%,
+    var(--color-accent) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+.thumb-gen-text {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.setting-actions {
+  display: flex;
+  align-items: center;
+}
+.btn {
+  padding: 6px 16px;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  border: none;
+  font-weight: 500;
+}
+.btn-secondary {
+  background: transparent;
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+}
+.btn-secondary:hover {
+  background: var(--color-sidebar-hover-bg);
+}
+.btn-primary {
+  background: var(--color-accent);
+  color: #fff;
+}
+.btn-primary:hover {
+  filter: brightness(1.1);
 }
 </style>

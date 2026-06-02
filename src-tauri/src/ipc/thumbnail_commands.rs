@@ -24,123 +24,271 @@ use crate::thumbnail::generate_thumbnail;
 #[tauri::command]
 pub async fn batch_request_thumbnails(
     item_ids: Vec<i64>,
-    size: Option<u32>,
+    on_result: tauri::ipc::Channel<ThumbResult>,
     state: State<'_, Arc<AppState>>,
-) -> Result<Vec<ThumbResult>> {
-    if item_ids.is_empty() {
-        return Ok(vec![]);
-    }
+) -> Result<()> {
+    let state_arc = state.inner().clone();
+    let config = { state_arc.thumb_config.read().unwrap().clone() };
 
-    // First: check which items already have thumbnails
-    // 首先：检查哪些项目已经有缩略图
-    let existing: Vec<ThumbResult> = {
-        let pool = state.db_read_pool.get().map_err(AppError::from)?;
-        get_thumb_by_item_ids(&pool, &item_ids)?
-    };
+    let mut fast_results = std::collections::HashMap::new();
+    let mut needs_gen = Vec::new();
 
-    // Build a map of id → existing result
-    // 构建 id → 现有结果的映射
-    let mut result_map: std::collections::HashMap<i64, ThumbResult> = existing
-        .into_iter()
-        .map(|r| (r.item_id, r))
-        .collect();
+    {
+        // Check cache in batch
+        let conn = state.db_read_pool.get().map_err(|e| AppError::Db(e.to_string()))?;
+        let in_clause = item_ids
+            .iter()
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
 
-    // Find items needing generation (thumb_status != 1 and != 3)
-    // 查找需要生成的项目（thumb_status != 1 且 != 3）
-    let needs_gen: Vec<i64> = item_ids
-        .iter()
-        .filter(|&&id| {
-            result_map
-                .get(&id)
-                .map(|r| r.thumb_status != 1 && r.thumb_status != 3)
-                .unwrap_or(true)
-        })
-        .copied()
-        .collect();
-
-    debug!("batch_request_thumbnails: total={} needs_gen={}", item_ids.len(), needs_gen.len());
-
-    if !needs_gen.is_empty() {
-        // Override size if provided
-        // 如果提供则覆盖大小
-        let config = if let Some(sz) = size {
-            let mut c = state.thumb_config.read().unwrap().clone();
-            c.size = sz;
-            c
-        } else {
-            state.thumb_config.read().unwrap().clone()
-        };
-
-        // Clone Arc so the blocking closure owns it (no unsafe raw pointers)
-        // 克隆 Arc，以便阻塞闭包拥有它（无不安全的原始指针）
-        let state_arc = Arc::clone(&*state);
-
-        let generated: Vec<(i64, Result<ThumbResult>)> = tokio::task::spawn_blocking(move || {
-            needs_gen
-                .par_iter()
-                .map(|&id| {
-                    (id, generate_thumbnail(&state_arc.db_writer, &state_arc.engine_arena, id, &config))
+        if !in_clause.is_empty() {
+            let sql = format!(
+                "SELECT id, thumb_status, thumb_path, thumbhash FROM media_items WHERE id IN ({})",
+                in_clause
+            );
+            let mut stmt = conn.prepare(&sql).map_err(|e| AppError::Db(e.to_string()))?;
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok(ThumbResult {
+                        item_id:      row.get(0)?,
+                        thumb_status: row.get(1)?,
+                        thumb_path:   row.get(2)?,
+                        thumbhash:    row.get(3)?,
+                    })
                 })
-                .collect()
-        })
-        .await
-        .map_err(|e| AppError::Io(e.to_string()))?;
+                .map_err(|e| AppError::Db(e.to_string()))?;
 
-        for (id, result) in generated {
-            match result {
-                Ok(r) => { result_map.insert(id, r); }
-                Err(e) => {
-                    // Insert a failure record so the frontend doesn't spin
-                    // 插入失败记录，这样前端就不会一直等待
-                    result_map.insert(id, ThumbResult {
-                        item_id:      id,
-                        thumb_status: 2,
-                        thumb_path:   None,
-                        thumbhash:    None,
-                    });
-                    tracing::warn!("Thumbnail gen failed for id={id}: {e}");
+            for r in rows.flatten() {
+                if r.thumb_status == 1 || r.thumb_status == 3 || r.thumb_status == 2 {
+                    fast_results.insert(r.item_id, r);
                 }
             }
         }
     }
 
-    // Return in original order
-    // 按原始顺序返回
-    let results: Vec<ThumbResult> = item_ids
-        .iter()
-        .filter_map(|id| result_map.remove(id))
-        .collect();
+    for &id in &item_ids {
+        if let Some(r) = fast_results.get(&id) {
+            let _ = on_result.send(r.clone());
+        } else {
+            needs_gen.push(id);
+        }
+    }
 
-    // Update the in-memory layout cache so subsequent get_layout_rows calls are not stale
-    // 更新内存中的布局缓存，这样后续的 get_layout_rows 调用就不会过时
-    {
-        let mut cache_guard = state.layout_cache.write().unwrap();
-        if let Some(layout) = cache_guard.as_mut() {
-            for row in layout.rows.iter_mut() {
-                if let crate::layout::justified::LayoutRow::Normal { items, .. } = row {
-                    for item in items.iter_mut() {
-                        if let Some(res) = results.iter().find(|r| r.item_id == item.id) {
-                            item.thumb_status = res.thumb_status;
-                            item.thumb_path = res.thumb_path.clone();
-                            item.thumbhash = res.thumbhash.clone();
+    tracing::info!("batch_request_thumbnails: total={} needs_gen={}", item_ids.len(), needs_gen.len());
+
+    if !needs_gen.is_empty() {
+        let config = config.clone();
+
+        tokio::task::spawn_blocking(move || {
+            needs_gen
+                .par_iter()
+                .for_each(|&id| {
+                    if state_arc.cancelled_thumb_ids.lock().unwrap().remove(&id) {
+                        return;
+                    }
+                    let res = generate_thumbnail(&state_arc.db_writer, &state_arc.engine_arena, id, &config);
+                    match res {
+                        Ok(r) => { let _ = on_result.send(r); },
+                        Err(e) => {
+                            let _ = on_result.send(ThumbResult {
+                                item_id:      id,
+                                thumb_status: 2,
+                                thumb_path:   None,
+                                thumbhash:    None,
+                            });
+                            tracing::error!("Thumbnail gen failed for id={id}: {e}");
+                        }
+                    }
+                });
+            tracing::info!("batch_request_thumbnails: finished parallel block");
+        })
+        .await
+        .map_err(|e| AppError::Io(e.to_string()))?;
+    }
+
+    Ok(())
+}
+
+// request_thumbnail removed.
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FullThumbProgressPayload {
+    pub generated: u64,
+    pub total: u64,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_item: Option<String>,
+}
+
+#[tauri::command]
+pub async fn start_full_thumbnail_generation(
+    on_progress: tauri::ipc::Channel<FullThumbProgressPayload>,
+    state: State<'_, Arc<AppState>>,
+) -> Result<()> {
+    // Check total needed
+    let total = {
+        let pool = state.db_read_pool.get().map_err(AppError::from)?;
+        crate::db::queries::count_pending_thumb_items(&pool)?
+    };
+
+    if total == 0 {
+        let _ = on_progress.send(FullThumbProgressPayload {
+            generated: 0,
+            total: 0,
+            status: "completed".to_string(),
+            current_item: None,
+        });
+        return Ok(());
+    }
+
+    // Cancel any existing run
+    state.cancel_thumb_gen();
+    let cancel_token = state.new_thumb_gen_token();
+
+    let state_arc = Arc::clone(&*state);
+    let generated_count = Arc::new(std::sync::atomic::AtomicU64::new(0));
+
+    tokio::task::spawn_blocking(move || -> Result<()> {
+        let _ = on_progress.send(FullThumbProgressPayload {
+            generated: 0,
+            total: total as u64,
+            status: "running".to_string(),
+            current_item: None,
+        });
+
+        loop {
+            if cancel_token.is_cancelled() {
+                let _ = on_progress.send(FullThumbProgressPayload {
+                    generated: generated_count.load(std::sync::atomic::Ordering::Relaxed),
+                    total: total as u64,
+                    status: "cancelled".to_string(),
+                    current_item: None,
+                });
+                return Ok(());
+            }
+
+            let batch_ids = {
+                let pool = state_arc.db_read_pool.get().map_err(AppError::from)?;
+                let items = crate::db::queries::get_pending_thumb_items(&pool, 50)?;
+                if items.is_empty() {
+                    break; // done
+                }
+                items.into_iter().map(|(id, _)| id).collect::<Vec<_>>()
+            };
+
+            let config = state_arc.thumb_config.read().unwrap().clone();
+            
+            let batch_results: Vec<(i64, Result<ThumbResult>)> = batch_ids
+                .par_iter()
+                .filter_map(|&id| {
+                    if cancel_token.is_cancelled() {
+                        return None;
+                    }
+                    
+                    let mut filename = String::new();
+                    if let Ok(pool) = state_arc.db_read_pool.get() {
+                        if let Ok((_, _, name)) = crate::db::queries::get_item_path_info(&pool, id) {
+                            filename = name;
+                        }
+                    }
+
+                    tracing::info!("Full gen: processing id={} ({})", id, filename);
+
+                    let current = generated_count.load(std::sync::atomic::Ordering::Relaxed);
+                    let _ = on_progress.send(FullThumbProgressPayload {
+                        generated: current,
+                        total: total as u64,
+                        status: "running".to_string(),
+                        current_item: Some(filename),
+                    });
+                    
+                    let res = generate_thumbnail(&state_arc.db_writer, &state_arc.engine_arena, id, &config);
+                    
+                    generated_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    
+                    Some((id, res))
+                })
+                .collect();
+                
+            let mut successful_results = Vec::new();
+            for (id, res) in batch_results {
+                match res {
+                    Ok(r) => successful_results.push(r),
+                    Err(e) => {
+                        tracing::error!("Full gen failed for id={id}: {e}");
+                        // Write failure status to prevent endless retry
+                        if let Ok(conn) = state_arc.db_writer.lock() {
+                            let _ = crate::db::queries::update_thumb_result(&conn, id, 2, None, None);
                         }
                     }
                 }
             }
-        }
-    }
+            
+            tracing::info!("Full gen: batch completed, generated_count={}", generated_count.load(std::sync::atomic::Ordering::Relaxed));
 
-    Ok(results)
+            // Update in-memory layout cache
+            if !successful_results.is_empty() {
+                let mut cache_guard = state_arc.layout_cache.write().unwrap();
+                if let Some(layout) = cache_guard.as_mut() {
+                    for row in layout.rows.iter_mut() {
+                        if let crate::layout::justified::LayoutRow::Normal { items, .. } = row {
+                            for item in items.iter_mut() {
+                                if let Some(res) = successful_results.iter().find(|r| r.item_id == item.id) {
+                                    item.thumb_status = res.thumb_status;
+                                    item.thumb_path = res.thumb_path.clone();
+                                    item.thumbhash = res.thumbhash.clone();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // No need to add here, atomic handles it
+            // generated_count += batch_ids.len() as u64;
+
+            let current_gen = generated_count.load(std::sync::atomic::Ordering::Relaxed);
+            let _ = on_progress.send(FullThumbProgressPayload {
+                generated: current_gen,
+                total: total as u64,
+                status: "running".to_string(),
+                current_item: None,
+            });
+        }
+
+        let final_gen = generated_count.load(std::sync::atomic::Ordering::Relaxed);
+        if cancel_token.is_cancelled() {
+            let _ = on_progress.send(FullThumbProgressPayload {
+                generated: final_gen,
+                total: total as u64,
+                status: "cancelled".to_string(),
+                current_item: None,
+            });
+        } else {
+            let _ = on_progress.send(FullThumbProgressPayload {
+                generated: final_gen,
+                total: total as u64,
+                status: "completed".to_string(),
+                current_item: None,
+            });
+        }
+        
+        Ok(())
+    });
+
+    Ok(())
 }
 
-/// Single thumbnail request (supplementary).
-/// 单个缩略图请求（补充）。
 #[tauri::command]
-pub async fn request_thumbnail(
-    item_id: i64,
-    size: Option<u32>,
-    state: State<'_, Arc<AppState>>,
-) -> Result<ThumbResult> {
-    let results = batch_request_thumbnails(vec![item_id], size, state).await?;
-    results.into_iter().next().ok_or(AppError::MediaNotFound(item_id))
+pub fn stop_full_thumbnail_generation(state: State<'_, Arc<AppState>>) -> Result<()> {
+    state.cancel_thumb_gen();
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn cancel_thumbnail_request(id: i64, state: State<'_, Arc<AppState>>) -> Result<()> {
+    state.cancelled_thumb_ids.lock().unwrap().insert(id);
+    Ok(())
 }

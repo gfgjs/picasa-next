@@ -67,14 +67,15 @@ fn map_layout_item(row: &Row<'_>) -> rusqlite::Result<LayoutItem> {
         id:            row.get(0)?,
         width:         row.get(1)?,
         height:        row.get(2)?,
-        sort_datetime: row.get(3)?,
-        file_format:   row.get(4)?,
-        media_type:    row.get(5)?,
-        is_live_photo: row.get::<_, i64>(6)? != 0,
-        duration_ms:   row.get(7)?,
-        thumb_status:  row.get(8)?,
-        thumb_path:    row.get(9)?,
-        thumbhash:     row.get(10)?,
+        file_size:     row.get(3)?,
+        sort_datetime: row.get(4)?,
+        file_format:   row.get(5)?,
+        media_type:    row.get(6)?,
+        is_live_photo: row.get::<_, i64>(7)? != 0,
+        duration_ms:   row.get(8)?,
+        thumb_status:  row.get(9)?,
+        thumb_path:    row.get(10)?,
+        thumbhash:     row.get(11)?,
     })
 }
 
@@ -187,7 +188,17 @@ pub fn upsert_directory(
 
 pub fn get_directory_tree(conn: &Connection, root_id: i64) -> Result<Vec<DirNode>> {
     let mut stmt = conn.prepare(
-        "SELECT d.id, d.root_id, d.parent_id, d.name, d.rel_path, d.depth, d.media_count,
+        "SELECT d.id, d.root_id, d.parent_id, d.name, d.rel_path, d.depth,
+                (
+                    WITH RECURSIVE dir_tree(id) AS (
+                        SELECT d.id
+                        UNION ALL
+                        SELECT child.id FROM directories child
+                        JOIN dir_tree t ON child.parent_id = t.id
+                    )
+                    SELECT COUNT(*) FROM media_items m
+                    WHERE m.directory_id IN dir_tree AND m.is_deleted=0 AND m.companion_of IS NULL
+                ) AS media_count,
                 (SELECT COUNT(*)>0 FROM directories c WHERE c.parent_id=d.id) AS has_children
          FROM directories d
          WHERE d.root_id=?1 AND d.parent_id IS NULL
@@ -199,7 +210,17 @@ pub fn get_directory_tree(conn: &Connection, root_id: i64) -> Result<Vec<DirNode
 
 pub fn get_directory_children(conn: &Connection, parent_id: i64) -> Result<Vec<DirNode>> {
     let mut stmt = conn.prepare(
-        "SELECT d.id, d.root_id, d.parent_id, d.name, d.rel_path, d.depth, d.media_count,
+        "SELECT d.id, d.root_id, d.parent_id, d.name, d.rel_path, d.depth,
+                (
+                    WITH RECURSIVE dir_tree(id) AS (
+                        SELECT d.id
+                        UNION ALL
+                        SELECT child.id FROM directories child
+                        JOIN dir_tree t ON child.parent_id = t.id
+                    )
+                    SELECT COUNT(*) FROM media_items m
+                    WHERE m.directory_id IN dir_tree AND m.is_deleted=0 AND m.companion_of IS NULL
+                ) AS media_count,
                 (SELECT COUNT(*)>0 FROM directories c WHERE c.parent_id=d.id) AS has_children
          FROM directories d
          WHERE d.parent_id=?1
@@ -370,7 +391,7 @@ pub fn query_layout_items(
     filter: &MediaFilter,
 ) -> Result<Vec<LayoutItem>> {
     let mut sql = String::from(
-        "SELECT id, width, height, sort_datetime, file_format, media_type, is_live_photo,
+        "SELECT id, width, height, file_size, sort_datetime, file_format, media_type, is_live_photo,
                 duration_ms, thumb_status, thumb_path, thumbhash
          FROM media_items
          WHERE is_deleted=0 AND companion_of IS NULL",
@@ -381,7 +402,15 @@ pub fn query_layout_items(
 
     if let Some(dir_id) = filter.directory_id {
         param_idx += 1;
-        sql.push_str(&format!(" AND directory_id=?{param_idx}"));
+        sql.push_str(&format!(" AND directory_id IN (
+            WITH RECURSIVE dir_tree(id) AS (
+                SELECT ?{param_idx}
+                UNION ALL
+                SELECT d.id FROM directories d
+                JOIN dir_tree t ON d.parent_id = t.id
+            )
+            SELECT id FROM dir_tree
+        )"));
         extras.push(Box::new(dir_id));
     }
 
@@ -431,8 +460,6 @@ pub fn query_layout_items(
     rows.map(|r| r.map_err(AppError::from)).collect()
 }
 
-/// Get items pending thumbnail generation (thumb_status=0).
-/// 获取等待生成缩略图的项（thumb_status=0）。
 pub fn get_pending_thumb_items(conn: &Connection, limit: i64) -> Result<Vec<(i64, i64)>> {
     let mut stmt = conn.prepare(
         "SELECT id, cache_key FROM media_items
@@ -442,6 +469,15 @@ pub fn get_pending_thumb_items(conn: &Connection, limit: i64) -> Result<Vec<(i64
     )?;
     let rows = stmt.query_map(params![limit], |row| Ok((row.get(0)?, row.get(1)?)))?;
     rows.map(|r| r.map_err(AppError::from)).collect()
+}
+
+pub fn count_pending_thumb_items(conn: &Connection) -> Result<i64> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM media_items WHERE thumb_status=0 AND is_deleted=0",
+        [],
+        |row| row.get(0),
+    )
+    .map_err(AppError::from)
 }
 
 pub fn update_thumb_result(
@@ -703,7 +739,15 @@ pub fn search_media(
 
     if let Some(dir_id) = filter.directory_id {
         param_idx += 1;
-        sql.push_str(&format!(" AND directory_id=?{param_idx}"));
+        sql.push_str(&format!(" AND directory_id IN (
+            WITH RECURSIVE dir_tree(id) AS (
+                SELECT ?{param_idx}
+                UNION ALL
+                SELECT d.id FROM directories d
+                JOIN dir_tree t ON d.parent_id = t.id
+            )
+            SELECT id FROM dir_tree
+        )"));
         extras.push(Box::new(dir_id));
     }
 

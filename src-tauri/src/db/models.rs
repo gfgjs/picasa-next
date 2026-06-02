@@ -100,6 +100,7 @@ pub struct LayoutItem {
     pub id:            i64,
     pub width:         i64,
     pub height:        i64,
+    pub file_size:     i64,
     pub sort_datetime: i64,
     pub file_format:   String,
     pub media_type:    String,

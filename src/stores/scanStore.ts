@@ -14,6 +14,7 @@ interface ScanProgress {
   total:      number
   currentDir: string
   isRunning:  boolean
+  status?:    'discovering' | 'scanning'
 }
 
 export const useScanStore = defineStore('scan', () => {
@@ -51,7 +52,7 @@ export const useScanStore = defineStore('scan', () => {
 
   async function startScan(rootId: number, onComplete?: () => void) {
     progressMap.value[rootId] = {
-      scanned: 0, total: 0, currentDir: '', isRunning: true
+      scanned: 0, total: 0, currentDir: '', isRunning: true, status: 'discovering'
     }
 
     const channel = new Channel<ScanChannelPayload>()
@@ -63,6 +64,7 @@ export const useScanStore = defineStore('scan', () => {
           total:      p.total,
           currentDir: p.currentDir,
           isRunning:  true,
+          status:     p.status,
         }
       } else if (msg.type === 'completed') {
         progressMap.value[rootId] = {
@@ -103,10 +105,71 @@ export const useScanStore = defineStore('scan', () => {
     progressMap.value = {}
   }
 
+  // ── Full Thumbnail Generation ─────────────────────────────────────────────
+  
+  interface ThumbGenProgress {
+    generated: number
+    total:     number
+    isRunning: boolean
+    status:    'idle' | 'running' | 'completed' | 'cancelled' | 'error'
+    currentItem?: string
+  }
+
+  const thumbGenProgress = ref<ThumbGenProgress>({
+    generated: 0,
+    total: 0,
+    isRunning: false,
+    status: 'idle',
+    currentItem: undefined
+  })
+
+  // State for automatic thumbnail generation (triggered by scrolling)
+  const autoThumbQueueSize = ref(0)
+  const autoThumbInFlight = ref(0)
+
+  async function startFullThumbnailGeneration() {
+    thumbGenProgress.value = {
+      generated: 0,
+      total: 0,
+      isRunning: true,
+      status: 'running',
+      currentItem: undefined
+    }
+
+    const channel = new Channel<any>()
+    channel.onmessage = (msg: any) => {
+      thumbGenProgress.value = {
+        generated: msg.generated,
+        total: msg.total,
+        isRunning: msg.status === 'running',
+        status: msg.status,
+        currentItem: msg.currentItem
+      }
+    }
+
+    try {
+      await invoke(IPC.START_FULL_THUMBNAIL_GENERATION, { onProgress: channel })
+    } catch (e) {
+      thumbGenProgress.value.isRunning = false
+      thumbGenProgress.value.status = 'error'
+      throw e
+    }
+  }
+
+  async function stopFullThumbnailGeneration() {
+    await invoke(IPC.STOP_FULL_THUMBNAIL_GENERATION)
+    thumbGenProgress.value.isRunning = false
+    if (thumbGenProgress.value.status === 'running') {
+      thumbGenProgress.value.status = 'cancelled'
+    }
+  }
+
   return {
     scanRoots, progressMap, isLoadingRoots,
     hasScanRoots, isAnyScanRunning,
     loadScanRoots, addScanRoot, removeScanRoot,
     startScan, stopScan, getProgress, clearDatabase,
+    thumbGenProgress, startFullThumbnailGeneration, stopFullThumbnailGeneration,
+    autoThumbQueueSize, autoThumbInFlight
   }
 })

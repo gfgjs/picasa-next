@@ -20,6 +20,7 @@ export default {
     chooseDir: 'Choose Media Folder',
     rescan: 'Rescan',
     stopScan: 'Stop Scan',
+    discoveringFiles: 'Discovering... {count} found',
     removeFolder: 'Remove Folder',
     debugSettings: '[Debug] Settings Modal',
     toggleTheme: 'Toggle Theme',
@@ -97,7 +98,15 @@ export default {
     clearSuccess: 'Cleared successfully',
     clearFailed: 'Clear failed: {error}',
     saveSuccess: 'Settings saved',
-    saveFailed: 'Save failed: {error}'
+    saveFailed: 'Save failed: {error}',
+    fullThumbGen: 'Generate All Thumbnails',
+    fullThumbGenDesc: 'Generate thumbnails in the background for all media items in your library that do not have them yet, to ensure fast scrolling.',
+    startGen: 'Start Generation',
+    stopGen: 'Stop',
+    genStatusRunning: 'Generating: {generated} / {total}',
+    genStatusCompleted: 'Generation Complete!',
+    genStatusCancelled: 'Generation Cancelled',
+    genStatusError: 'Generation Error'
   },
   empty: {
     allPhotos: 'Nothing here yet\nClick "Add Folder" on the left to start importing photos.',

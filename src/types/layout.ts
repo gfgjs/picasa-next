@@ -1,5 +1,6 @@
 // src/types/layout.ts
 // Justified Layout row types (mirroring Rust LayoutRow enum)
+// 两端对齐布局行类型（对应 Rust 的 LayoutRow 枚举）
 
 export interface LayoutRowItem {
   id:          number

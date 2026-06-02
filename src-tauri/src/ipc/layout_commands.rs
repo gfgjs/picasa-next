@@ -1,5 +1,6 @@
 // src-tauri/src/ipc/layout_commands.rs
 //! Tauri IPC commands for Justified Layout (§ 6.1 — layout).
+//! 针对 Justified Layout（两端对齐布局）的 Tauri IPC 命令（§ 6.1 — 布局）。
 
 use std::sync::Arc;
 
@@ -13,6 +14,7 @@ use crate::layout::justified::{compute_justified_layout, LayoutParams, LayoutRow
 use crate::state::AppState;
 
 /// Parameters for layout computation.
+/// 布局计算参数。
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ComputeLayoutParams {
@@ -24,8 +26,11 @@ pub struct ComputeLayoutParams {
 }
 
 /// Compute the Justified Layout for the given filters.
+/// 计算给定过滤器的 Justified Layout（两端对齐布局）。
 /// Returns the layout summary (row count, total height, version).
+/// 返回布局摘要（行数、总高度、版本）。
 /// The full row data is stored in the in-memory cache.
+/// 完整的行数据存储在内存缓存中。
 #[tauri::command]
 pub async fn compute_layout(
     params: ComputeLayoutParams,
@@ -40,6 +45,7 @@ pub async fn compute_layout(
     };
 
     // Query layout items from the read pool
+    // 从读取池查询布局项
     let items = {
         let pool = state.db_read_pool.get().map_err(AppError::from)?;
         query_layout_items(&pool, &filter)?
@@ -47,6 +53,7 @@ pub async fn compute_layout(
 
     if items.is_empty() {
         // Store empty layout
+        // 存储空布局
         let version = store_layout(&state.layout_cache, vec![], 0.0);
         return Ok(LayoutSummary {
             total_rows: 0,
@@ -56,6 +63,7 @@ pub async fn compute_layout(
     }
 
     // Run layout algorithm (CPU-bound) in a blocking task
+    // 在阻塞任务中运行布局算法（受限于 CPU）
     let layout_params = LayoutParams {
         container_width:  params.container_width.max(100.0),
         target_row_height: params.row_height.max(50.0),
@@ -79,6 +87,7 @@ pub async fn compute_layout(
 }
 
 /// Fetch a slice of layout rows from the in-memory cache.
+/// 从内存缓存中获取布局行的切片。
 #[tauri::command]
 pub async fn get_layout_rows(
     start_row: usize,
@@ -91,6 +100,7 @@ pub async fn get_layout_rows(
 }
 
 /// Fetch a slice of layout rows intersecting [top_y, bottom_y] from the in-memory cache.
+/// 从内存缓存中获取与 [top_y, bottom_y] 相交的布局行的切片。
 #[tauri::command]
 pub async fn get_layout_rows_by_y(
     top_y: f64,

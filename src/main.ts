@@ -11,6 +11,7 @@ app.use(createPinia())
 app.use(router)
 
 // Set initial theme before mount to prevent FOUC
+// 在挂载前设置初始主题以防止 FOUC（无样式内容闪烁）
 document.documentElement.setAttribute('data-theme', 'dark')
 
 app.mount('#app')

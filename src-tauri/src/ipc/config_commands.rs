@@ -1,5 +1,6 @@
 // src-tauri/src/ipc/config_commands.rs
 //! App configuration key-value commands (§ 6.1 — config).
+//! 应用配置键值命令（§ 6.1 — config）。
 
 use std::sync::Arc;
 
@@ -10,6 +11,7 @@ use crate::error::{AppError, Result};
 use crate::state::AppState;
 
 /// Get a configuration value by key.
+/// 根据键获取配置值。
 #[tauri::command]
 pub async fn get_app_config(key: String, state: State<'_, Arc<AppState>>) -> Result<Option<String>> {
     let pool = state.db_read_pool.get().map_err(AppError::from)?;
@@ -17,6 +19,7 @@ pub async fn get_app_config(key: String, state: State<'_, Arc<AppState>>) -> Res
 }
 
 /// Set a configuration value.
+/// 设置配置值。
 #[tauri::command]
 pub async fn set_app_config(key: String, value: String, state: State<'_, Arc<AppState>>) -> Result<()> {
     {

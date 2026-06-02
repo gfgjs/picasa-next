@@ -1,6 +1,9 @@
 // src-tauri/src/engine/image_rs.rs
+// src-tauri/src/engine/image_rs.rs
 //! `ImageRsEngine`: uses the `image` crate to decode Phase 1 formats.
+//! `ImageRsEngine`：使用 `image` crate 解码阶段 1 的格式。
 //! Supported: jpg, jpeg, png, webp, bmp, gif, tif, tiff
+//! 支持的格式：jpg, jpeg, png, webp, bmp, gif, tif, tiff
 
 use std::path::Path;
 use image::ImageReader;
@@ -29,6 +32,7 @@ impl ImageEngine for ImageRsEngine {
             .map_err(|e| AppError::Engine(e.to_string()))?;
 
         // Apply EXIF orientation for JPEG
+        // 为 JPEG 应用 EXIF 方向
         let ext = file_path
             .extension()
             .and_then(|e| e.to_str())
@@ -53,6 +57,7 @@ impl ImageEngine for ImageRsEngine {
     }
 
     /// Try to extract the embedded JPEG thumbnail from EXIF (fast path).
+    /// 尝试从 EXIF 中提取嵌入的 JPEG 缩略图（快速路径）。
     fn extract_embedded_thumb(&self, file_path: &Path) -> Result<Option<Vec<u8>>, AppError> {
         let ext = file_path
             .extension()
@@ -73,10 +78,12 @@ impl ImageEngine for ImageRsEngine {
         let Some(exif) = exif else { return Ok(None) };
 
         // Look for the IFD1 (thumbnail) JPEG data
+        // 查找 IFD1（缩略图）JPEG 数据
         if let Some(field) = exif.get_field(exif::Tag::JPEGInterchangeFormat, exif::In::THUMBNAIL) {
             if let exif::Value::Long(ref offsets) = field.value {
                 if let Some(&offset) = offsets.first() {
                     // Get the thumbnail length
+                    // 获取缩略图长度
                     if let Some(len_field) = exif.get_field(
                         exif::Tag::JPEGInterchangeFormatLength,
                         exif::In::THUMBNAIL,
@@ -85,6 +92,7 @@ impl ImageEngine for ImageRsEngine {
                             if let Some(&length) = lengths.first() {
                                 if length > 0 && length < 1_000_000 {
                                     // Re-open file and seek to thumbnail
+                                    // 重新打开文件并查找到缩略图位置
                                     use std::io::{Read, Seek, SeekFrom};
                                     let mut f = std::fs::File::open(file_path)
                                         .map_err(AppError::from)?;
@@ -93,6 +101,7 @@ impl ImageEngine for ImageRsEngine {
                                     let mut buf = vec![0u8; length as usize];
                                     f.read_exact(&mut buf).map_err(AppError::from)?;
                                     // Validate JPEG magic
+                                    // 验证 JPEG 魔数
                                     if buf.starts_with(&[0xFF, 0xD8]) {
                                         return Ok(Some(buf));
                                     }
@@ -109,6 +118,7 @@ impl ImageEngine for ImageRsEngine {
 }
 
 /// Apply EXIF orientation correction to a decoded image.
+/// 将 EXIF 方向校正应用于解码后的图像。
 fn apply_exif_orientation(img: image::DynamicImage, path: &Path) -> image::DynamicImage {
     let orientation = read_jpeg_orientation(path);
     match orientation {

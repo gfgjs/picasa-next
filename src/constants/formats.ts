@@ -1,5 +1,6 @@
 // src/constants/formats.ts
 // Supported media formats (mirrors Rust utils/format.rs)
+// 支持的媒体格式（与 Rust utils/format.rs 保持一致）
 
 export const IMAGE_FORMATS_PHASE1 = ['jpg', 'jpeg', 'png', 'webp', 'bmp', 'gif', 'tif', 'tiff'] as const
 

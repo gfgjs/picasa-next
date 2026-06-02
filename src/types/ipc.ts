@@ -1,9 +1,11 @@
 // src/types/ipc.ts
 // IPC payload types for Tauri events and channel messages
+// Tauri 事件和通道消息的 IPC 负载类型
 
 import type { MediaFilter } from './media'
 
 // ── Scan channel payloads ──────────────────────────────────────────────────
+// ── 扫描通道负载 ──────────────────────────────────────────────────────────
 
 export interface ScanProgressPayload {
   rootId:     number
@@ -29,6 +31,7 @@ export type ScanChannelPayload =
   | { type: 'error';     error:     ScanErrorPayload }
 
 // ── Enrichment events ──────────────────────────────────────────────────────
+// ── 丰富化事件 ──────────────────────────────────────────────────────────────
 
 export interface MediaEnrichedPayload {
   rootId:        number
@@ -42,6 +45,7 @@ export interface EnrichmentCompletedPayload {
 }
 
 // ── DB update event ────────────────────────────────────────────────────────
+// ── 数据库更新事件 ──────────────────────────────────────────────────────────
 
 export interface MediaUpdatedPayload {
   action:  'update' | 'delete' | 'restore'
@@ -49,6 +53,7 @@ export interface MediaUpdatedPayload {
 }
 
 // ── Command params ─────────────────────────────────────────────────────────
+// ── 命令参数 ───────────────────────────────────────────────────────────────
 
 export interface ComputeLayoutParams {
   directoryId?:    number | null

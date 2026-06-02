@@ -1,5 +1,6 @@
 // src-tauri/src/ipc/media_commands.rs
 //! Tauri IPC commands for media item operations (§ 6.1 — media queries).
+//! 用于媒体项操作的 Tauri IPC 命令（§ 6.1 — 媒体查询）。
 
 use std::sync::Arc;
 
@@ -12,6 +13,7 @@ use crate::state::AppState;
 use crate::utils::path::resolve_media_path;
 
 /// Get full detail for a single media item.
+/// 获取单个媒体项的完整详细信息。
 #[tauri::command]
 pub async fn get_media_detail(id: i64, state: State<'_, Arc<AppState>>) -> Result<MediaDetail> {
     let pool = state.db_read_pool.get().map_err(AppError::from)?;
@@ -19,6 +21,7 @@ pub async fn get_media_detail(id: i64, state: State<'_, Arc<AppState>>) -> Resul
 }
 
 /// Get the adjacent media item detail.
+/// 获取相邻的媒体项详细信息。
 #[tauri::command]
 pub async fn get_adjacent_media(
     current_id: i64,
@@ -35,7 +38,9 @@ pub async fn get_adjacent_media(
 }
 
 /// Get the playable video URL for a Live Photo companion.
+/// 获取实况照片（Live Photo）关联文件的可播放视频 URL。
 /// Returns the absolute file path (caller wraps with convertFileSrc).
+/// 返回绝对文件路径（调用者使用 convertFileSrc 进行包装）。
 #[tauri::command]
 pub async fn get_companion_video_url(
     item_id: i64,
@@ -44,6 +49,7 @@ pub async fn get_companion_video_url(
     let pool = state.db_read_pool.get().map_err(AppError::from)?;
 
     // Check if the item has a companion MOV (Apple Live Photo)
+    // 检查项目是否有配套的 MOV 文件（Apple 实况照片）
     let companion_id = q::get_companion_item_id(&pool, item_id);
 
     if let Ok(Some(comp_id)) = companion_id {
@@ -52,6 +58,7 @@ pub async fn get_companion_video_url(
     }
 
     // Check for embedded video (Google/Samsung Motion Photo)
+    // 检查是否有嵌入式视频（Google/Samsung 动态照片）
     let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
     let (has_embedded, cache_key): (bool, i64) = conn.query_row(
         "SELECT has_embedded_video, cache_key FROM media_items WHERE id=?1",
@@ -65,6 +72,7 @@ pub async fn get_companion_video_url(
         let abs_path = resolve_media_path(&root, &rel, &name);
 
         // Check motion video cache
+        // 检查动态视频缓存
         let cache_path = {
             let config = state.thumb_config.read().unwrap();
             crate::thumbnail::cache::motion_video_cache_path(
@@ -78,6 +86,7 @@ pub async fn get_companion_video_url(
         }
 
         // Extract from JPEG (read trailing bytes)
+        // 从 JPEG 中提取（读取尾部字节）
         let video_bytes = extract_embedded_mp4(&abs_path)?;
         if let Some(parent) = cache_path.parent() {
             std::fs::create_dir_all(parent).map_err(AppError::from)?;
@@ -90,6 +99,7 @@ pub async fn get_companion_video_url(
 }
 
 /// Toggle the favorite status of a media item.
+/// 切换媒体项的收藏状态。
 #[tauri::command]
 pub async fn toggle_favorite(item_id: i64, state: State<'_, Arc<AppState>>) -> Result<bool> {
     let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
@@ -97,6 +107,7 @@ pub async fn toggle_favorite(item_id: i64, state: State<'_, Arc<AppState>>) -> R
 }
 
 /// Set the rating for a media item (0-5).
+/// 设置媒体项的评分（0-5）。
 #[tauri::command]
 pub async fn set_rating(item_id: i64, rating: i64, state: State<'_, Arc<AppState>>) -> Result<()> {
     let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
@@ -104,6 +115,7 @@ pub async fn set_rating(item_id: i64, rating: i64, state: State<'_, Arc<AppState
 }
 
 /// Soft-delete media items (mark is_deleted=1).
+/// 软删除媒体项（标记 is_deleted=1）。
 #[tauri::command]
 pub async fn soft_delete_items(item_ids: Vec<i64>, state: State<'_, Arc<AppState>>) -> Result<()> {
     let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
@@ -111,6 +123,7 @@ pub async fn soft_delete_items(item_ids: Vec<i64>, state: State<'_, Arc<AppState
 }
 
 /// Restore soft-deleted items.
+/// 恢复软删除的项目。
 #[tauri::command]
 pub async fn restore_items(item_ids: Vec<i64>, state: State<'_, Arc<AppState>>) -> Result<()> {
     let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
@@ -118,6 +131,7 @@ pub async fn restore_items(item_ids: Vec<i64>, state: State<'_, Arc<AppState>>) 
 }
 
 /// Get items in the trash (paginated).
+/// 获取垃圾桶中的项目（分页）。
 #[tauri::command]
 pub async fn get_trash(
     offset: i64,
@@ -129,6 +143,7 @@ pub async fn get_trash(
 }
 
 /// Get overall app statistics.
+/// 获取整体应用统计信息。
 #[tauri::command]
 pub async fn get_stats(state: State<'_, Arc<AppState>>) -> Result<AppStats> {
     let pool = state.db_read_pool.get().map_err(AppError::from)?;
@@ -136,6 +151,7 @@ pub async fn get_stats(state: State<'_, Arc<AppState>>) -> Result<AppStats> {
 }
 
 /// Get the full directory tree for a scan root.
+/// 获取扫描根目录的完整目录树。
 #[tauri::command]
 pub async fn get_directory_tree(root_id: i64, state: State<'_, Arc<AppState>>) -> Result<Vec<DirNode>> {
     let pool = state.db_read_pool.get().map_err(AppError::from)?;
@@ -143,6 +159,7 @@ pub async fn get_directory_tree(root_id: i64, state: State<'_, Arc<AppState>>) -
 }
 
 /// Get direct children of a directory node (lazy loading).
+/// 获取目录节点的直接子节点（延迟加载）。
 #[tauri::command]
 pub async fn get_directory_children(
     parent_id: i64,
@@ -153,8 +170,10 @@ pub async fn get_directory_children(
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+// ── 助手函数 ───────────────────────────────────────────────────────────────────
 
 /// Extract embedded MP4 from a Google/Samsung Motion Photo JPEG.
+/// 从 Google/Samsung 动态照片 JPEG 中提取嵌入的 MP4。
 fn extract_embedded_mp4(abs_path: &str) -> Result<Vec<u8>> {
     let data = std::fs::read(abs_path).map_err(AppError::from)?;
     let ftyp_marker = b"ftyp";

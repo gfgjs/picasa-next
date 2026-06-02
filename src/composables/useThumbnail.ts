@@ -1,5 +1,6 @@
 // src/composables/useThumbnail.ts
 // Per-item thumbnail loading with ThumbHash placeholder and Image.decode() pre-rasterization.
+// 带有 ThumbHash 占位符和 Image.decode() 预光栅化的按项缩略图加载。
 
 import { ref, computed } from 'vue'
 import { convertFileSrc } from '@tauri-apps/api/core'
@@ -28,6 +29,7 @@ export function useThumbnail(opts: UseThumbnailOptions) {
     let src = ''
     if (opts.thumbStatus === 3) {
       // Direct source file display
+      // 直接显示源文件
       return
     }
 
@@ -46,6 +48,7 @@ export function useThumbnail(opts: UseThumbnailOptions) {
       isLoaded.value   = true
     } catch {
       // decode failed — leave placeholder
+      // 解码失败 — 保留占位符
     }
   }
 

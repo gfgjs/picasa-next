@@ -1,6 +1,9 @@
 // src-tauri/src/db/queries.rs
+// src-tauri/src/db/queries.rs
 //! Reusable parameterised SQL query functions.
+//! 可重用的参数化 SQL 查询函数。
 //! All SQL uses parameter binding — never string concatenation.
+//! 所有 SQL 均使用参数绑定 — 绝不使用字符串拼接。
 
 use rusqlite::{params, Connection, OptionalExtension, Row};
 
@@ -12,6 +15,7 @@ use crate::error::{AppError, Result};
 use crate::utils::path::resolve_media_path;
 
 // ── Row mappers ──────────────────────────────────────────────────────────────
+// ── 行映射器 ──────────────────────────────────────────────────────────────
 
 fn map_scan_root(row: &Row<'_>) -> rusqlite::Result<ScanRoot> {
     Ok(ScanRoot {
@@ -88,6 +92,7 @@ fn map_dir_node(row: &Row<'_>) -> rusqlite::Result<DirNode> {
 }
 
 // ── Scan roots ───────────────────────────────────────────────────────────────
+// ── 扫描根目录 ───────────────────────────────────────────────────────────────
 
 pub fn insert_scan_root(conn: &Connection, path: &str, alias: Option<&str>) -> Result<i64> {
     conn.execute(
@@ -150,8 +155,10 @@ pub fn finish_scan_root(conn: &Connection, id: i64, total: i64) -> Result<()> {
 }
 
 // ── Directories ──────────────────────────────────────────────────────────────
+// ── 目录 ──────────────────────────────────────────────────────────────
 
 /// Upsert a directory. Returns the row id.
+/// 插入或更新目录。返回行 ID。
 pub fn upsert_directory(
     conn: &Connection,
     root_id: i64,
@@ -169,6 +176,7 @@ pub fn upsert_directory(
         params![root_id, parent_id, rel_path, name, depth, mtime],
     )?;
     // After upsert, get the id (may have existed before)
+    // 插入或更新后，获取 id（可能之前就已存在）
     let id: i64 = conn.query_row(
         "SELECT id FROM directories WHERE root_id=?1 AND rel_path=?2",
         params![root_id, rel_path],
@@ -210,8 +218,10 @@ pub fn increment_directory_media_count(conn: &Connection, dir_id: i64, delta: i6
 }
 
 // ── Media items ───────────────────────────────────────────────────────────────
+// ── 媒体项 ───────────────────────────────────────────────────────────────
 
 /// Batch-upsert helper data for fast scan.
+/// 快速扫描的批量插入/更新辅助数据。
 pub struct FastScanItem {
     pub directory_id: i64,
     pub file_name:    String,
@@ -226,9 +236,12 @@ pub struct FastScanItem {
 }
 
 /// Insert or update a media item from the fast scan phase.
+/// 插入或更新来自快速扫描阶段的媒体项。
 /// Returns `(id, is_new)`.
+/// 返回 `(id, is_new)`。
 pub fn upsert_fast_scan_item(conn: &Connection, item: &FastScanItem) -> Result<(i64, bool)> {
     // Check if exists with same mtime (no change needed)
+    // 检查是否存在具有相同 mtime 的项（无需更改）
     let existing: Option<(i64, i64)> = conn
         .query_row(
             "SELECT id, file_mtime FROM media_items WHERE directory_id=?1 AND file_name=?2",
@@ -240,9 +253,11 @@ pub fn upsert_fast_scan_item(conn: &Connection, item: &FastScanItem) -> Result<(
     if let Some((id, mtime)) = existing {
         if mtime == item.file_mtime {
             // Unchanged — skip
+            // 未更改 — 跳过
             return Ok((id, false));
         }
         // Changed — update
+        // 已更改 — 更新
         conn.execute(
             "UPDATE media_items SET file_size=?1, file_mtime=?2, file_format=?3,
                       media_type=?4, width=?5, height=?6, sort_datetime=?7,
@@ -259,6 +274,7 @@ pub fn upsert_fast_scan_item(conn: &Connection, item: &FastScanItem) -> Result<(
     }
 
     // New item
+    // 新项
     conn.execute(
         "INSERT INTO media_items
              (directory_id, file_name, file_size, file_mtime, file_format,
@@ -291,6 +307,7 @@ pub fn get_media_detail(conn: &Connection, id: i64) -> Result<MediaDetail> {
     let item = get_media_item(conn, id)?;
 
     // Resolve absolute path via joined directories + scan_roots
+    // 通过关联目录和扫描根目录解析绝对路径
     let (rel_path, root_path): (String, String) = conn
         .query_row(
             "SELECT d.rel_path, r.path
@@ -304,6 +321,7 @@ pub fn get_media_detail(conn: &Connection, id: i64) -> Result<MediaDetail> {
     let abs_path = resolve_media_path(&root_path, &rel_path, &item.file_name);
 
     // Image meta (optional — may not exist yet)
+    // 图像元数据（可选 — 可能尚不存在）
     let image_meta = conn
         .query_row(
             "SELECT item_id, orientation, exif_datetime, exif_make, exif_model, exif_lens,
@@ -344,7 +362,9 @@ pub fn get_media_detail(conn: &Connection, id: i64) -> Result<MediaDetail> {
 }
 
 /// Query all layout items matching the given filter.
+/// 查询与给定过滤器匹配的所有布局项。
 /// Used by `compute_layout`.
+/// 被 `compute_layout` 使用。
 pub fn query_layout_items(
     conn: &Connection,
     filter: &MediaFilter,
@@ -412,6 +432,7 @@ pub fn query_layout_items(
 }
 
 /// Get items pending thumbnail generation (thumb_status=0).
+/// 获取等待生成缩略图的项（thumb_status=0）。
 pub fn get_pending_thumb_items(conn: &Connection, limit: i64) -> Result<Vec<(i64, i64)>> {
     let mut stmt = conn.prepare(
         "SELECT id, cache_key FROM media_items
@@ -474,6 +495,7 @@ pub fn get_thumb_by_item_ids(conn: &Connection, ids: &[i64]) -> Result<Vec<Thumb
 }
 
 // ── Image meta upsert ────────────────────────────────────────────────────────
+// ── 图像元数据更新插入 ────────────────────────────────────────────────────────
 
 pub fn upsert_image_meta(conn: &Connection, meta: &ImageMeta) -> Result<()> {
     conn.execute(
@@ -536,6 +558,7 @@ pub fn set_companion_of(conn: &Connection, companion_id: i64, main_id: i64) -> R
 }
 
 // ── Favourites / Rating / Soft-delete ────────────────────────────────────────
+// ── 收藏 / 评分 / 软删除 ────────────────────────────────────────
 
 pub fn toggle_favorite(conn: &Connection, item_id: i64) -> Result<bool> {
     conn.execute(
@@ -610,6 +633,7 @@ pub fn get_trash(conn: &Connection, offset: i64, limit: i64) -> Result<Vec<Media
 }
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
+// ── 统计 ─────────────────────────────────────────────────────────────────────
 
 pub fn get_app_stats(conn: &Connection) -> Result<AppStats> {
     let total_items: i64 = conn.query_row(
@@ -659,6 +683,7 @@ pub fn get_app_stats(conn: &Connection) -> Result<AppStats> {
 }
 
 // ── Search ────────────────────────────────────────────────────────────────────
+// ── 搜索 ────────────────────────────────────────────────────────────────────
 
 pub fn search_media(
     conn: &Connection,
@@ -717,6 +742,7 @@ pub fn search_media(
 }
 
 // ── App config ────────────────────────────────────────────────────────────────
+// ── 应用配置 ────────────────────────────────────────────────────────────────
 
 pub fn get_config(conn: &Connection, key: &str) -> Result<Option<String>> {
     conn.query_row(
@@ -737,8 +763,10 @@ pub fn set_config(conn: &Connection, key: &str, value: &str) -> Result<()> {
 }
 
 // ── Enrichment helpers ────────────────────────────────────────────────────────
+// ── 丰富化辅助函数 ────────────────────────────────────────────────────────
 
 /// Items needing enrichment: those without an `image_meta` row and media_type='image'.
+/// 需要丰富化的项：没有 `image_meta` 行且 media_type='image' 的项。
 pub fn get_unenriched_image_ids(conn: &Connection, limit: i64) -> Result<Vec<i64>> {
     let mut stmt = conn.prepare(
         "SELECT m.id FROM media_items m
@@ -752,6 +780,7 @@ pub fn get_unenriched_image_ids(conn: &Connection, limit: i64) -> Result<Vec<i64
 }
 
 /// Get full path info for a media item.
+/// 获取媒体项的完整路径信息。
 pub fn get_item_path_info(conn: &Connection, item_id: i64) -> Result<(String, String, String)> {
     conn.query_row(
         "SELECT r.path, d.rel_path, m.file_name
@@ -766,6 +795,7 @@ pub fn get_item_path_info(conn: &Connection, item_id: i64) -> Result<(String, St
 }
 
 /// Get companion video URL for a live photo (Apple style: by file stem).
+/// 获取实况照片的伴随视频 URL（Apple 风格：按文件主干）。
 pub fn get_companion_item_id(conn: &Connection, item_id: i64) -> Result<Option<i64>> {
     conn.query_row(
         "SELECT id FROM media_items WHERE companion_of=?1 LIMIT 1",

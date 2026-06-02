@@ -1,12 +1,19 @@
 // src-tauri/src/thumbnail/generator.rs
 //! Unified thumbnail generation entry point (§ 8.1).
+//! 统一的缩略图生成入口点（§ 8.1）。
 //!
 //! Pipeline:
+//! 管道：
 //!   1. Cache hit check
+//!   1. 缓存命中检查
 //!   2. Small file direct display (thumb_status = 3)
+//!   2. 小文件直接显示（thumb_status = 3）
 //!   3. Dispatch by media_type
+//!   3. 根据 media_type 分发
 //!   4. ThumbHash generation
+//!   4. ThumbHash 生成
 //!   5. Write to disk + DB update
+//!   5. 写入磁盘 + 数据库更新
 
 use std::path::Path;
 use std::sync::Mutex;
@@ -23,6 +30,7 @@ use crate::thumbnail::exif_thumb::{encode_as_jpeg, encode_as_webp};
 use crate::thumbnail::thumbhash::generate_thumbhash;
 
 /// Configuration for thumbnail generation.
+/// 缩略图生成的配置。
 #[derive(Clone)]
 pub struct ThumbConfig {
     pub cache_dir:       std::path::PathBuf,
@@ -31,8 +39,10 @@ pub struct ThumbConfig {
 }
 
 /// Generate a thumbnail for a single media item.
+/// 为单个媒体项生成缩略图。
 ///
 /// Returns a `ThumbResult` that can be sent directly to the frontend.
+/// 返回一个可以直接发送到前端的 `ThumbResult`。
 pub fn generate_thumbnail(
     writer: &Mutex<Connection>,
     arena: &EngineArena,
@@ -48,6 +58,7 @@ pub fn generate_thumbnail(
     let abs_path = Path::new(&abs_path_str);
 
     // ── 1. Cache hit ──────────────────────────────────────────────────────
+    // ── 1. 缓存命中 ────────────────────────────────────────────────────────
     if item.thumb_status == 1 {
         if let Some(ref tp) = item.thumb_path {
             let full = config.cache_dir.join("thumbnails").join(tp);
@@ -64,6 +75,7 @@ pub fn generate_thumbnail(
     }
 
     // ── 2. Small file direct display ─────────────────────────────────────
+    // ── 2. 小文件直接显示 ──────────────────────────────────────────────────
     let web_safe_formats = ["jpg", "jpeg", "png", "webp", "gif", "svg", "avif"];
     let is_web_safe = web_safe_formats.contains(&item.file_format.to_lowercase().as_str());
 
@@ -72,11 +84,15 @@ pub fn generate_thumbnail(
         if item.file_size <= 500 * 1024 {
             // Only fall back to full decode for ThumbHash if the file is genuinely small
             // (e.g., < 500KB). Full decoding large files just for a ThumbHash causes CPU spikes.
+            // 只有当文件确实很小（例如 < 500KB）时，才回退到完整解码以获取 ThumbHash。
+            // 仅仅为了 ThumbHash 而完整解码大文件会导致 CPU 占用率激增。
             hash = generate_thumbhash_from_file(arena, &item.file_format, abs_path).unwrap_or(None);
         }
 
         // Store the absolute path as thumb_path so the frontend can load the
         // original file directly via convertFileSrc without an extra IPC call.
+        // 将绝对路径存储为 thumb_path，以便前端可以通过 convertFileSrc 直接加载原始文件，
+        // 而无需额外的 IPC 调用。
         let abs_path_str = abs_path.to_string_lossy().replace('\\', "/");
         {
             let conn = writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
@@ -91,12 +107,14 @@ pub fn generate_thumbnail(
     }
 
     // ── 3. Dispatch by media_type ─────────────────────────────────────────
+    // ── 3. 根据 media_type 分发 ────────────────────────────────────────────
     match item.media_type.as_str() {
         "image" => {
             generate_image_thumb(writer, arena, item_id, item.cache_key, abs_path, &item.file_format, config)
         }
         _ => {
             // Phase 2: video/audio/document — mark as failed for now
+            // 第 2 阶段：视频/音频/文档 — 目前标记为失败
             let conn = writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
             update_thumb_result(&conn, item_id, 2, None, None)?;
             Ok(ThumbResult {
@@ -123,13 +141,16 @@ fn generate_image_thumb(
         .ok_or_else(|| AppError::UnsupportedFormat(format.to_string()))?;
 
     // Full decode
+    // 完整解码
     let decoded = engine.decode(abs_path)?;
     let hash_result = generate_thumbhash(&decoded);
 
     // Resize with fast_image_resize
+    // 使用 fast_image_resize 调整大小
     let webp = resize_and_encode(&decoded.pixels, decoded.width, decoded.height, config.size)?;
 
     // Write WebP to disk
+    // 将 WebP 写入磁盘
     ensure_thumb_dir(&config.cache_dir, config.size, cache_key)
         .map_err(|e| AppError::Io(e.to_string()))?;
     let disk_path = thumb_path(&config.cache_dir, config.size, cache_key);
@@ -166,6 +187,7 @@ fn resize_and_encode(pixels: &[u8], w: u32, h: u32, target: u32) -> Result<Vec<u
     };
 
     // fast_image_resize v4: Image::from_slice_u8 / Image::new take u32 directly
+    // fast_image_resize v4：Image::from_slice_u8 / Image::new 直接接受 u32
     let mut pixels_vec = pixels.to_vec();
     let src = FirImage::from_slice_u8(
         w.max(1),
@@ -202,5 +224,3 @@ fn generate_thumbhash_from_file(
     let decoded = engine.decode(path)?;
     Ok(generate_thumbhash(&decoded).ok())
 }
-
-

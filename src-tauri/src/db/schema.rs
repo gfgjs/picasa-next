@@ -1,16 +1,22 @@
 // src-tauri/src/db/schema.rs
+// src-tauri/src/db/schema.rs
 //! DDL: CREATE TABLE / CREATE INDEX statements.
+//! DDL：CREATE TABLE / CREATE INDEX 语句。
 //! Called once from `migration.rs` during schema bootstrapping.
+//! 在模式引导期间从 `migration.rs` 调用一次。
 
 /// All DDL for schema version 1.
+/// 模式版本 1 的所有 DDL。
 pub const SCHEMA_V1: &str = "
 -- ── app_config ──────────────────────────────────────────────────────────────
+-- ── 应用配置 ──────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS app_config (
     key    TEXT PRIMARY KEY,
     value  TEXT NOT NULL
 );
 
 -- Seed defaults (INSERT OR IGNORE = safe to re-run)
+-- 播种默认值（INSERT OR IGNORE = 安全重新运行）
 INSERT OR IGNORE INTO app_config (key, value) VALUES
     ('schema_version',    '1'),
     ('thumb_size',        '300'),
@@ -24,6 +30,7 @@ INSERT OR IGNORE INTO app_config (key, value) VALUES
     ('sidebar_width',     '260');
 
 -- ── scan_roots ───────────────────────────────────────────────────────────────
+-- ── 扫描根目录 ───────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS scan_roots (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     path            TEXT    NOT NULL UNIQUE,
@@ -38,6 +45,7 @@ CREATE TABLE IF NOT EXISTS scan_roots (
 );
 
 -- ── directories ──────────────────────────────────────────────────────────────
+-- ── 目录 ──────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS directories (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     root_id         INTEGER NOT NULL REFERENCES scan_roots(id) ON DELETE CASCADE,
@@ -54,6 +62,7 @@ CREATE INDEX IF NOT EXISTS idx_dir_root   ON directories(root_id);
 CREATE INDEX IF NOT EXISTS idx_dir_parent ON directories(parent_id);
 
 -- ── media_items ───────────────────────────────────────────────────────────────
+-- ── 媒体项 ───────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS media_items (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     directory_id    INTEGER NOT NULL REFERENCES directories(id) ON DELETE CASCADE,
@@ -108,6 +117,7 @@ CREATE INDEX IF NOT EXISTS idx_media_companion ON media_items(companion_of) WHER
 CREATE INDEX IF NOT EXISTS idx_media_live      ON media_items(is_live_photo) WHERE is_live_photo = 1;
 
 -- ── image_meta ────────────────────────────────────────────────────────────────
+-- ── 图像元数据 ────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS image_meta (
     item_id           INTEGER PRIMARY KEY REFERENCES media_items(id) ON DELETE CASCADE,
     orientation       INTEGER DEFAULT 1,
@@ -134,12 +144,14 @@ CREATE INDEX IF NOT EXISTS idx_img_hue ON image_meta(dominant_hue, is_monochrome
                                        WHERE dominant_hue IS NOT NULL;
 
 -- ── video_meta (Phase 2 — table created now, populated later) ────────────────
+-- ── 视频元数据（阶段 2 — 现在创建表，稍后填充） ────────────────
 CREATE TABLE IF NOT EXISTS video_meta (
     item_id      INTEGER PRIMARY KEY REFERENCES media_items(id) ON DELETE CASCADE,
     video_codec  TEXT
 );
 
 -- ── audio_meta (Phase 2) ──────────────────────────────────────────────────────
+-- ── 音频元数据（阶段 2） ──────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS audio_meta (
     item_id      INTEGER PRIMARY KEY REFERENCES media_items(id) ON DELETE CASCADE,
     audio_codec  TEXT,
@@ -150,6 +162,7 @@ CREATE TABLE IF NOT EXISTS audio_meta (
 CREATE INDEX IF NOT EXISTS idx_audio_artist ON audio_meta(artist) WHERE artist IS NOT NULL;
 
 -- ── document_meta (Phase 2) ───────────────────────────────────────────────────
+-- ── 文档元数据（阶段 2） ───────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS document_meta (
     item_id      INTEGER PRIMARY KEY REFERENCES media_items(id) ON DELETE CASCADE,
     page_count   INTEGER,
@@ -157,6 +170,7 @@ CREATE TABLE IF NOT EXISTS document_meta (
 );
 
 -- ── albums / album_items (Phase 3) ────────────────────────────────────────────
+-- ── 相册 / 相册项（阶段 3） ────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS albums (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     name            TEXT NOT NULL,
@@ -176,6 +190,7 @@ CREATE TABLE IF NOT EXISTS album_items (
 );
 
 -- ── tags / item_tags (Phase 3) ────────────────────────────────────────────────
+-- ── 标签 / 项目标签（阶段 3） ────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS tags (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     name       TEXT NOT NULL UNIQUE,

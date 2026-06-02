@@ -1,6 +1,9 @@
 // src-tauri/src/error.rs
+// src-tauri/src/error.rs
 //! Unified application error type.
+//! 统一的应用程序错误类型。
 //! All variants are serialisable so they can be forwarded to the frontend via IPC.
+//! 所有变体都是可序列化的，以便可以通过 IPC 转发到前端。
 
 use serde::Serialize;
 use thiserror::Error;
@@ -55,6 +58,7 @@ pub enum AppError {
 }
 
 // ── Conversions ────────────────────────────────────────────────────────────
+// ── 转换 ────────────────────────────────────────────────────────────
 
 impl From<std::io::Error> for AppError {
     fn from(e: std::io::Error) -> Self {
@@ -93,4 +97,5 @@ impl From<quick_xml::Error> for AppError {
 }
 
 /// Convenience alias used throughout the codebase.
+/// 整个代码库中使用的便捷别名。
 pub type Result<T> = std::result::Result<T, AppError>;

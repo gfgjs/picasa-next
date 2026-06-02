@@ -1,11 +1,13 @@
 // src/stores/filterStore.ts
 // Media filter state (drives compute_layout re-runs)
+// 媒体过滤器状态（驱动 compute_layout 重新运行）
 
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 
 export const useFilterStore = defineStore('filter', () => {
   const mediaTypes    = ref<string[]>([])  // empty = all
+                                           // 空 = 全部
   const livePhotoOnly = ref(false)
   const favoritedOnly = ref(false)
   const minRating     = ref(0)

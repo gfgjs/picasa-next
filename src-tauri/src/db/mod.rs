@@ -1,4 +1,5 @@
 // src-tauri/src/db/mod.rs
+// src-tauri/src/db/mod.rs
 pub mod connection;
 pub mod migration;
 pub mod models;

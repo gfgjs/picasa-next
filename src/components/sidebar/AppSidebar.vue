@@ -1,6 +1,7 @@
 <template>
   <nav class="sidebar">
     <!-- App title + logo -->
+    <!-- 应用标题 + Logo -->
     <div class="sidebar__header">
       <div class="sidebar__logo">
         <span class="sidebar__logo-icon">✦</span>
@@ -9,6 +10,7 @@
     </div>
 
     <!-- Smart albums -->
+    <!-- 智能相册 -->
     <section class="sidebar__section">
       <div class="sidebar__section-label">媒体库</div>
       <ul class="sidebar__nav">
@@ -27,9 +29,11 @@
     </section>
 
     <!-- Divider -->
+    <!-- 分隔线 -->
     <div class="sidebar__divider" />
 
     <!-- Scan roots / folder tree -->
+    <!-- 扫描根目录 / 文件夹树 -->
     <section class="sidebar__section sidebar__section--tree">
       <div class="sidebar__section-label">
         <span>文件夹</span>
@@ -63,6 +67,7 @@
     </section>
 
     <!-- Scan roots status -->
+    <!-- 扫描根目录状态 -->
     <div v-if="scan.hasScanRoots" class="sidebar__scan-status">
       <div
         v-for="root in scan.scanRoots"
@@ -105,6 +110,7 @@
     </div>
 
     <!-- Settings / footer -->
+    <!-- 设置 / 页脚 -->
     <div class="sidebar__footer">
       <router-link to="/settings" class="btn-icon" title="设置" style="text-decoration: none;">⚙️</router-link>
       <button class="btn-icon" title="[调试] 弹窗设置" @click="openSettings">🛠️</button>
@@ -112,6 +118,7 @@
         {{ ui.theme === 'dark' ? '☀️' : ui.theme === 'light' ? '🌙' : '🖥️' }}
       </button>
       <!-- Dev-only: clear data -->
+      <!-- 仅开发：清空数据 -->
       <button
         class="btn-icon btn-danger-sm"
         title="[开发] 清空数据库"
@@ -155,6 +162,7 @@ function openSettings() {
 }
 
 // ── Smart albums ───────────────────────────────────────────────────────────
+// ── 智能相册 ───────────────────────────────────────────────────────────
 
 const smartAlbums = computed(() => [
   { id: 'all'         as const, icon: '🖼️', label: '全部',      count: media.stats?.totalItems },
@@ -171,6 +179,7 @@ function formatCount(n: number | undefined | null): string {
 }
 
 // ── Folder tree ────────────────────────────────────────────────────────────
+// ── 文件夹树 ────────────────────────────────────────────────────────────
 
 function onNodeClick(node: DirNode) {
   ui.setActiveDirectory(node.id)
@@ -187,15 +196,21 @@ function handleSmartAlbumClick(albumId: string) {
 }
 
 // ── Watch scan roots for live updates (NOT immediate — onMounted handles init) ─
+// ── 监听扫描根目录以进行实时更新（非 immediate — onMounted 处理初始化） ─
 // Using immediate:true here causes a double-load: the watch fires once before
+// 在这里使用 immediate:true 会导致双重加载：watch 在 onMounted 之前触发一次
 // onMounted (with empty array) and again after loadScanRoots() resolves,
+// （空数组），在 loadScanRoots() 解析后再次触发，
 // making loadRoots() called twice and duplicating folder entries.
+// 导致 loadRoots() 被调用两次并重复文件夹条目。
 watch(() => scan.scanRoots, (roots) => {
   // Only react to changes that happen AFTER initial mount (scan add/remove)
+  // 仅对初始挂载之后发生的变化（扫描添加/删除）做出反应
   if (roots.length) folderTree.loadRoots(roots)
 })
 
 // ── Scan controls ──────────────────────────────────────────────────────────
+// ── 扫描控制 ──────────────────────────────────────────────────────────
 
 function progressPercent(rootId: number): number {
   const p = scan.getProgress(rootId)
@@ -240,6 +255,7 @@ async function removeRoot(id: number) {
 
 onMounted(async () => {
   // Sequential init: load roots first, THEN tree — no parallel races
+  // 顺序初始化：先加载根目录，然后加载树 — 没有并行竞争
   await scan.loadScanRoots()
   await media.loadStats()
   if (scan.scanRoots.length) {
@@ -279,6 +295,7 @@ async function clearSettings() {
 }
 
 /* ── Header ───────────────────────────────────────────────────────────── */
+/* ── 头部 ───────────────────────────────────────────────────────────── */
 .sidebar__header {
   padding: var(--spacing-md);
   flex-shrink: 0;
@@ -300,6 +317,7 @@ async function clearSettings() {
 }
 
 /* ── Section ─────────────────────────────────────────────────────────── */
+/* ── 区块 ─────────────────────────────────────────────────────────── */
 .sidebar__section {
   padding: var(--spacing-sm) 0;
   flex-shrink: 0;
@@ -329,6 +347,7 @@ async function clearSettings() {
 }
 
 /* ── Nav items ────────────────────────────────────────────────────────── */
+/* ── 导航项 ────────────────────────────────────────────────────────── */
 .sidebar__nav {
   display: flex;
   flex-direction: column;
@@ -367,6 +386,7 @@ async function clearSettings() {
 }
 
 /* ── Folder tree ──────────────────────────────────────────────────────── */
+/* ── 文件夹树 ──────────────────────────────────────────────────────── */
 .sidebar__empty {
   padding: var(--spacing-md);
   font-size: var(--font-size-sm);
@@ -405,6 +425,7 @@ async function clearSettings() {
 .sidebar__tree-count { font-size: var(--font-size-xs); color: var(--color-text-tertiary); margin-right: 4px; }
 
 /* ── Scan status ──────────────────────────────────────────────────────── */
+/* ── 扫描状态 ──────────────────────────────────────────────────────── */
 .sidebar__scan-status {
   border-top: 1px solid var(--color-border);
   padding: var(--spacing-sm) var(--spacing-md);
@@ -446,6 +467,7 @@ async function clearSettings() {
 .scan-root-item__count { font-size: 10px; color: var(--color-text-tertiary); white-space: nowrap; }
 
 /* ── Footer ───────────────────────────────────────────────────────────── */
+/* ── 页脚 ───────────────────────────────────────────────────────────── */
 .sidebar__footer {
   border-top: 1px solid var(--color-border);
   padding: var(--spacing-sm) var(--spacing-md);

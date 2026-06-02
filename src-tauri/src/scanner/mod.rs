@@ -5,6 +5,7 @@ pub mod live_photo;
 pub mod metadata;
 pub mod walker;
 // pub mod watcher; // Phase 3
+// pub mod watcher; // 阶段 3
 
 pub use fast_scan::run_fast_scan;
 pub use enricher::run_enrichment;

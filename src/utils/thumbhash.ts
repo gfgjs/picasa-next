@@ -1,15 +1,20 @@
 // src/utils/thumbhash.ts
 // ThumbHash decode: converts the ~28-byte hash to a 32×32 data URL for blur placeholder.
+// ThumbHash 解码：将大约 28 字节的哈希转换为 32×32 数据 URL 以用作模糊占位符。
 // Uses the thumbhash JS algorithm (port of the Rust thumbhash crate).
+// 使用 thumbhash JS 算法（Rust thumbhash crate 的移植）。
 
 /**
  * Decode a ThumbHash byte array to a data: URL (PNG or similar).
+ * 将 ThumbHash 字节数组解码为 data: URL（PNG 或类似格式）。
  * `hash` is a `number[]` received from Rust as a serialized BLOB.
+ * `hash` 是一个作为序列化 BLOB 从 Rust 接收的 `number[]`。
  */
 export function thumbhashToDataURL(hash: number[] | Uint8Array): string {
   const bytes = hash instanceof Uint8Array ? hash : new Uint8Array(hash)
 
   // thumbhash decode — inline implementation of the official thumbhash algorithm
+  // thumbhash 解码 — 官方 thumbhash 算法的内联实现
   // See: https://github.com/evanw/thumbhash
   const rgba = thumbHashToRGBA(bytes)
   if (!rgba) return ''
@@ -29,6 +34,7 @@ export function thumbhashToDataURL(hash: number[] | Uint8Array): string {
 }
 
 // ── ThumbHash decode (from official JS implementation) ────────────────────
+// ── ThumbHash 解码（来自官方 JS 实现） ────────────────────────────────────
 
 function thumbHashToRGBA(hash: Uint8Array): { rgba: Uint8Array; w: number; h: number } | null {
   try {
@@ -92,13 +98,14 @@ function thumbHashToRGBA(hash: Uint8Array): { rgba: Uint8Array; w: number; h: nu
             const fx = Math.cos(Math.PI / w * (x + 0.5) * cx) * fy
             if (cx < lx && cy < ly) {
               if (acIdx < lAC.length) l += fx * lAC[acIdx]
-              if (acIdx + 1 < lAC.length) { /* p component skipped in luma */ }
+              if (acIdx + 1 < lAC.length) { /* p component skipped in luma / 在亮度中跳过了 p 分量 */ }
             }
             acIdx++
           }
         }
 
         // Simplified channel combination (approximate)
+        // 简化的通道组合（近似值）
         const r = l + p + q
         const g = l - p
         const b = l - q
@@ -119,7 +126,9 @@ function thumbHashToRGBA(hash: Uint8Array): { rgba: Uint8Array; w: number; h: nu
 
 /**
  * Extract the average RGB color from a ThumbHash.
+ * 从 ThumbHash 中提取平均 RGB 颜色。
  * This is O(1) and extremely fast, ideal for solid color placeholders.
+ * 这是 O(1) 的，速度极快，非常适合用作纯色占位符。
  */
 export function thumbhashToAverageColor(hash: number[] | Uint8Array): string {
   const bytes = hash instanceof Uint8Array ? hash : new Uint8Array(hash)
@@ -140,7 +149,9 @@ export function thumbhashToAverageColor(hash: number[] | Uint8Array): string {
 
 /**
  * Create a CSS blur placeholder string from a thumbhash.
+ * 从 thumbhash 创建 CSS 模糊占位符字符串。
  * Returns a `background-image: url(...)` value.
+ * 返回一个 `background-image: url(...)` 值。
  */
 export function thumbhashToBackgroundImage(hash: number[] | Uint8Array): string {
   const url = thumbhashToDataURL(hash)
@@ -148,6 +159,7 @@ export function thumbhashToBackgroundImage(hash: number[] | Uint8Array): string 
 }
 
 // ── Async / Idle Queue for Thumbhash Generation ───────────────────────────
+// ── Thumbhash 生成的异步 / 空闲队列 ─────────────────────────────────────────
 
 const bgCache = new Map<string, string>()
 const pendingQueue: { hash: number[] | Uint8Array, key: string, resolve: (val: string) => void }[] = []
@@ -155,6 +167,7 @@ let isIdleScheduled = false
 
 function processIdleQueue(deadline: IdleDeadline) {
   // Process tasks as long as we have at least 2ms remaining in the idle frame
+  // 只要空闲帧中至少还剩 2 毫秒，就处理任务
   while (pendingQueue.length > 0 && deadline.timeRemaining() > 2) {
     const task = pendingQueue.shift()!
     if (bgCache.has(task.key)) {
@@ -175,7 +188,9 @@ function processIdleQueue(deadline: IdleDeadline) {
 
 /**
  * Lazily generates the thumbhash background image during browser idle periods.
+ * 在浏览器空闲期间延迟生成 thumbhash 背景图像。
  * This completely eliminates main-thread stuttering during fast scrolling.
+ * 这完全消除了快速滚动期间主线程的卡顿。
  */
 export function getThumbhashBgAsync(hash: number[] | Uint8Array): Promise<string> {
   const bytes = hash instanceof Uint8Array ? hash : new Uint8Array(hash)

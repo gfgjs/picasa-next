@@ -1,5 +1,6 @@
 // src/types/ui.ts
 // UI-only state types
+// 仅 UI 的状态类型
 
 export type Theme = 'dark' | 'light' | 'system'
 

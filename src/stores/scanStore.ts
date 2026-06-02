@@ -1,5 +1,6 @@
 // src/stores/scanStore.ts
 // Scan state management
+// 扫描状态管理
 
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'

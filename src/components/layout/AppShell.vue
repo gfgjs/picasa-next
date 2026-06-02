@@ -1,12 +1,14 @@
 <template>
   <div class="app-shell" :data-theme="ui.theme">
     <!-- Sidebar -->
+    <!-- 侧边栏 -->
     <aside
       class="app-sidebar"
       :style="{ width: ui.sidebarWidth + 'px' }"
     >
       <slot name="sidebar" />
       <!-- Drag handle -->
+      <!-- 拖拽手柄 -->
       <div
         class="sidebar-resize-handle"
         @mousedown="resizer.onMouseDown"
@@ -15,6 +17,7 @@
     </aside>
 
     <!-- Main area -->
+    <!-- 主区域 -->
     <div class="app-main">
       <header class="app-toolbar">
         <slot name="toolbar" />

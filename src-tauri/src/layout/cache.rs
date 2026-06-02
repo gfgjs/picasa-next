@@ -1,8 +1,11 @@
 // src-tauri/src/layout/cache.rs
 //! Layout cache stored in `AppState`.
+//! 存储在 `AppState` 中的布局缓存。
 //!
 //! `compute_layout` stores the result here; `get_layout_rows` reads slices.
+//! `compute_layout` 将结果存储于此；`get_layout_rows` 读取切片。
 //! A `layout_version` counter prevents stale reads.
+//! `layout_version` 计数器用于防止读取过期数据。
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::RwLock;
@@ -22,6 +25,7 @@ pub struct LayoutSummary {
 }
 
 /// Data stored in the in-memory layout cache.
+/// 存储在内存布局缓存中的数据。
 pub struct LayoutCacheData {
     pub rows:           Vec<LayoutRow>,
     pub total_height:   f64,
@@ -29,14 +33,17 @@ pub struct LayoutCacheData {
 }
 
 /// The layout cache — stored behind an `RwLock` in `AppState`.
+/// 布局缓存 — 存储在 `AppState` 中的 `RwLock` 后面。
 pub type LayoutCache = RwLock<Option<LayoutCacheData>>;
 
 /// Create a fresh layout cache (initially empty).
+/// 创建一个全新的布局缓存（初始为空）。
 pub fn new_layout_cache() -> LayoutCache {
     RwLock::new(None)
 }
 
 /// Store a new layout, atomically incrementing the version.
+/// 存储新的布局，自动递增版本号。
 pub fn store_layout(cache: &LayoutCache, rows: Vec<LayoutRow>, total_height: f64) -> u64 {
     let version = LAYOUT_VERSION_COUNTER.fetch_add(1, Ordering::SeqCst) + 1;
     let mut guard = cache.write().unwrap();
@@ -49,7 +56,9 @@ pub fn store_layout(cache: &LayoutCache, rows: Vec<LayoutRow>, total_height: f64
 }
 
 /// Retrieve a slice of rows from the cache.
+/// 从缓存中检索行切片。
 /// Returns `None` if the cache is empty or the version doesn't match.
+/// 如果缓存为空或版本不匹配，则返回 `None`。
 pub fn get_rows(
     cache: &LayoutCache,
     start_row: usize,
@@ -73,6 +82,7 @@ pub fn get_rows(
 }
 
 /// Retrieve a slice of rows intersecting [top_y, bottom_y] from the cache.
+/// 从缓存中检索与 [top_y, bottom_y] 相交的行切片。
 pub fn get_rows_by_y(
     cache: &LayoutCache,
     top_y: f64,
@@ -102,6 +112,7 @@ pub fn get_rows_by_y(
 }
 
 /// Get the layout summary (row count + total height + version).
+/// 获取布局摘要（行数 + 总高度 + 版本）。
 pub fn get_summary(cache: &LayoutCache) -> Option<LayoutSummary> {
     let guard = cache.read().unwrap();
     let data = guard.as_ref()?;
@@ -113,11 +124,13 @@ pub fn get_summary(cache: &LayoutCache) -> Option<LayoutSummary> {
 }
 
 /// Get the adjacent item ID from the cached layout
+/// 从缓存布局中获取相邻项 ID
 pub fn get_adjacent_item(cache: &LayoutCache, current_id: i64, offset: isize) -> Option<i64> {
     let guard = cache.read().unwrap();
     let data = guard.as_ref()?;
     
     // Flatten all items
+    // 展平所有项目
     let mut all_ids = Vec::new();
     for row in &data.rows {
         if let LayoutRow::Normal { items, .. } = row {

@@ -1,5 +1,6 @@
 // src/composables/useJustifiedLayout.ts
 // Consumes backend row data and drives compute_layout re-runs.
+// 消费后端行数据并驱动 compute_layout 重新运行。
 
 import { ref, watch, onBeforeUnmount } from 'vue'
 import { useMediaStore } from '../stores/mediaStore'
@@ -21,6 +22,7 @@ export function useJustifiedLayout(containerWidthRef: () => number) {
 
 
     // Container not ready yet — defer to next tick and retry once.
+    // 容器尚未准备好 — 延迟到下一个 tick 并重试一次。
     if (cw < 100) {
       await new Promise(r => setTimeout(r, 50))
       const retryW = containerWidthRef()
@@ -50,14 +52,18 @@ export function useJustifiedLayout(containerWidthRef: () => number) {
   }
 
   // Debounced resize handler
+  // 防抖调整大小处理程序
   function onResize(newWidth: number) {
     if (resizeTimer) clearTimeout(resizeTimer)
     resizeTimer = setTimeout(() => compute(newWidth), DEFAULTS.RESIZE_DEBOUNCE_MS)
   }
 
   // Re-compute when filters or active view changes.
+  // 当过滤器或活动视图改变时重新计算。
   // NOTE: totalItems changes (scan complete) are handled in MediaGrid.vue directly
+  // 注意：totalItems 更改（扫描完成）直接在 MediaGrid.vue 中处理
   // to also call updateVisible() after compute.
+  // 以在计算后也调用 updateVisible()。
   watch(
     [
       () => filter.mediaTypes,

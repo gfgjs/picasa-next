@@ -1,10 +1,14 @@
 // src-tauri/src/db/models.rs
+// src-tauri/src/db/models.rs
 //! Rust structs that mirror database rows.
+//! 镜像数据库行的 Rust 结构体。
 //! All structs implement `serde::{Serialize, Deserialize}` for IPC.
+//! 所有结构体都实现 `serde::{Serialize, Deserialize}` 以用于 IPC。
 
 use serde::{Deserialize, Serialize};
 
 // ── Scan root ────────────────────────────────────────────────────────────────
+// ── 扫描根目录 ────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -22,6 +26,7 @@ pub struct ScanRoot {
 }
 
 // ── Directory ────────────────────────────────────────────────────────────────
+// ── 目录 ────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -38,6 +43,7 @@ pub struct Directory {
 }
 
 /// Lightweight node used in the sidebar folder tree.
+/// 侧边栏文件夹树中使用的轻量级节点。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DirNode {
@@ -52,8 +58,10 @@ pub struct DirNode {
 }
 
 // ── Media item ───────────────────────────────────────────────────────────────
+// ── 媒体项 ───────────────────────────────────────────────────────────────
 
 /// Core media item (all fields from `media_items` table).
+/// 核心媒体项（来自 `media_items` 表的所有字段）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MediaItem {
@@ -85,6 +93,7 @@ pub struct MediaItem {
 }
 
 /// Minimal item used for layout computation (only fields Justified Layout needs).
+/// 用于布局计算的最小化项（仅 Justified Layout 需要的字段）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LayoutItem {
@@ -102,6 +111,7 @@ pub struct LayoutItem {
 }
 
 // ── Image meta ───────────────────────────────────────────────────────────────
+// ── 图像元数据 ───────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -126,8 +136,10 @@ pub struct ImageMeta {
 }
 
 // ── Media detail (full) ──────────────────────────────────────────────────────
+// ── 媒体详情（完整） ──────────────────────────────────────────────────────
 
 /// Full detail returned to the frontend when the user opens a media item.
+/// 用户打开媒体项时返回给前端的完整详情。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MediaDetail {
@@ -138,6 +150,7 @@ pub struct MediaDetail {
 }
 
 // ── Search result ─────────────────────────────────────────────────────────────
+// ── 搜索结果 ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -151,6 +164,7 @@ pub struct SearchResult {
 }
 
 // ── App stats ────────────────────────────────────────────────────────────────
+// ── 应用程序统计 ────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -166,6 +180,7 @@ pub struct AppStats {
 }
 
 // ── Media filter ─────────────────────────────────────────────────────────────
+// ── 媒体过滤器 ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -186,6 +201,7 @@ pub struct DateRange {
 }
 
 // ── Thumbnail result ─────────────────────────────────────────────────────────
+// ── 缩略图结果 ─────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

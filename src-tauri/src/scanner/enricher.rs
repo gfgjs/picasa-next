@@ -1,8 +1,11 @@
 // src-tauri/src/scanner/enricher.rs
 //! Phase 2: Background enrichment — EXIF, XMP Motion Photo, Live Photo pairing, sort_datetime correction.
+//! 阶段 2：后台信息丰富 — EXIF、XMP 动态照片、实况照片配对、sort_datetime 修正。
 //!
 //! Runs asynchronously after the fast scan completes.
+//! 在快速扫描完成后异步运行。
 //! Sends `db:media_enriched` and `enrichment:completed` Tauri events.
+//! 发送 `db:media_enriched` 和 `enrichment:completed` Tauri 事件。
 
 use std::sync::Mutex;
 
@@ -29,6 +32,7 @@ use serde::{Deserialize, Serialize};
 const ENRICHMENT_BATCH: i64 = 500;
 
 // ── IPC event payloads ────────────────────────────────────────────────────────
+// ── IPC 事件负载 ────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -46,11 +50,15 @@ pub struct EnrichmentCompletedPayload {
 }
 
 // ── Enrichment entry point ────────────────────────────────────────────────────
+// ── 丰富信息入口点 ────────────────────────────────────────────────────
 
 /// Run background enrichment for a scan root.
+/// 运行扫描根目录的后台信息丰富。
 ///
 /// This function is meant to be called from `tokio::task::spawn_blocking`
+/// 此函数旨在从 `tokio::task::spawn_blocking` 调用
 /// so the async runtime isn't blocked.
+/// 因此异步运行时不会被阻塞。
 pub fn run_enrichment(
     app: &AppHandle,
     writer: &Mutex<Connection>,
@@ -61,6 +69,7 @@ pub fn run_enrichment(
     info!("Enrichment started: root_id={root_id}");
 
     // ── Count total unenriched items ──────────────────────────────────────
+    // ── 计算未丰富信息的项目总数 ──────────────────────────────────────
     let total: i64 = {
         let conn = writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
         conn.query_row(
@@ -84,6 +93,7 @@ pub fn run_enrichment(
         }
 
         // Fetch next batch of unenriched item IDs (within this root)
+        // 获取下一批未丰富信息的项目 ID（在该根目录下）
         let ids: Vec<i64> = {
             let conn = writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
             let mut stmt = conn.prepare(
@@ -105,6 +115,7 @@ pub fn run_enrichment(
         }
 
         // Collect path info for each item
+        // 收集每个项目的路径信息
         let path_infos: Vec<(i64, String)> = {
             let conn = writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
             ids.iter()
@@ -120,6 +131,7 @@ pub fn run_enrichment(
         };
 
         // Parallel EXIF parse
+        // 并行 EXIF 解析
         let parsed: Vec<(i64, Result<ImageMeta>, bool, bool)> = path_infos
             .par_iter()
             .map(|(id, abs_path)| {
@@ -140,6 +152,7 @@ pub fn run_enrichment(
             .collect();
 
         // Write results in a single transaction
+        // 在单个事务中写入结果
         {
             let conn = writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
             let tx = conn.unchecked_transaction()?;
@@ -155,17 +168,23 @@ pub fn run_enrichment(
                         }
 
                         // Correct sort_datetime = COALESCE(exif_datetime, file_mtime)
+                        // 修正 sort_datetime = COALESCE(exif_datetime, file_mtime)
                         if let Some(exif_dt) = m.exif_datetime {
                             let _ = update_sort_datetime(&tx, *item_id, exif_dt);
                         }
                         // NOTE: width/height orientation correction is handled by fast_scan
+                        // 注意：宽度/高度方向修正由 fast_scan 处理
                         // for JPEG (the most common case). Do NOT swap here again to avoid
+                        // 针对 JPEG（最常见的情况）。不要在这里再次交换以避免
                         // a double-flip. If non-JPEG orientation support is needed in future,
+                        // 双重翻转。如果将来需要非 JPEG 方向支持，
                         // add a media_items.dims_corrected flag and only swap when it is 0.
+                        // 添加一个 media_items.dims_corrected 标志并仅在其为 0 时进行交换。
                     }
                     Err(e) => {
                         debug!("EXIF parse skipped id={item_id}: {e}");
                         // Insert a minimal row so we don't re-attempt this item
+                        // 插入最小行，以便我们不会再次尝试此项目
                         let minimal = ImageMeta {
                             item_id: *item_id,
                             orientation: 1,
@@ -187,6 +206,7 @@ pub fn run_enrichment(
         debug!("Enrichment batch done: {enriched_total}/{total}");
 
         // Emit progress event
+        // 发出进度事件
         let _ = app.emit(
             "db:media_enriched",
             MediaEnrichedPayload {
@@ -198,6 +218,7 @@ pub fn run_enrichment(
     }
 
     // ── Live Photo pairing ────────────────────────────────────────────────
+    // ── 实况照片配对 ────────────────────────────────────────────────
     if !cancel.is_cancelled() {
         let conn = writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
         if let Err(e) = pair_live_photos(&conn, root_id) {

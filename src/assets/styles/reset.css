@@ -8,11 +8,10 @@
 }
 
 html {
-  font-size: 14px;
+  font-size: 16px;
   -webkit-text-size-adjust: 100%;
   text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  /* Removed -webkit-font-smoothing: antialiased; to allow ClearType on Windows for sharper text */
 }
 
 body {

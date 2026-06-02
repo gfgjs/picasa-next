@@ -19,9 +19,11 @@
   </AppShell>
 
   <!-- Detail overlay (global) -->
+  <!-- 详情覆盖层（全局） -->
   <MediaDetailOverlay />
 
   <!-- Toast notifications -->
+  <!-- 吐司通知 -->
   <ToastContainer />
 </template>
 
@@ -41,6 +43,7 @@ import ToastContainer    from './components/common/ToastContainer.vue'
 const ui    = useUiStore()
 
 // Init theme
+// 初始化主题
 useTheme()
 
 function onSearch(query: string) {
@@ -49,17 +52,39 @@ function onSearch(query: string) {
 
 function onSortChange() {
   // Trigger layout re-computation (handled via watcher in useJustifiedLayout)
+  // 触发布局重新计算（通过 useJustifiedLayout 中的观察者处理）
 }
 
 onMounted(async () => {
   // Theme init only — data loading is handled in AppSidebar.vue onMounted
   // to keep initialization sequential and avoid double-compute races.
+  // 仅初始化主题 — 数据加载在 AppSidebar.vue 的 onMounted 中处理，
+  // 以保持初始化顺序并避免重复计算导致的竞争。
   
   // Load global UI configurations
+  // 加载全局 UI 配置
   try {
     const val = await invoke<string | null>('get_app_config', { key: 'timeline_scroll_width' })
     if (val) {
       document.documentElement.style.setProperty('--scrollbar-width', `${val}px`)
+    }
+
+    const valFontSize = await invoke<string | null>('get_app_config', { key: 'ui_font_size' })
+    if (valFontSize) {
+      const size = parseInt(valFontSize, 10)
+      const diff = size - 15
+      document.documentElement.style.setProperty('--font-size-xs', `${12 + diff}px`);
+      document.documentElement.style.setProperty('--font-size-sm', `${13 + diff}px`);
+      document.documentElement.style.setProperty('--font-size-base', `${15 + diff}px`);
+      document.documentElement.style.setProperty('--font-size-md', `${16 + diff}px`);
+      document.documentElement.style.setProperty('--font-size-lg', `${19 + diff}px`);
+      document.documentElement.style.setProperty('--font-size-xl', `${23 + diff}px`);
+      document.documentElement.style.setProperty('--font-size-2xl', `${28 + diff}px`);
+    }
+
+    const valHoverScale = await invoke<string | null>('get_app_config', { key: 'enable_thumb_hover_scale' })
+    if (valHoverScale === 'false') {
+      document.documentElement.classList.add('disable-hover-scale')
     }
   } catch (e) {
     console.error('Failed to load global config:', e)

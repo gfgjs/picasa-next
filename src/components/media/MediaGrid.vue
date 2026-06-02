@@ -7,6 +7,7 @@
       @scroll.passive="onGridScroll"
     >
     <!-- Empty state -->
+    <!-- 空状态 -->
     <div v-if="media.totalRows === 0 && !media.isComputingLayout" class="empty-state">
       <div class="empty-state__icon">🖼️</div>
       <div class="empty-state__title">暂无媒体文件</div>
@@ -14,12 +15,14 @@
     </div>
 
     <!-- Loading -->
+    <!-- 加载中 -->
     <div v-if="media.isComputingLayout" class="media-grid__loading">
       <div class="spinner" />
       <span>正在计算布局...</span>
     </div>
 
     <!-- Virtual scroll wrapper (absolute positioning) -->
+    <!-- 虚拟滚动包装器 (绝对定位) -->
     <div 
       v-if="media.totalRows > 0"
       class="media-grid__content"
@@ -41,11 +44,13 @@
         }"
       >
         <!-- Date separator -->
+        <!-- 日期分隔符 -->
         <template v-if="row.rowType === 'separator'">
           {{ (row as any).separatorLabel }}
         </template>
 
         <!-- Normal row -->
+        <!-- 正常行 -->
         <template v-else>
           <div
             v-for="item in (row as any).items"
@@ -76,6 +81,7 @@
   </div>
 
   <!-- Floating Scroll Buttons -->
+  <!-- 悬浮滚动按钮 -->
     <div v-if="media.totalRows > 0" class="scroll-fab">
       <button class="fab-btn" @click="scrollGridToTop" title="回到顶部">
         ↑
@@ -118,6 +124,7 @@ const isScrolling = ref(false)
 let scrollTimeout: ReturnType<typeof setTimeout> | null = null
 
 // ── Virtual scroll ─────────────────────────────────────────────────────────
+// ── 虚拟滚动 ─────────────────────────────────────────────────────────
 
 const scrollCache = new Map<string, number>()
 
@@ -159,6 +166,7 @@ function scrollGridToBottom() {
 }
 
 // ── Layout ─────────────────────────────────────────────────────────────────
+// ── 布局 ─────────────────────────────────────────────────────────────────
 
 const containerWidth = ref(0)
 let resizeObserver: ResizeObserver | null = null
@@ -167,11 +175,13 @@ const { compute, onResize } = useJustifiedLayout(() => containerWidth.value)
 
 onMounted(async () => {
   // Get cache dir from Tauri
+  // 从 Tauri 获取缓存目录
   const { appDataDir, join } = await import('@tauri-apps/api/path')
   const dir = await appDataDir()
   cacheDir.value = (await join(dir, 'cache')).replace(/\\/g, '/')
 
   // Read container width immediately
+  // 立即读取容器宽度
   if (gridRef.value) {
     containerWidth.value = gridRef.value.clientWidth
   } else {
@@ -181,6 +191,7 @@ onMounted(async () => {
   resizeObserver = new ResizeObserver(entries => {
     const w = entries[0].contentRect.width
     // Ignore sub-pixel changes (often caused by scrollbar rendering glitches)
+    // 忽略亚像素更改（通常由滚动条渲染故障引起）
     if (w > 0 && Math.abs(w - containerWidth.value) > 1) {
       containerWidth.value = w
       onResize(w)
@@ -189,6 +200,7 @@ onMounted(async () => {
   if (gridRef.value) resizeObserver.observe(gridRef.value)
 
   // Initial layout compute — after width is known
+  // 初始布局计算 — 在知道宽度之后
 
   await compute()
 
@@ -196,6 +208,7 @@ onMounted(async () => {
 })
 
 // ── Thumbnail request handling ──────────────────────────────────────────────
+// ── 缩略图请求处理 ──────────────────────────────────────────────
 
 function onCancelThumb(id: number) {
   queue.cancel(id)
@@ -205,6 +218,7 @@ async function onRequestThumb(id: number) {
   try {
     const result = await queue.request(id)
     // Find and patch the item in visibleRows
+    // 查找并修补 visibleRows 中的项目
     for (const row of visibleRows.value) {
       if ((row as any).items) {
         const item = (row as any).items.find((it: any) => it.id === id)
@@ -218,6 +232,7 @@ async function onRequestThumb(id: number) {
     }
   } catch {
     // request cancelled or failed — leave placeholder
+    // 请求取消或失败 — 保留占位符
   }
 }
 
@@ -226,12 +241,14 @@ onBeforeUnmount(() => {
 })
 
 // ── Detail ─────────────────────────────────────────────────────────────────
+// ── 详情 ─────────────────────────────────────────────────────────────────
 
 function openDetail(id: number) {
   media.openDetail(id)
 }
 
 // ── Listen to enrichment events ────────────────────────────────────────────
+// ── 监听增强事件 ────────────────────────────────────────────
 
 let unlistenEnriched: UnlistenFn | null = null
 let enrichedDebounceTimer: ReturnType<typeof setTimeout> | null = null
@@ -240,6 +257,8 @@ onMounted(async () => {
   unlistenEnriched = await listen(EVENTS.MEDIA_ENRICHED, () => {
     // Enrichment fires once per 500-item batch — debounce so we recompute
     // at most once every 2s during active enrichment instead of per-batch.
+    // 数据增强每处理 500 项触发一次批处理 — 进行防抖处理，以便在活跃的增强期间
+    // 最多每 2 秒重新计算一次，而不是在每次批处理之后都计算。
     if (enrichedDebounceTimer !== null) clearTimeout(enrichedDebounceTimer)
     enrichedDebounceTimer = setTimeout(async () => {
       enrichedDebounceTimer = null
@@ -256,6 +275,7 @@ onBeforeUnmount(() => {
 })
 
 // When totalItems changes (scan complete / clear data), recompute and refresh
+// 当 totalItems 发生变化（扫描完成 / 清除数据）时，重新计算并刷新
 watch(
   () => media.totalItems,
   async (newVal, oldVal) => {
@@ -263,15 +283,18 @@ watch(
     if (containerWidth.value < 100) return
     await compute()
     // updateVisible will be called by the layoutVersion watch below
+    // updateVisible 将被下方的 layoutVersion watch 调用
   }
 )
 
 // When layout changes (due to resize, folder switch, filters, etc.), refresh visible rows
+// 当布局发生变化时（由于调整大小、文件夹切换、过滤器等原因），刷新可见的行
 watch(
   () => media.layoutVersion,
   async () => {
 
     // Wait for the DOM to allow setting scrollTop before layout renders
+    // 等待 DOM，允许在布局渲染之前设置 scrollTop
     if (gridRef.value) {
       const saved = scrollCache.get(getViewKey()) || 0
       gridRef.value.scrollTop = saved
@@ -319,6 +342,7 @@ watch(
   display: flex;
   flex-wrap: nowrap;
   /* overflow must be visible so hover-scaled cards can bleed outside the row */
+  /* 溢出部分必须可见，这样悬停时缩放的卡片就可以超出该行的边界 */
   overflow: visible;
 }
 
@@ -334,6 +358,7 @@ watch(
 .media-card {
   position: relative;
   /* shape clipping is handled inside .media-thumb; keep card visible */
+  /* 形状剪裁在 .media-thumb 内部处理；保持卡片可见 */
   overflow: visible;
   border-radius: 2px;
   cursor: pointer;
@@ -341,9 +366,11 @@ watch(
   box-sizing: border-box;
 
   /* base: sits behind neighbours */
+  /* 基础状态: 位于相邻元素之后 */
   z-index: 0;
 
   /* On hover-out, delay z-index reset until the scale-down finishes (220ms) */
+  /* 鼠标移出时，延迟 z-index 重置直到缩放完成（220毫秒） */
   transition:
     transform 220ms cubic-bezier(0.34, 1.18, 0.64, 1),
     box-shadow 220ms ease,
@@ -356,6 +383,7 @@ watch(
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.25);
 
   /* On hover-in, apply z-index immediately (no delay) */
+  /* 鼠标悬停时，立即应用 z-index（无延迟） */
   transition:
     transform 220ms cubic-bezier(0.34, 1.18, 0.64, 1),
     box-shadow 220ms ease;

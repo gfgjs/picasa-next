@@ -1,6 +1,8 @@
 // src/composables/useRequestQueue.ts
 // Batched thumbnail request queue (§8.3)
+// 批量缩略图请求队列 (§8.3)
 // Collects item IDs and flushes in batches of THUMB_BATCH_SIZE.
+// 收集项目 ID 并以 THUMB_BATCH_SIZE 为批次进行刷新。
 
 import { ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
@@ -70,6 +72,7 @@ export function useRequestQueue() {
 
       if (inFlight.has(id)) {
         return // Already being processed by backend, just wait for resolve
+               // 后端已经在处理中，只需等待 resolve
       }
 
       if (!queue.value.includes(id)) {

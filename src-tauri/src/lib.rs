@@ -1,5 +1,7 @@
 // src-tauri/src/lib.rs
+// src-tauri/src/lib.rs
 //! Library entry point — module declarations and Tauri app builder.
+//! 库入口点 — 模块声明和 Tauri 应用程序构建器。
 
 pub mod db;
 pub mod engine;
@@ -25,6 +27,7 @@ use crate::state::AppState;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // ── Logging ───────────────────────────────────────────────────────────
+    // ── 日志记录 ───────────────────────────────────────────────────────────
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
@@ -35,11 +38,13 @@ pub fn run() {
 
     tauri::Builder::default()
         // ── Plugins ───────────────────────────────────────────────────────
+        // ── 插件 ───────────────────────────────────────────────────────
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
         // ── App setup ─────────────────────────────────────────────────────
+        // ── 应用程序设置 ─────────────────────────────────────────────────────
         .setup(|app| {
             let app_data_dir = app
                 .path()
@@ -51,6 +56,7 @@ pub fn run() {
             info!("Database path: {:?}", db_path);
 
             // ── Write connection + migrations ─────────────────────────────
+            // ── 写入连接 + 迁移 ─────────────────────────────
             let db_writer = create_write_connection(&db_path)
                 .expect("Failed to open write connection");
 
@@ -60,10 +66,12 @@ pub fn run() {
             }
 
             // ── Read pool (4 connections for desktop) ─────────────────────
+            // ── 读取池（桌面端 4 个连接） ─────────────────────
             let db_read_pool = create_read_pool(&db_path, 4)
                 .expect("Failed to create read pool");
 
             // ── Read persisted config ─────────────────────────────────────
+            // ── 读取持久化配置 ─────────────────────────────────────
             let (thumb_size, thumb_skip_max_kb) = {
                 let pool = db_read_pool.get().expect("Pool error");
                 let size: u32 = get_config(&pool, "thumb_size")
@@ -80,6 +88,7 @@ pub fn run() {
             };
 
             // ── Build AppState ─────────────────────────────────────────────
+            // ── 构建 AppState ─────────────────────────────────────────────
             let app_state = AppState::new(
                 db_writer,
                 db_read_pool,
@@ -93,7 +102,9 @@ pub fn run() {
             Ok(())
         })
         // ── IPC command handlers ───────────────────────────────────────────
+        // ── IPC 命令处理器 ───────────────────────────────────────────
         .invoke_handler(tauri::generate_handler![
+            // scan
             // scan
             ipc::scan_commands::add_scan_root,
             ipc::scan_commands::remove_scan_root,
@@ -103,9 +114,11 @@ pub fn run() {
             ipc::scan_commands::clear_database,
             ipc::scan_commands::clear_settings,
             // layout
+            // layout
             ipc::layout_commands::compute_layout,
             ipc::layout_commands::get_layout_rows,
             ipc::layout_commands::get_layout_rows_by_y,
+            // media
             // media
             ipc::media_commands::get_media_detail,
             ipc::media_commands::get_adjacent_media,
@@ -119,13 +132,17 @@ pub fn run() {
             ipc::media_commands::get_directory_tree,
             ipc::media_commands::get_directory_children,
             // thumbnails
+            // thumbnails
             ipc::thumbnail_commands::batch_request_thumbnails,
             ipc::thumbnail_commands::request_thumbnail,
             // search
+            // search
             ipc::search_commands::search_media,
+            // config
             // config
             ipc::config_commands::get_app_config,
             ipc::config_commands::set_app_config,
+            // system
             // system
             ipc::system_commands::show_in_explorer,
             ipc::system_commands::move_to_trash,

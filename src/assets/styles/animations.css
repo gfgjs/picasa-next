@@ -28,6 +28,10 @@
   z-index: 2;
 }
 
+html.disable-hover-scale .media-card:hover {
+  transform: none;
+}
+
 /* ── Thumbnail fade-in ──────────────────────────────────────────────────── */
 @keyframes thumb-appear {
   from { opacity: 0; }

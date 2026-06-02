@@ -1,14 +1,22 @@
 // src-tauri/src/scanner/fast_scan.rs
 //! Phase 1 fast scan: lightweight per-file operations, immediate DB insertion.
+//! 阶段 1 快速扫描：轻量级单文件操作，立即插入数据库。
 //!
 //! Per-file work (all CPU-bound, handled by rayon):
+//! 单文件工作（全部为 CPU 密集型，由 rayon 处理）：
 //!   1. `image::image_dimensions()` → width/height from file header (no decode)
+//!   1. `image::image_dimensions()` → 从文件头获取宽度/高度（无解码）
 //!   2. JPEG: read Orientation tag (first ~1KB) → swap w/h if needed
+//!   2. JPEG：读取方向标签（前 ~1KB）→ 如果需要则交换宽高
 //!   3. TIFF: apply 50ms timeout protection
+//!   3. TIFF：应用 50ms 超时保护
+//!   4. `compute_cache_key`
 //!   4. `compute_cache_key`
 //!   5. Batch INSERT into `media_items` (500 rows/transaction)
+//!   5. 批量 INSERT 到 `media_items`（500 行/事务）
 //!
 //! On completion, sends `ScanCompletedPayload` via the Tauri Channel.
+//! 完成后，通过 Tauri 频道发送 `ScanCompletedPayload`。
 
 use std::path::Path;
 use std::sync::Mutex;
@@ -35,6 +43,7 @@ const BATCH_SIZE: usize = 500;
 const PROGRESS_INTERVAL: usize = 500;
 
 // ── IPC payloads ─────────────────────────────────────────────────────────────
+// ── IPC 负载 ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -69,6 +78,7 @@ pub enum ScanChannelPayload {
 }
 
 // ── Per-file dimension extraction ─────────────────────────────────────────────
+// ── 单文件尺寸提取 ─────────────────────────────────────────────
 
 struct FileInfo {
     walked:  WalkedFile,
@@ -81,6 +91,7 @@ fn extract_dimensions(walked: &WalkedFile) -> (i64, i64) {
 
     if !is_phase1_image(ext) {
         // Phase 2 media — use format-specific defaults
+        // 阶段 2 媒体 — 使用特定于格式的默认值
         return match walked.media_type {
             MediaType::Audio    => (400, 400),
             MediaType::Document => (595, 842),
@@ -89,6 +100,7 @@ fn extract_dimensions(walked: &WalkedFile) -> (i64, i64) {
     }
 
     // TIFF: apply timeout protection (parse can read many bytes)
+    // TIFF: 应用超时保护（解析可能读取大量字节）
     if ext == "tif" || ext == "tiff" {
         let path = walked.abs_path.clone();
         let result = std::thread::scope(|s| {
@@ -100,6 +112,7 @@ fn extract_dimensions(walked: &WalkedFile) -> (i64, i64) {
     }
 
     // JPEG: also read orientation
+    // JPEG: 同时也读取方向
     if ext == "jpg" || ext == "jpeg" {
         if let Ok((w, h)) = image::image_dimensions(&walked.abs_path) {
             let orientation = read_jpeg_orientation(&walked.abs_path);
@@ -113,12 +126,14 @@ fn extract_dimensions(walked: &WalkedFile) -> (i64, i64) {
     }
 
     // All other Phase 1 formats
+    // 所有其他阶段 1 格式
     image::image_dimensions(&walked.abs_path)
         .map(|(w, h)| (w as i64, h as i64))
         .unwrap_or((0, 0))
 }
 
 // ── Main fast scan entry point ────────────────────────────────────────────────
+// ── 快速扫描主入口点 ────────────────────────────────────────────────
 
 fn ensure_dir_chain(
     tx: &rusqlite::Transaction,
@@ -151,12 +166,18 @@ fn ensure_dir_chain(
 }
 
 /// Run the fast scan for a single scan root.
+/// 运行单个扫描根目录的快速扫描。
 ///
 /// - Walks the file system (single thread, I/O bound)
+/// - 遍历文件系统（单线程，I/O 密集型）
 /// - Extracts dimensions in parallel (rayon)
+/// - 并行提取尺寸（rayon）
 /// - Inserts in batches of 500 rows (write connection)
+/// - 分批插入 500 行（写连接）
 /// - Sends progress updates every 500 items via `channel`
+/// - 通过 `channel` 每 500 项发送进度更新
 /// - Respects `cancel` token — returns `Err(AppError::Cancelled)` if triggered
+/// - 遵循 `cancel` 令牌 — 如果触发则返回 `Err(AppError::Cancelled)`
 pub fn run_fast_scan(
     writer: &Mutex<Connection>,
     root_id: i64,
@@ -170,11 +191,13 @@ pub fn run_fast_scan(
     let root = Path::new(root_path);
 
     // ── Step 1: Walk files ────────────────────────────────────────────────
+    // ── 第 1 步：遍历文件 ────────────────────────────────────────────────
     let walked_files = walk_media_files(root);
     let total = walked_files.len() as u64;
     info!("Walker found {} files", total);
 
     // ── Step 2: Parallel dimension extraction ─────────────────────────────
+    // ── 第 2 步：并行提取尺寸 ─────────────────────────────
     let file_infos: Vec<FileInfo> = walked_files
         .into_par_iter()
         .map(|walked| {
@@ -184,7 +207,9 @@ pub fn run_fast_scan(
         .collect();
 
     // ── Step 3: Batch insert ──────────────────────────────────────────────
+    // ── 第 3 步：批量插入 ──────────────────────────────────────────────
     // We need a directory cache to avoid repeated upserts for the same dir
+    // 我们需要一个目录缓存来避免对同一目录的重复更新插入 (upsert)
     let mut dir_cache: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
     let mut inserted = 0u64;
     let mut batch_count = 0usize;
@@ -198,6 +223,7 @@ pub fn run_fast_scan(
         let conn = writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
 
         // Wrap the whole batch in a transaction
+        // 将整个批处理包装在一个事务中
         let tx = conn.unchecked_transaction()?;
 
         let root_name = root.file_name().and_then(|n| n.to_str()).unwrap_or("");
@@ -207,6 +233,7 @@ pub fn run_fast_scan(
             let rel_path_norm = normalize_db_path(&rel_path);
 
             // Get or create the directory record and its parents recursively
+            // 递归获取或创建目录记录及其父目录
             let dir_id = ensure_dir_chain(&tx, root_id, &rel_path_norm, &mut dir_cache, root_name)?;
 
             let cache_key = compute_cache_key(
@@ -225,6 +252,7 @@ pub fn run_fast_scan(
                 width:         fi.width,
                 height:        fi.height,
                 sort_datetime: fi.walked.file_mtime, // will be refined in enrichment
+                                                     // 将在丰富信息阶段细化
                 cache_key,
             };
 
@@ -241,6 +269,7 @@ pub fn run_fast_scan(
         debug!("Fast scan batch committed: {}/{}", batch_count, total);
 
         // Progress update
+        // 进度更新
         if batch_count.is_multiple_of(PROGRESS_INTERVAL) || batch_count as u64 >= total {
             let _ = channel.send(ScanChannelPayload::Progress(ScanProgressPayload {
                 root_id,
@@ -250,6 +279,7 @@ pub fn run_fast_scan(
             }));
 
             // Update DB scan status
+            // 更新数据库扫描状态
             if let Ok(conn) = writer.lock() {
                 let _ = update_scan_root_status(&conn, root_id, "scanning", batch_count as i64, total as i64);
             }
@@ -257,6 +287,7 @@ pub fn run_fast_scan(
     }
 
     // ── Step 4: Finalise ──────────────────────────────────────────────────
+    // ── 第 4 步：最终确定 ──────────────────────────────────────────────────
     {
         let conn = writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
         finish_scan_root(&conn, root_id, inserted as i64)?;

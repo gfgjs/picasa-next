@@ -1,5 +1,6 @@
 // src-tauri/src/ipc/system_commands.rs
 //! System-level commands (§ 6.1 — system).
+//! 系统级命令（§ 6.1 — 系统）。
 
 use std::sync::Arc;
 
@@ -12,6 +13,7 @@ use crate::state::AppState;
 use crate::utils::path::resolve_media_path;
 
 /// Reveal a media item in the OS file explorer.
+/// 在操作系统文件资源管理器中显示媒体项。
 #[tauri::command]
 pub async fn show_in_explorer(item_id: i64, state: State<'_, Arc<AppState>>) -> Result<()> {
     let pool = state.db_read_pool.get().map_err(AppError::from)?;
@@ -20,6 +22,7 @@ pub async fn show_in_explorer(item_id: i64, state: State<'_, Arc<AppState>>) -> 
     info!("show_in_explorer: {abs_path}");
 
     // Platform-specific file reveal
+    // 特定平台的文件显示
     #[cfg(target_os = "windows")]
     {
         std::process::Command::new("explorer")
@@ -46,10 +49,13 @@ pub async fn show_in_explorer(item_id: i64, state: State<'_, Arc<AppState>>) -> 
 }
 
 /// Move items to the system trash (Phase 2 — stub for now).
+/// 将项目移至系统垃圾桶（阶段 2 — 暂时为存根）。
 #[tauri::command]
 pub async fn move_to_trash(item_ids: Vec<i64>, state: State<'_, Arc<AppState>>) -> Result<()> {
     // Phase 2: integrate `trash` crate
+    // 阶段 2：集成 `trash` crate
     // For now, fall back to soft delete
+    // 目前，退回到软删除
     let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
     crate::db::queries::soft_delete_items(&conn, &item_ids)
 }

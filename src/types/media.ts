@@ -1,8 +1,10 @@
 // src/types/media.ts
 // Core media data types mirroring Rust models
+// 核心媒体数据类型，对应 Rust 模型
 
 export type MediaType = 'image' | 'video' | 'audio' | 'document'
 export type ThumbStatus = 0 | 1 | 2 | 3 // pending | done | failed | source-direct
+                                        // 等待中 | 完成 | 失败 | 直接源
 
 export interface ScanRoot {
   id:           number
@@ -27,6 +29,7 @@ export interface DirNode {
   mediaCount:  number
   hasChildren: boolean
   // UI state (not from DB)
+  // UI 状态（非来自数据库）
   expanded?:   boolean
   loading?:    boolean
   children?:   DirNode[]
@@ -48,6 +51,7 @@ export interface MediaItem {
   thumbStatus:       ThumbStatus
   thumbPath:         string | null
   thumbhash:         number[] | null   // Uint8Array from Rust BLOB
+                                       // 来自 Rust BLOB 的 Uint8Array
   isFavorited:       boolean
   isDeleted:         boolean
   deletedAt:         number | null
@@ -114,6 +118,7 @@ export interface ThumbResult {
 
 export interface DateRange {
   from: number   // unix timestamp
+                 // unix 时间戳
   to:   number
 }
 

@@ -2,19 +2,24 @@
   <Teleport to="body">
     <div v-if="media.isDetailOpen && media.detailItem" class="detail-overlay overlay-enter">
       <!-- Backdrop -->
+      <!-- 背景幕 -->
       <div class="overlay-backdrop" @click="close" />
 
       <!-- Panel -->
+      <!-- 面板 -->
       <div class="detail-panel">
         <!-- ── Viewer ───────────────────────────────────────────────────── -->
+        <!-- ── 视图器 ───────────────────────────────────────────────────── -->
         <div
           class="detail-viewer"
+          ref="viewerRef"
           @wheel.prevent="onWheelHandler"
           @mousedown="state.startDrag"
           @click="onImageClick"
         >
           <img
             v-if="detail.mediaType === 'image'"
+            ref="imgRef"
             :src="absPath"
             class="detail-viewer__img"
             :class="{ 'is-dragging': state.isDragging.value }"
@@ -41,6 +46,7 @@
           </div>
 
           <!-- Live photo video overlay -->
+          <!-- Live photo 视频覆盖层 -->
           <video
             v-if="state.isPlayingLive.value && state.liveVideoSrc.value"
             :src="state.liveVideoSrc.value"
@@ -51,13 +57,15 @@
         </div>
 
         <!-- ── Controls ────────────────────────────────────────────────── -->
+        <!-- ── 控制器 ────────────────────────────────────────────────── -->
         <div class="detail-controls">
           <!-- Left -->
+          <!-- 左侧 -->
           <div class="detail-controls__left">
             <button class="btn-icon" @click="close" title="关闭 (Esc)">✕</button>
             <button class="btn-icon" @click="state.zoomIn()">＋</button>
             <button class="btn-icon" @click="state.zoomOut()">－</button>
-            <button class="btn-icon" @click="state.resetZoom()" title="重置缩放">◎</button>
+            <button class="btn-icon" @click="handleToggleZoom" :title="zoomModeTitle">{{ zoomModeIcon }}</button>
             <button
               v-if="detail.isLivePhoto"
               class="btn-icon"
@@ -70,11 +78,13 @@
           </div>
 
           <!-- Center: file name -->
+          <!-- 中间: 文件名 -->
           <div class="detail-controls__center">
             <span class="detail-controls__name" :title="detail.fileName">{{ detail.fileName }}</span>
           </div>
 
           <!-- Right -->
+          <!-- 右侧 -->
           <div class="detail-controls__right">
             <button
               class="btn-icon"
@@ -88,6 +98,7 @@
         </div>
 
         <!-- ── Info sidebar (slide in when showInfo) ────────────────────── -->
+        <!-- ── 信息侧边栏 (showInfo 开启时滑入) ────────────────────── -->
         <Transition name="slide">
           <div v-if="state.showInfo.value" class="detail-info">
             <div class="detail-info__header">
@@ -114,6 +125,7 @@
               </div>
             </div>
 
+            <!-- EXIF -->
             <!-- EXIF -->
             <div v-if="detail.imageMeta" class="info-section">
               <div class="info-section__title">EXIF</div>
@@ -148,6 +160,7 @@
             </div>
 
             <!-- Rating -->
+            <!-- 评分 -->
             <div class="info-section">
               <div class="info-section__title">评分</div>
               <div class="rating-stars">
@@ -168,7 +181,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { useMediaStore } from '../../stores/mediaStore'
@@ -184,12 +197,55 @@ const detail  = computed(() => media.detailItem!)
 const absPath = computed(() => detail.value ? convertFileSrc(detail.value.absPath) : '')
 
 // ── Viewer state — created ONCE, not inside computed() ─────────────────────
+// ── 视图器状态 — 仅创建一次，不要放在 computed() 内部 ─────────────────────
 // Calling useMediaDetail() inside computed() would recreate internal refs and
 // re-register document event listeners every time a reactive dependency changes,
 // permanently leaking mousemove/mouseup handlers.
+// 如果在 computed() 内部调用 useMediaDetail()，每次响应式依赖变化时都会重新创建内部的 refs
+// 并重新注册 document 事件监听器，从而导致 mousemove/mouseup 处理程序永久泄漏。
 const state = useMediaDetail()
 
+const viewerRef = ref<HTMLElement | null>(null)
+const imgRef = ref<HTMLImageElement | null>(null)
+
+const zoomModeTitle = computed(() => {
+  switch (state.zoomMode.value) {
+    case 'auto': return '自适应屏幕 (当前) - 点击切换为 1:1'
+    case 'original': return '1:1 原图 (当前) - 点击切换为铺满宽'
+    case 'fit-width': return '铺满宽 (当前) - 点击切换为铺满高'
+    case 'fit-height': return '铺满高 (当前) - 点击切换为自适应'
+    default: return '重置缩放'
+  }
+})
+
+const zoomModeIcon = computed(() => {
+  switch (state.zoomMode.value) {
+    case 'auto': return '◎'
+    case 'original': return '1:1'
+    case 'fit-width': return '↔'
+    case 'fit-height': return '↕'
+    default: return '◎'
+  }
+})
+
+function handleToggleZoom() {
+  if (!viewerRef.value || !imgRef.value) {
+    state.resetZoom()
+    return
+  }
+  const iw = imgRef.value.naturalWidth
+  const ih = imgRef.value.naturalHeight
+  const cw = viewerRef.value.clientWidth
+  const ch = viewerRef.value.clientHeight
+  if (!iw || !ih || !cw || !ch) {
+    state.resetZoom()
+    return
+  }
+  state.cycleZoomMode(cw, ch, iw, ih)
+}
+
 // Reset zoom whenever the viewed item changes
+// 当查看的项目更改时重置缩放
 watch(() => media.detailItem, () => {
   state.resetZoom()
   state.isPlayingLive.value = false
@@ -197,8 +253,11 @@ watch(() => media.detailItem, () => {
 })
 
 // ── Keyboard shortcuts ─────────────────────────────────────────────────────
+// ── 快捷键 ─────────────────────────────────────────────────────
 // Registered via onMounted / onBeforeUnmount to avoid accumulating listeners
 // on each open/close cycle (Teleport keeps the component alive).
+// 通过 onMounted / onBeforeUnmount 注册以避免在每次打开/关闭周期内积累监听器
+// (Teleport 使组件保持活动状态)。
 function onKeydown(e: KeyboardEvent) {
   if (!media.isDetailOpen) return
   if (e.key === 'Escape') { close(); return }
@@ -217,10 +276,13 @@ function onWheelHandler(e: WheelEvent) {
   
   // If useMediaDetail wasn't HMR'd properly, handledZoom might be undefined.
   // Explicitly check for true.
+  // 如果 useMediaDetail 没有正确触发 HMR 更新，handledZoom 可能为 undefined。
+  // 请显式检查是否为 true。
   if (handledZoom !== true) {
     accumulatedDelta += e.deltaY
     
     // Clear accumulator after scrolling stops (e.g. 50ms)
+    // 停止滚动后清除累加器 (例如 50 毫秒)
     if (deltaTimer) clearTimeout(deltaTimer)
     deltaTimer = setTimeout(() => { accumulatedDelta = 0 }, 50)
 
@@ -237,6 +299,8 @@ function onWheelHandler(e: WheelEvent) {
 function onImageClick(e: MouseEvent) {
   // If user is dragging (scale > 1), we shouldn't close the info.
   // We can just close it if it's open.
+  // 如果用户正在拖拽 (scale > 1)，我们不应该关闭信息栏。
+  // 如果它打开着，我们可以直接关闭它。
   if (state.showInfo.value && state.scale.value <= 1) {
     state.showInfo.value = false
   }
@@ -302,6 +366,7 @@ async function toggleLive() {
 }
 
 /* ── Viewer ───────────────────────────────────────────────────────────── */
+/* ── 视图器 ───────────────────────────────────────────────────────────── */
 .detail-viewer {
   flex: 1;
   position: relative;
@@ -349,6 +414,7 @@ async function toggleLive() {
 }
 
 /* ── Controls ─────────────────────────────────────────────────────────── */
+/* ── 控制器 ─────────────────────────────────────────────────────────── */
 .detail-controls {
   position: absolute;
   bottom: 0;
@@ -393,6 +459,7 @@ async function toggleLive() {
 }
 
 /* ── Info sidebar ─────────────────────────────────────────────────────── */
+/* ── 信息侧边栏 ─────────────────────────────────────────────────────── */
 .detail-info {
   position: absolute;
   top: 0;
@@ -470,6 +537,7 @@ async function toggleLive() {
 .star:hover  { color: #ffd54f; }
 
 /* ── Slide transition ─────────────────────────────────────────────────── */
+/* ── 滑动过渡 ─────────────────────────────────────────────────── */
 .slide-enter-from,
 .slide-leave-to  { transform: translateX(100%); }
 .slide-enter-active,

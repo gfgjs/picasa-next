@@ -1,5 +1,6 @@
 // src/composables/useFolderTree.ts
 // Folder tree lazy loading
+// 文件夹树懒加载
 
 import { ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
@@ -11,13 +12,16 @@ export function useFolderTree() {
   const nodes     = ref<DirNode[]>([])
   const loading   = ref(false)
   let   loadingId = 0          // guard against concurrent loadRoots calls
+                               // 防止并发 loadRoots 调用的守卫
 
   async function loadRoots(scanRoots: ScanRoot[]) {
     const myId = ++loadingId   // if another call starts, this one's results are discarded
+                               // 如果另一个调用开始，这个调用的结果将被丢弃
     roots.value = scanRoots
     nodes.value = []
     for (const root of scanRoots) {
       if (myId !== loadingId) return   // superseded — bail out
+                                       // 已被取代 — 退出
       await loadChildren(null, root.id, myId)
     }
   }
@@ -28,15 +32,18 @@ export function useFolderTree() {
       if (parentId === null && rootId !== undefined) {
         const children = await invoke<DirNode[]>(IPC.GET_DIRECTORY_TREE, { rootId })
         if (loadId !== undefined && loadId !== loadingId) return // Race condition guard
+                                                                 // 竞争条件守卫
         nodes.value = [...nodes.value, ...children]
       } else if (parentId !== null) {
         const children = await invoke<DirNode[]>(IPC.GET_DIRECTORY_CHILDREN, { parentId })
         // Inject children after their parent
+        // 在其父节点之后注入子节点
         const idx = nodes.value.findIndex(n => n.id === parentId)
         if (idx >= 0) {
           nodes.value.splice(idx + 1, 0, ...children)
         }
         // Mark parent as expanded
+        // 标记父节点为展开状态
         const parent = nodes.value.find(n => n.id === parentId)
         if (parent) parent.expanded = true
       }
@@ -49,6 +56,7 @@ export function useFolderTree() {
   function toggleNode(node: DirNode) {
     if (node.expanded) {
       // Collapse: remove all descendants
+      // 折叠：删除所有后代节点
       collapseNode(node)
     } else {
       loadChildren(node.id)

@@ -1,11 +1,13 @@
 <template>
   <!-- ThumbHash placeholder -->
+  <!-- ThumbHash 占位符 -->
   <div
     class="media-thumb"
     :style="thumbStyle"
     :class="{ loaded: isLoaded, 'media-thumb--placeholder': !isLoaded }"
   >
     <!-- Placeholder solid color + file format text -->
+    <!-- 纯色占位符 + 文件格式文本 -->
     <div
       v-if="!isLoaded"
       class="media-thumb__placeholder"
@@ -14,6 +16,7 @@
       <span v-if="fileFormat" class="media-thumb__ext">{{ fileFormat.toUpperCase() }}</span>
     </div>
     <!-- Actual image -->
+    <!-- 实际图片 -->
     <img
       v-if="displaySrc"
       class="media-thumb__img thumb-loaded"
@@ -26,14 +29,19 @@
 
 
     <!-- Overlays -->
+    <!-- 覆盖层 -->
     <div class="media-thumb__overlays">
       <!-- LIVE badge -->
+      <!-- LIVE 徽标 -->
       <span v-if="isLivePhoto" class="badge badge-live">LIVE</span>
       <!-- Video play -->
+      <!-- 视频播放 -->
       <span v-if="mediaType === 'video'" class="badge badge-video">▶</span>
       <!-- Duration -->
+      <!-- 时长 -->
       <span v-if="durationMs" class="badge badge-duration">{{ formatDuration(durationMs) }}</span>
       <!-- Favorite -->
+      <!-- 收藏 -->
       <button
         v-if="showFavorite"
         class="media-thumb__fav"
@@ -42,6 +50,7 @@
         title="收藏"
       >{{ isFavorited ? '❤️' : '🤍' }}</button>
       <!-- Selection checkbox -->
+      <!-- 选择复选框 -->
       <div
         v-if="isSelected || isSelectionMode"
         class="media-thumb__checkbox"
@@ -100,7 +109,7 @@ const isLoaded      = ref(false)
 const displaySrc    = ref('')
 const showFavorite  = ref(false)
 const favAnimating  = ref(false)
-const hasRequested  = ref(false)  // guard: only request once per mount
+const hasRequested  = ref(false)  // guard: only request once per mount // 守卫：每次挂载仅请求一次
 
 const thumbStyle = computed(() => ({
   width:  `${props.w}px`,
@@ -115,14 +124,21 @@ const placeholderBgColor = computed(() =>
 
 async function loadThumb() {
   // thumb_status meanings:
+  // thumb_status 的含义:
   //   0 = pending generation
+  //   0 = 待生成
   //   1 = generated WebP on disk  → load from cache dir
+  //   1 = 已在磁盘上生成 WebP → 从缓存目录加载
   //   2 = failed
+  //   2 = 失败
   //   3 = small file direct display → load the original file via absPath
+  //   3 = 小文件直接显示 → 通过 absPath 加载原文件
   //       (absPath is not available here; parent supplies the thumb_path as the abs path in this case)
+  //       (这里没有 absPath；在这种情况下，父组件会将 thumb_path 作为绝对路径提供)
 
   if (props.thumbStatus === 1 && props.thumbPath) {
     // Load the generated thumbnail from the cache directory
+    // 从缓存目录加载生成的缩略图
     try {
       const abs = `${props.cacheDir}/thumbnails/${props.thumbPath}`.replace(/\\/g, '/')
       const src = convertFileSrc(abs)
@@ -132,11 +148,13 @@ async function loadThumb() {
         await img.decode()
       } catch (e) {
         // console.warn('MediaThumb decode() failed, falling back to DOM load', e)
+        // console.warn('MediaThumb decode() 失败，回退到 DOM 加载', e)
       }
       displaySrc.value = src
       isLoaded.value   = true
     } catch (e) {
       // console.warn('Outer catch caught error for status 1:', e)
+      // console.warn('Outer catch 捕获了状态 1 的错误:', e)
     }
     return
   }
@@ -144,6 +162,7 @@ async function loadThumb() {
   if (props.thumbStatus === 3) {
     if (props.thumbPath) {
       // Small file: thumbPath holds the absolute path to the original file
+      // 小文件: thumbPath 保存了原始文件的绝对路径
       try {
         const src = convertFileSrc(props.thumbPath.replace(/\\/g, '/'))
         const img = new Image()
@@ -152,16 +171,20 @@ async function loadThumb() {
           await img.decode()
         } catch (e) {
           // console.warn('MediaThumb decode() failed, falling back to DOM load', e)
+          // console.warn('MediaThumb decode() 失败，回退到 DOM 加载', e)
         }
         displaySrc.value = src
         isLoaded.value   = true
       } catch (e) {
       // console.warn('Outer catch caught error for status 3:', e)
+      // console.warn('Outer catch 捕获了状态 3 的错误:', e)
       }
       return
     } else {
       // We know it's status 3 but we don't have the absPath in the layout row.
       // Ask the queue for it! (The backend get_thumb_by_item_ids will resolve it)
+      // 我们知道它是状态 3，但我们在布局行中没有 absPath。
+      // 向队列请求它！(后端的 get_thumb_by_item_ids 会解决这个问题)
       if (!hasRequested.value) {
         hasRequested.value = true
         emit('request-thumb', props.id)
@@ -172,8 +195,11 @@ async function loadThumb() {
 
   if (props.thumbStatus === 0) {
     // Not yet generated — ask the parent/grid to request generation.
+    // 尚未生成 — 请求父组件/网格发出生成请求。
     // Guard: only emit once per mount lifecycle to prevent infinite loops
     // when the backend fails and keeps returning status=2.
+    // 守卫：在每个挂载生命周期中仅发出一次事件，以防止
+    // 后端失败并持续返回 status=2 时出现无限循环。
     if (!hasRequested.value) {
       hasRequested.value = true
       emit('request-thumb', props.id)
@@ -183,6 +209,8 @@ async function loadThumb() {
 
 // Re-run loadThumb only when thumbPath/thumbStatus actually gets a usable value
 // (status transitions from 0→1 or 0→3 after the parent receives batch results).
+// 仅当 thumbPath/thumbStatus 确实获得可用值时才重新运行 loadThumb
+// (在父组件接收到批处理结果后，状态从 0→1 或 0→3 过渡)。
 watch(
   () => [props.thumbPath, props.thumbStatus] as const,
   ([newPath, newStatus]) => {
@@ -215,11 +243,13 @@ onBeforeUnmount(() => {
 <style scoped>
 .media-thumb {
   /* position:relative so thumbStyle width/height props are respected */
+  /* position:relative 以便遵守 thumbStyle 的宽度/高度属性 */
   position: relative;
   overflow: hidden;
   border-radius: 2px;
   background: var(--color-bg-elevated);
   /* cursor and flex-shrink live on the parent .media-card */
+  /* cursor 和 flex-shrink 存在于父组件 .media-card 上 */
 }
 .media-thumb:hover .media-thumb__fav,
 .media-thumb:hover .media-thumb__checkbox {
@@ -254,6 +284,7 @@ onBeforeUnmount(() => {
 
 
 /* ── Overlays ─────────────────────────────────────────────────────────── */
+/* ── 覆盖层 ─────────────────────────────────────────────────────────── */
 .media-thumb__overlays {
   position: absolute;
   inset: 0;

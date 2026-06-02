@@ -1,5 +1,6 @@
 // src/constants/defaults.ts
 // Application default values
+// 应用程序默认值
 
 export const DEFAULTS = {
   THUMB_SIZE:         300,
@@ -18,3 +19,4 @@ export const DEFAULTS = {
 } as const
 
 export const SEPARATOR_HEIGHT = 36  // px — fixed DateSeparator row height
+// px — 固定的 DateSeparator 行高

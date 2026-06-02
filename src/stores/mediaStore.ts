@@ -1,5 +1,6 @@
 // src/stores/mediaStore.ts
 // Layout and media state store
+// 布局和媒体状态存储
 
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
@@ -11,24 +12,29 @@ import { DEFAULTS } from '../constants/defaults'
 
 export const useMediaStore = defineStore('media', () => {
   // ── Layout state ────────────────────────────────────────────────────────
+  // ── 布局状态 ────────────────────────────────────────────────────────
   const layoutSummary   = ref<LayoutSummary | null>(null)
   const rowCache        = ref<Map<number, LayoutRow>>(new Map())
   const isComputingLayout = ref(false)
 
   // ── Detail view ─────────────────────────────────────────────────────────
+  // ── 详情视图 ─────────────────────────────────────────────────────────
   const detailItem      = ref<MediaDetail | null>(null)
   const isDetailOpen    = ref(false)
 
   // ── Stats ────────────────────────────────────────────────────────────────
+  // ── 统计 ────────────────────────────────────────────────────────────────
   const stats           = ref<AppStats | null>(null)
 
   // ── Computed ─────────────────────────────────────────────────────────────
+  // ── 计算属性 ─────────────────────────────────────────────────────────────
   const totalItems   = computed(() => stats.value?.totalItems ?? 0)
   const totalHeight  = computed(() => layoutSummary.value?.totalHeight ?? 0)
   const totalRows    = computed(() => layoutSummary.value?.totalRows ?? 0)
   const layoutVersion = computed(() => layoutSummary.value?.layoutVersion ?? 0)
 
   // ── Actions ───────────────────────────────────────────────────────────────
+  // ── 动作 ───────────────────────────────────────────────────────────────
 
   async function computeLayout(params: {
     directoryId?:    number | null

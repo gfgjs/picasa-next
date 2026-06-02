@@ -1,6 +1,7 @@
 <template>
   <div class="toolbar__left">
     <!-- Title / breadcrumb -->
+    <!-- 标题 / 面包屑 -->
     <div class="toolbar__breadcrumb">
       <span class="toolbar__title">{{ title }}</span>
       <span v-if="media.stats" class="toolbar__count">{{ media.totalItems.toLocaleString() }} 个项目</span>
@@ -8,6 +9,7 @@
   </div>
 
   <!-- Filter chips -->
+  <!-- 筛选芯片 -->
   <div class="toolbar__filters">
     <button
       class="chip"
@@ -32,8 +34,10 @@
   </div>
 
   <!-- Right controls -->
+  <!-- 右侧控件 -->
   <div class="toolbar__right">
     <!-- Fullscreen -->
+    <!-- 全屏 -->
     <button
       class="btn-icon"
       :title="ui.isFullscreen ? '退出全屏 (F11)' : '全屏 (F11)'"
@@ -43,6 +47,7 @@
     </button>
 
     <!-- Search -->
+    <!-- 搜索 -->
     <div class="toolbar__search-wrap" :class="{ focused: isSearchFocused }">
       <span class="toolbar__search-icon">🔍</span>
       <input
@@ -58,6 +63,7 @@
     </div>
 
     <!-- View sort -->
+    <!-- 视图排序 -->
     <div class="toolbar__sort">
       <select class="toolbar__select" v-model="ui.sortBy" @change="onSortChange">
         <option value="sort_datetime">按拍摄时间</option>

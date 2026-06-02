@@ -15,6 +15,7 @@ export function useTheme() {
     ui.applyTheme(t)
 
     // Watch system preference changes
+    // 监听系统偏好设置变化
     if (t === 'system') {
       window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
         if (ui.theme === 'system') ui.applyTheme('system')

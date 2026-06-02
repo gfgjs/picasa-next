@@ -11,6 +11,9 @@
       />
     </template>
 
+    <!-- Default slot: media content OR semantic search panel -->
+    <!-- 默认插槽：媒体内容或语义搜索面板 -->
+    <SemanticSearchPanel @item-click="onSemanticItemClick" />
     <RouterView />
 
     <template #statusbar>
@@ -33,14 +36,24 @@ import { invoke }    from '@tauri-apps/api/core'
 import { useTheme }    from './composables/useTheme'
 import { useUiStore }  from './stores/uiStore'
 
-import AppShell          from './components/layout/AppShell.vue'
-import AppSidebar        from './components/sidebar/AppSidebar.vue'
-import AppToolbar        from './components/layout/AppToolbar.vue'
-import AppStatusBar      from './components/layout/AppStatusBar.vue'
+import AppShell           from './components/layout/AppShell.vue'
+import AppSidebar         from './components/sidebar/AppSidebar.vue'
+import AppToolbar         from './components/layout/AppToolbar.vue'
+import AppStatusBar       from './components/layout/AppStatusBar.vue'
 import MediaDetailOverlay from './components/media/MediaDetailOverlay.vue'
-import ToastContainer    from './components/common/ToastContainer.vue'
+import SemanticSearchPanel from './components/media/SemanticSearchPanel.vue'
+import ToastContainer     from './components/common/ToastContainer.vue'
+import { useAiStore }     from './stores/aiStore'
+import type { SemanticSearchResult } from './types/ai'
 
-const ui    = useUiStore()
+const ui = useUiStore()
+const ai = useAiStore()
+
+function onSemanticItemClick(item: SemanticSearchResult) {
+  // TODO Phase 4A+: open detail overlay for the clicked result
+  // TODO 第 4A+ 阶段：为点击的结果打开详情覆盖层
+  console.debug('[AI] Item clicked:', item.id, item.fileName)
+}
 
 // Init theme
 // 初始化主题
@@ -57,10 +70,11 @@ function onSortChange() {
 
 onMounted(async () => {
   // Theme init only — data loading is handled in AppSidebar.vue onMounted
-  // to keep initialization sequential and avoid double-compute races.
-  // 仅初始化主题 — 数据加载在 AppSidebar.vue 的 onMounted 中处理，
-  // 以保持初始化顺序并避免重复计算导致的竞争。
-  
+  // 仅初始化主题 — 数据加载在 AppSidebar.vue 的 onMounted 中处理
+
+  // Fetch initial AI status (non-blocking) | 获取初始 AI 状态（非阻塞）
+  ai.fetchStatus().catch(() => {})
+
   // Load global UI configurations
   // 加载全局 UI 配置
   try {

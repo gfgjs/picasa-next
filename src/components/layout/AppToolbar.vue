@@ -49,18 +49,32 @@
 
     <!-- Search -->
     <!-- 搜索 -->
-    <div class="toolbar__search-wrap" :class="{ focused: isSearchFocused }">
+    <div class="toolbar__search-wrap" :class="{ focused: isSearchFocused, 'semantic-mode': ai.isSemanticMode }">
+      <!-- Mode toggle button -->
+      <!-- 模式切换按钮 -->
+      <button
+        class="toolbar__search-mode-btn"
+        :class="{ active: ai.isSemanticMode }"
+        :title="ai.isSemanticMode ? '切换到普通搜索' : '切换到 AI 语义搜索'"
+        @click="toggleSearchMode"
+      >
+        <Sparkles :size="13" />
+      </button>
+
       <Search :size="14" class="toolbar__search-icon" />
       <input
         ref="searchInputRef"
         class="toolbar__search"
-        :value="ui.searchQuery"
+        :value="ai.isSemanticMode ? ai.semanticQuery : ui.searchQuery"
         @input="onSearchInput"
         @focus="isSearchFocused = true"
         @blur="isSearchFocused = false"
-        :placeholder="$t('toolbar.searchPlaceholder')"
+        :placeholder="ai.isSemanticMode ? '用自然语言搜索图片…' : $t('toolbar.searchPlaceholder')"
         type="search"
       />
+      <!-- AI searching indicator -->
+      <!-- AI 搜索中指示器 -->
+      <span v-if="ai.isSearching" class="toolbar__search-spinner" />
     </div>
 
     <!-- View sort -->
@@ -90,16 +104,19 @@ import { ImageIcon, Video, Sparkles, X, Maximize2, Minimize2, Search, ArrowDown,
 import { useUiStore } from '../../stores/uiStore'
 import { useFilterStore } from '../../stores/filterStore'
 import { useMediaStore } from '../../stores/mediaStore'
+import { useAiStore } from '../../stores/aiStore'
 import { DEFAULTS } from '../../constants/defaults'
 
 const emit = defineEmits<{
   (e: 'search', query: string): void
+  (e: 'semantic-search', query: string): void
   (e: 'sort-change'): void
 }>()
 
 const ui     = useUiStore()
 const filter = useFilterStore()
 const media  = useMediaStore()
+const ai     = useAiStore()
 
 const isSearchFocused = ref(false)
 const searchInputRef  = ref<HTMLInputElement>()
@@ -118,9 +135,28 @@ const title = computed(() => {
 
 function onSearchInput(e: Event) {
   const val = (e.target as HTMLInputElement).value
-  ui.searchQuery = val
-  if (searchTimer) clearTimeout(searchTimer)
-  searchTimer = setTimeout(() => emit('search', val), DEFAULTS.SEARCH_DEBOUNCE_MS)
+  if (ai.isSemanticMode) {
+    // Debounce semantic search | 对语义搜索进行防抖
+    if (searchTimer) clearTimeout(searchTimer)
+    searchTimer = setTimeout(() => {
+      ai.runSemanticSearch(val)
+      emit('semantic-search', val)
+    }, 500)
+  } else {
+    ui.searchQuery = val
+    if (searchTimer) clearTimeout(searchTimer)
+    searchTimer = setTimeout(() => emit('search', val), DEFAULTS.SEARCH_DEBOUNCE_MS)
+  }
+}
+
+function toggleSearchMode() {
+  ai.toggleSearchMode()
+  // Clear current search when switching modes | 切换模式时清除当前搜索
+  if (ai.isSemanticMode) {
+    ui.searchQuery = ''
+  } else {
+    ai.semanticQuery === '' // reset handled in store
+  }
 }
 
 function toggleSortOrder() {
@@ -226,4 +262,50 @@ function onSortChange() {
   transition: border-color var(--transition-fast);
 }
 .toolbar__select:hover { border-color: var(--color-border-strong); }
+
+/* ── AI semantic search toggle ────────────────────────────────────────────── */
+.toolbar__search-wrap.semantic-mode {
+  border-color: color-mix(in srgb, var(--color-accent) 60%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 6%, var(--color-bg-surface));
+}
+
+.toolbar__search-mode-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all var(--transition-fast);
+  padding: 0;
+}
+.toolbar__search-mode-btn:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+.toolbar__search-mode-btn.active {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #fff;
+  box-shadow: 0 0 8px color-mix(in srgb, var(--color-accent) 40%, transparent);
+}
+
+.toolbar__search-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid color-mix(in srgb, var(--color-accent) 25%, transparent);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: toolbar-spin 0.6s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes toolbar-spin {
+  to { transform: rotate(360deg); }
+}
 </style>

@@ -17,10 +17,17 @@
       视口缩略图: 处理中 {{ scan.autoThumbInFlight }} 项
       <template v-if="scan.autoThumbQueueSize > 0"><span style="opacity: 0.8; margin-left: 4px;">(排队 {{ scan.autoThumbQueueSize }})</span></template>
     </span>
+    <!-- AI analysis indicator (shown when AI is actively indexing) -->
+    <!-- AI 分析指示器（AI 正在主动建索时显示） -->
+    <span v-else-if="ai.status.isAnalyzing" class="statusbar__scanning" title="AI 正在分析图片">
+      <span class="spinner" />
+      AI 分析: {{ ai.status.analyzedItems }}/{{ ai.status.totalItems }}
+      <span style="opacity: 0.7">({{ ai.analyzeProgress }}%)</span>
+    </span>
     <span v-else-if="media.stats">
       {{ $t('statusbar.items', { count: media.totalItems.toLocaleString() }) }}
-      <template v-if="media.stats.totalImages > 0"> · {{ $t('statusbar.images', { count: media.stats.totalImages.toLocaleString() }) }}</template>
-      <template v-if="media.stats.totalVideos > 0"> · {{ $t('statusbar.videos', { count: media.stats.totalVideos.toLocaleString() }) }}</template>
+      <template v-if="media.stats.totalImages > 0">· {{ $t('statusbar.images', { count: media.stats.totalImages.toLocaleString() }) }}</template>
+      <template v-if="media.stats.totalVideos > 0">· {{ $t('statusbar.videos', { count: media.stats.totalVideos.toLocaleString() }) }}</template>
     </span>
   </div>
 
@@ -36,9 +43,11 @@
 <script setup lang="ts">
 import { useScanStore } from '../../stores/scanStore'
 import { useMediaStore } from '../../stores/mediaStore'
+import { useAiStore } from '../../stores/aiStore'
 
 const scan  = useScanStore()
 const media = useMediaStore()
+const ai    = useAiStore()
 </script>
 
 <style scoped>

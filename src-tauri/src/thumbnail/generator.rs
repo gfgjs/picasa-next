@@ -156,19 +156,30 @@ fn generate_image_thumb(
         // Full decode fallback
         // 完整解码回退
         let start_decode = std::time::Instant::now();
-        let decoded = engine.decode(abs_path)?;
+        let mut decoded = engine.decode(abs_path)?;
         tracing::debug!("engine.decode for {:?} took {:?}", abs_path.file_name(), start_decode.elapsed());
 
+        let start_resize = std::time::Instant::now();
+        let rgba_img = resize_to_rgba(&mut decoded.pixels, decoded.width, decoded.height, config.size)?;
+        tracing::debug!("resize_to_rgba for {:?} took {:?}", abs_path.file_name(), start_resize.elapsed());
+
         let start_hash = std::time::Instant::now();
-        final_hash = generate_thumbhash(&decoded).ok();
+        let decoded_for_hash = crate::engine::traits::DecodedImage {
+            pixels: rgba_img.as_raw().clone(),
+            width: rgba_img.width(),
+            height: rgba_img.height(),
+        };
+        final_hash = generate_thumbhash(&decoded_for_hash).ok();
         tracing::debug!("generate_thumbhash for {:?} took {:?}", abs_path.file_name(), start_hash.elapsed());
 
         let start_encode = std::time::Instant::now();
-        final_webp = Some(resize_and_encode(&decoded.pixels, decoded.width, decoded.height, config.size)?);
-        tracing::debug!("resize_and_encode for {:?} took {:?}", abs_path.file_name(), start_encode.elapsed());
+        final_webp = crate::thumbnail::exif_thumb::encode_as_webp(&rgba_img, rgba_img.width(), rgba_img.height())
+            .or_else(|_| crate::thumbnail::exif_thumb::encode_as_jpeg(&rgba_img))
+            .ok();
+        tracing::debug!("encode for {:?} took {:?}", abs_path.file_name(), start_encode.elapsed());
     }
 
-    let webp = final_webp.unwrap();
+    let webp = final_webp.ok_or_else(|| AppError::Engine("WebP encode failed".into()))?;
 
     // Write WebP to disk
     // 将 WebP 写入磁盘
@@ -197,7 +208,7 @@ fn generate_image_thumb(
 
 }
 
-fn resize_and_encode(pixels: &[u8], w: u32, h: u32, target: u32) -> Result<Vec<u8>> {
+fn resize_to_rgba(pixels: &mut [u8], w: u32, h: u32, target: u32) -> Result<image::RgbaImage> {
     use fast_image_resize::{images::Image as FirImage, Resizer, ResizeOptions};
     use fast_image_resize::pixels::PixelType;
 
@@ -209,13 +220,11 @@ fn resize_and_encode(pixels: &[u8], w: u32, h: u32, target: u32) -> Result<Vec<u
         ((w as f32 * r).round() as u32, target)
     };
 
-    // fast_image_resize v4: Image::from_slice_u8 / Image::new take u32 directly
-    // fast_image_resize v4：Image::from_slice_u8 / Image::new 直接接受 u32
-    let mut pixels_vec = pixels.to_vec();
+    // fast_image_resize v4 FirImage::from_slice_u8 uses mutable slice to avoid copying
     let src = FirImage::from_slice_u8(
         w.max(1),
         h.max(1),
-        &mut pixels_vec,
+        pixels,
         PixelType::U8x4,
     )
     .map_err(|e| AppError::Engine(e.to_string()))?;
@@ -227,13 +236,8 @@ fn resize_and_encode(pixels: &[u8], w: u32, h: u32, target: u32) -> Result<Vec<u
         .resize(&src, &mut dst, &ResizeOptions::default())
         .map_err(|e| AppError::Engine(e.to_string()))?;
 
-    let rgba_img = image::RgbaImage::from_raw(new_w, new_h, dst.into_vec())
-        .ok_or_else(|| AppError::Engine("resize buffer mismatch".into()))?;
-
-    encode_as_webp(&rgba_img, new_w, new_h).or_else(|_| {
-        warn!("WebP encode failed, falling back to JPEG");
-        encode_as_jpeg(&rgba_img)
-    })
+    image::RgbaImage::from_raw(new_w.max(1), new_h.max(1), dst.into_vec())
+        .ok_or_else(|| AppError::Engine("resize buffer mismatch".into()))
 }
 
 fn generate_thumbhash_from_file(

@@ -219,6 +219,22 @@
 
         <div class="settings-card__item">
           <div class="settings-card__info">
+            <div class="settings-card__label">日志目录</div>
+            <div 
+              class="settings-card__desc clickable-path" 
+              @click="openDirectory(logDir)"
+              title="点击在资源管理器中打开"
+            >
+              {{ logDir || '正在获取路径...' }}
+            </div>
+          </div>
+          <button class="btn btn-secondary" @click="changeLogDir">
+            更改目录
+          </button>
+        </div>
+
+        <div class="settings-card__item">
+          <div class="settings-card__info">
             <div class="settings-card__label">清除缓存</div>
             <div class="settings-card__desc">清理浏览器缓存的图片并重载应用</div>
           </div>
@@ -252,6 +268,7 @@ const { t } = useI18n()
 const thumbSkipMaxKb = ref(200)
 const thumbSize = ref(300)
 const thumbCacheDir = ref('')
+const logDir = ref('')
 const timelineScrollWidth = ref(6)
 const uiFontSize = ref(16)
 const enableHoverScale = ref(true)
@@ -284,6 +301,12 @@ onMounted(async () => {
       thumbCacheDir.value = await invoke<string>('get_thumb_cache_dir')
     } catch (e) {
       console.warn('Failed to fetch resolved cache dir', e)
+    }
+
+    try {
+      logDir.value = await invoke<string>('get_log_dir')
+    } catch (e) {
+      console.warn('Failed to fetch resolved log dir', e)
     }
 
     const val6 = await invoke<string | null>('get_app_config', { key: 'log_level' })
@@ -321,6 +344,23 @@ async function changeCacheDir() {
     }
   } catch (e) {
     console.error('Failed to select directory:', e)
+  }
+}
+
+async function changeLogDir() {
+  try {
+    const selected = await openDialog({
+      directory: true,
+      multiple: false,
+      title: '选择日志存储目录',
+    })
+    if (selected && typeof selected === 'string') {
+      await saveConfig('log_dir', selected)
+      logDir.value = selected
+      ui.addToast('success', '日志存储目录已更改，重启应用后生效，旧日志需手动清理。')
+    }
+  } catch (e) {
+    console.error('Failed to select log directory:', e)
   }
 }
 

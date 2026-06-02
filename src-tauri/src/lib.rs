@@ -61,7 +61,7 @@ pub fn run() {
 
             // ── Read persisted config ─────────────────────────────────────
             // ── 读取持久化配置 ─────────────────────────────────────
-            let (thumb_size, thumb_skip_max_kb, custom_cache_dir, log_level) = {
+            let (thumb_size, thumb_skip_max_kb, custom_cache_dir, log_level, custom_log_dir) = {
                 let pool = db_read_pool.get().expect("Pool error");
                 let size: u32 = get_config(&pool, "thumb_size")
                     .ok()
@@ -80,7 +80,10 @@ pub fn run() {
                     .ok()
                     .flatten()
                     .unwrap_or_else(|| "debug".to_string());
-                (size, skip, cache_dir, lvl)
+                let l_dir: Option<String> = get_config(&pool, "log_dir")
+                    .ok()
+                    .flatten();
+                (size, skip, cache_dir, lvl, l_dir)
             };
 
             let cache_dir = custom_cache_dir
@@ -90,7 +93,9 @@ pub fn run() {
 
             // ── Logging ───────────────────────────────────────────────────────────
             // ── 日志记录 ───────────────────────────────────────────────────────────
-            let log_dir = app_data_dir.join("logs");
+            let log_dir = custom_log_dir
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| app_data_dir.join("logs"));
             std::fs::create_dir_all(&log_dir).unwrap_or_default();
 
             let file_appender = tracing_appender::rolling::daily(&log_dir, "picasa-next.log");
@@ -124,6 +129,7 @@ pub fn run() {
                 db_writer,
                 db_read_pool,
                 cache_dir,
+                log_dir,
                 thumb_size,
                 thumb_skip_max_kb,
             );
@@ -176,6 +182,7 @@ pub fn run() {
             ipc::config_commands::get_app_config,
             ipc::config_commands::set_app_config,
             ipc::config_commands::get_thumb_cache_dir,
+            ipc::config_commands::get_log_dir,
             // system
             // system
             ipc::system_commands::show_in_explorer,

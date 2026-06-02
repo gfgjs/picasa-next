@@ -53,3 +53,11 @@ pub async fn get_thumb_cache_dir(state: State<'_, Arc<AppState>>) -> Result<Stri
     let path = state.thumb_config.read().unwrap().cache_dir.clone();
     Ok(path.to_string_lossy().to_string())
 }
+
+/// Get the resolved absolute log directory.
+/// 获取解析后的绝对路径日志目录。
+#[tauri::command]
+pub async fn get_log_dir(state: State<'_, Arc<AppState>>) -> Result<String> {
+    let path = state.log_dir.clone();
+    Ok(path.to_string_lossy().to_string())
+}

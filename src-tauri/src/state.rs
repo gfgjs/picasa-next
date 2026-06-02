@@ -48,6 +48,9 @@ pub struct AppState {
 
     /// Cancelled thumbnail item IDs for viewport scrolling aborts.
     pub cancelled_thumb_ids: Mutex<HashSet<i64>>,
+
+    /// Resolved log directory path.
+    pub log_dir: PathBuf,
 }
 
 impl AppState {
@@ -55,6 +58,7 @@ impl AppState {
         db_writer: DbWriter,
         db_read_pool: DbPool,
         cache_dir: PathBuf,
+        log_dir: PathBuf,
         thumb_size: u32,
         thumb_skip_max_kb: u64,
     ) -> Self {
@@ -71,6 +75,7 @@ impl AppState {
             }),
             thumb_gen_token: Mutex::new(None),
             cancelled_thumb_ids: Mutex::new(HashSet::new()),
+            log_dir,
         }
     }
 

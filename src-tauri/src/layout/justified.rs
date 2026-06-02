@@ -115,29 +115,65 @@ pub fn compute_justified_layout(items: &[LayoutItem], params: &LayoutParams) -> 
         let total_gaps = params.gap * (pending.len().saturating_sub(1)) as f64;
         let available_w = params.container_width - total_gaps;
 
-        let row_h = if is_last && *ar_sum * target_h < available_w * LAST_ROW_JUSTIFY_THRESHOLD {
+        // Determine if the row is actually filling the width, or if it's an incomplete last row.
+        let is_incomplete = is_last && *ar_sum * target_h < available_w * LAST_ROW_JUSTIFY_THRESHOLD;
+        let ideal_h = available_w / *ar_sum;
+
+        let row_h = if is_incomplete {
             // Last row — don't stretch; use target height
             target_h
         } else {
             // Normal row: scale to fill width, but cap at MAX_ROW_HEIGHT_FACTOR
-            // to prevent a single portrait image from producing a 6000px-tall row.
-            (available_w / *ar_sum).min(target_h * MAX_ROW_HEIGHT_FACTOR)
+            ideal_h.min(target_h * MAX_ROW_HEIGHT_FACTOR)
         };
 
+        let hit_cap = ideal_h > target_h * MAX_ROW_HEIGHT_FACTOR;
+        let should_snap_last = !is_incomplete && !hit_cap;
+
+        let mut unrounded_widths: Vec<f64> = pending.iter().map(|item| aspect_ratio(item) * row_h).collect();
+        
+        // Only adjust to exactly fill the container if it's a fully justified row
+        if should_snap_last && pending.len() > 1 {
+            let total_unrounded: f64 = unrounded_widths.iter().sum();
+            let target_total_w = available_w;
+            // Distribute the difference proportionally to avoid dumping rounding errors on the last item
+            if total_unrounded > 0.0 {
+                let scale = target_total_w / total_unrounded;
+                for w in unrounded_widths.iter_mut() {
+                    *w *= scale;
+                }
+            }
+        }
+
+        // Now round the widths and distribute any remaining integer pixel difference
+        let mut final_widths: Vec<f64> = unrounded_widths.iter().map(|w| w.round()).collect();
+        
+        if should_snap_last && pending.len() > 1 {
+            let current_total: f64 = final_widths.iter().sum();
+            let mut diff = (available_w.round() - current_total) as i32;
+            
+            // Distribute the 1px differences across items until diff is 0
+            // We can distribute from largest to smallest to minimize visual impact, 
+            // or just left-to-right. Left-to-right is fine.
+            let mut i = 0;
+            let len = final_widths.len();
+            while diff != 0 {
+                if diff > 0 {
+                    final_widths[i % len] += 1.0;
+                    diff -= 1;
+                } else {
+                    final_widths[i % len] -= 1.0;
+                    diff += 1;
+                }
+                i += 1;
+            }
+        }
+
         let mut x = 0.0f64;
-        let mut row_items: Vec<LayoutRowItem> = Vec::new();
+        let mut row_items: Vec<LayoutRowItem> = Vec::with_capacity(pending.len());
 
         for (i, item) in pending.iter().enumerate() {
-            let ar = aspect_ratio(item);
-            let item_w = if i == pending.len() - 1 && pending.len() > 1 {
-                // Last item in a MULTI-image row: snap to remaining width to
-                // absorb float rounding and avoid a visible gap on the right.
-                // Single-image rows use natural width to avoid stretching one
-                // portrait/square image across the entire container.
-                params.container_width - x
-            } else {
-                (ar * row_h).round()
-            };
+            let item_w = final_widths[i];
 
             row_items.push(LayoutRowItem {
                 id:            item.id,
@@ -184,7 +220,7 @@ pub fn compute_justified_layout(items: &[LayoutItem], params: &LayoutParams) -> 
                 params.target_row_height,
                 &mut rows,
                 params,
-                false,
+                true, // Treat rows before a separator as the "last row" of that day
             );
             emit_separator(&date_label, &mut current_y, &mut rows);
             last_date_label = Some(date_label);

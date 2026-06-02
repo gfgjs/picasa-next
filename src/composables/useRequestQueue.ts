@@ -17,29 +17,38 @@ interface QueueEntry {
 }
 
 export function useRequestQueue() {
-  const queue = ref<QueueEntry[]>([])
+  const queue = ref<number[]>([])
   let flushTimer: ReturnType<typeof setTimeout> | null = null
   const inFlight = new Set<number>()
+  const resolvers = new Map<number, { resolve: Resolver, reject: (err: unknown) => void }[]>()
 
   function flush() {
     flushTimer = null
     if (queue.value.length === 0) return
 
     const batch = queue.value.splice(0, DEFAULTS.THUMB_BATCH_SIZE)
-    const ids   = batch.map(e => e.id)
+    batch.forEach(id => inFlight.add(id))
 
-    // Remove from in-flight when done
-    invoke<ThumbResult[]>(IPC.BATCH_REQUEST_THUMBNAILS, { itemIds: ids })
+    invoke<ThumbResult[]>(IPC.BATCH_REQUEST_THUMBNAILS, { itemIds: batch })
       .then(results => {
         results.forEach((r, i) => {
-          batch[i]?.resolve(r)
-          inFlight.delete(ids[i])
+          const id = batch[i]
+          inFlight.delete(id)
+          const cbs = resolvers.get(id)
+          if (cbs) {
+            cbs.forEach(cb => cb.resolve(r))
+            resolvers.delete(id)
+          }
         })
       })
       .catch(err => {
-        batch.forEach(e => {
-          e.reject(err)
-          inFlight.delete(e.id)
+        batch.forEach(id => {
+          inFlight.delete(id)
+          const cbs = resolvers.get(id)
+          if (cbs) {
+            cbs.forEach(cb => cb.reject(err))
+            resolvers.delete(id)
+          }
         })
       })
       .finally(() => {
@@ -49,41 +58,36 @@ export function useRequestQueue() {
 
   function scheduleFlush() {
     if (flushTimer !== null) return
-    flushTimer = setTimeout(flush, 16) // next animation frame-ish
+    flushTimer = setTimeout(flush, 16)
   }
 
-  /**
-   * Request a thumbnail for an item. Returns a promise that resolves with ThumbResult.
-   * Automatically batches with other pending requests.
-   */
   function request(id: number): Promise<ThumbResult> {
-    if (inFlight.has(id)) {
-      // Already in queue — find existing entry
-      const existing = queue.value.find(e => e.id === id)
-      if (existing) {
-        return new Promise((resolve, reject) => {
-          const orig = existing.resolve
-          existing.resolve = (r) => { orig(r); resolve(r) }
-          const origR = existing.reject
-          existing.reject = (e) => { origR(e); reject(e) }
-        })
+    return new Promise((resolve, reject) => {
+      if (!resolvers.has(id)) {
+        resolvers.set(id, [])
       }
-    }
+      resolvers.get(id)!.push({ resolve, reject })
 
-    inFlight.add(id)
-    return new Promise<ThumbResult>((resolve, reject) => {
-      queue.value.push({ id, resolve, reject })
-      scheduleFlush()
+      if (inFlight.has(id)) {
+        return // Already being processed by backend, just wait for resolve
+      }
+
+      if (!queue.value.includes(id)) {
+        queue.value.push(id)
+        scheduleFlush()
+      }
     })
   }
 
-  /** Cancel a pending request (e.g. item scrolled out of view) */
   function cancel(id: number) {
-    const idx = queue.value.findIndex(e => e.id === id)
+    const idx = queue.value.indexOf(id)
     if (idx >= 0) {
-      const [entry] = queue.value.splice(idx, 1)
-      inFlight.delete(id)
-      entry.reject(new Error('cancelled'))
+      queue.value.splice(idx, 1)
+      const cbs = resolvers.get(id)
+      if (cbs) {
+        cbs.forEach(cb => cb.reject(new Error('cancelled')))
+        resolvers.delete(id)
+      }
     }
   }
 

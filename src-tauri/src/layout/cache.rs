@@ -72,6 +72,35 @@ pub fn get_rows(
     Some(data.rows[start_row..end].to_vec())
 }
 
+/// Retrieve a slice of rows intersecting [top_y, bottom_y] from the cache.
+pub fn get_rows_by_y(
+    cache: &LayoutCache,
+    top_y: f64,
+    bottom_y: f64,
+    expected_version: Option<u64>,
+) -> Option<Vec<LayoutRow>> {
+    let guard = cache.read().unwrap();
+    let data = guard.as_ref()?;
+
+    if let Some(ver) = expected_version {
+        if data.layout_version != ver {
+            return None;
+        }
+    }
+
+    let start_idx = match data.rows.binary_search_by(|r| r.y().partial_cmp(&top_y).unwrap()) {
+        Ok(idx) => idx,
+        Err(idx) => idx.saturating_sub(1),
+    };
+
+    let mut end_idx = start_idx;
+    while end_idx < data.rows.len() && data.rows[end_idx].y() <= bottom_y {
+        end_idx += 1;
+    }
+
+    Some(data.rows[start_idx..end_idx].to_vec())
+}
+
 /// Get the layout summary (row count + total height + version).
 pub fn get_summary(cache: &LayoutCache) -> Option<LayoutSummary> {
     let guard = cache.read().unwrap();
@@ -81,4 +110,25 @@ pub fn get_summary(cache: &LayoutCache) -> Option<LayoutSummary> {
         total_height:   data.total_height,
         layout_version: data.layout_version,
     })
+}
+
+/// Get the adjacent item ID from the cached layout
+pub fn get_adjacent_item(cache: &LayoutCache, current_id: i64, offset: isize) -> Option<i64> {
+    let guard = cache.read().unwrap();
+    let data = guard.as_ref()?;
+    
+    // Flatten all items
+    let mut all_ids = Vec::new();
+    for row in &data.rows {
+        if let LayoutRow::Normal { items, .. } = row {
+            for item in items {
+                all_ids.push(item.id);
+            }
+        }
+    }
+    
+    let current_idx = all_ids.iter().position(|&id| id == current_id)?;
+    let target_idx = (current_idx as isize + offset) as usize;
+    
+    all_ids.get(target_idx).copied()
 }

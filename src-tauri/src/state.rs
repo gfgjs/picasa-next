@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Mutex, RwLock};
 
 use tokio_util::sync::CancellationToken;
 
@@ -31,7 +31,7 @@ pub struct AppState {
     pub engine_arena: EngineArena,
 
     /// Thumbnail configuration (cache dir, size, skip threshold).
-    pub thumb_config: ThumbConfig,
+    pub thumb_config: RwLock<ThumbConfig>,
 }
 
 impl AppState {
@@ -50,11 +50,11 @@ impl AppState {
             scan_tokens: Mutex::new(HashMap::new()),
             layout_cache: new_layout_cache(),
             engine_arena: EngineArena::phase1(),
-            thumb_config: ThumbConfig {
+            thumb_config: RwLock::new(ThumbConfig {
                 cache_dir,
                 size: thumb_size,
                 skip_max_bytes: thumb_skip_max_kb * 1024,
-            },
+            }),
         }
     }
 

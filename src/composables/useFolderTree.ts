@@ -18,15 +18,16 @@ export function useFolderTree() {
     nodes.value = []
     for (const root of scanRoots) {
       if (myId !== loadingId) return   // superseded — bail out
-      await loadChildren(null, root.id)
+      await loadChildren(null, root.id, myId)
     }
   }
 
-  async function loadChildren(parentId: number | null, rootId?: number) {
+  async function loadChildren(parentId: number | null, rootId?: number, loadId?: number) {
     loading.value = true
     try {
       if (parentId === null && rootId !== undefined) {
         const children = await invoke<DirNode[]>(IPC.GET_DIRECTORY_TREE, { rootId })
+        if (loadId !== undefined && loadId !== loadingId) return // Race condition guard
         nodes.value = [...nodes.value, ...children]
       } else if (parentId !== null) {
         const children = await invoke<DirNode[]>(IPC.GET_DIRECTORY_CHILDREN, { parentId })
@@ -39,6 +40,7 @@ export function useFolderTree() {
         const parent = nodes.value.find(n => n.id === parentId)
         if (parent) parent.expanded = true
       }
+
     } finally {
       loading.value = false
     }

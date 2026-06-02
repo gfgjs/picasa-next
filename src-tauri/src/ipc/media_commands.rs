@@ -18,6 +18,22 @@ pub async fn get_media_detail(id: i64, state: State<'_, Arc<AppState>>) -> Resul
     q::get_media_detail(&pool, id)
 }
 
+/// Get the adjacent media item detail.
+#[tauri::command]
+pub async fn get_adjacent_media(
+    current_id: i64,
+    offset: isize,
+    state: State<'_, Arc<AppState>>,
+) -> Result<Option<MediaDetail>> {
+    let adj_id = crate::layout::cache::get_adjacent_item(&state.layout_cache, current_id, offset);
+    if let Some(id) = adj_id {
+        let detail = get_media_detail(id, state).await?;
+        Ok(Some(detail))
+    } else {
+        Ok(None)
+    }
+}
+
 /// Get the playable video URL for a Live Photo companion.
 /// Returns the absolute file path (caller wraps with convertFileSrc).
 #[tauri::command]
@@ -49,10 +65,13 @@ pub async fn get_companion_video_url(
         let abs_path = resolve_media_path(&root, &rel, &name);
 
         // Check motion video cache
-        let cache_path = crate::thumbnail::cache::motion_video_cache_path(
-            &state.thumb_config.cache_dir,
-            cache_key,
-        );
+        let cache_path = {
+            let config = state.thumb_config.read().unwrap();
+            crate::thumbnail::cache::motion_video_cache_path(
+                &config.cache_dir,
+                cache_key,
+            )
+        };
 
         if cache_path.exists() {
             return Ok(cache_path.to_string_lossy().replace('\\', "/"));

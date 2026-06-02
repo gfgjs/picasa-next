@@ -27,6 +27,7 @@
 
 <script setup lang="ts">
 import { onMounted } from 'vue'
+import { invoke }    from '@tauri-apps/api/core'
 import { useTheme }    from './composables/useTheme'
 import { useUiStore }  from './stores/uiStore'
 
@@ -53,5 +54,15 @@ function onSortChange() {
 onMounted(async () => {
   // Theme init only — data loading is handled in AppSidebar.vue onMounted
   // to keep initialization sequential and avoid double-compute races.
+  
+  // Load global UI configurations
+  try {
+    const val = await invoke<string | null>('get_app_config', { key: 'timeline_scroll_width' })
+    if (val) {
+      document.documentElement.style.setProperty('--scrollbar-width', `${val}px`)
+    }
+  } catch (e) {
+    console.error('Failed to load global config:', e)
+  }
 })
 </script>

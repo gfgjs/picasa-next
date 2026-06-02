@@ -1,9 +1,10 @@
 <template>
-  <div
-    ref="gridRef"
-    class="media-grid"
-    @scroll.passive="onScroll"
-  >
+  <div class="media-grid-wrapper">
+    <div
+      ref="gridRef"
+      class="media-grid"
+      @scroll.passive="onGridScroll"
+    >
     <!-- Empty state -->
     <div v-if="media.totalRows === 0 && !media.isComputingLayout" class="empty-state">
       <div class="empty-state__icon">🖼️</div>
@@ -17,58 +18,69 @@
       <span>正在计算布局...</span>
     </div>
 
-    <!-- Virtual scroll spacer (top) -->
-    <div :style="{ height: paddingTop + 'px' }" />
-
-    <!-- Visible rows -->
-    <!--
-      IMPORTANT: Do NOT use marginBottom here.
-      flex gap on .media-grid does not add trailing space after the last child,
-      so scrollHeight == totalHeight. marginBottom WOULD add extra height,
-      making scrollHeight > totalHeight, which causes the browser to clamp
-      scrollTop at the bottom → scroll event → fetch → DOM change → loop.
-    -->
-    <div
-      v-for="(row, ri) in visibleRows"
-      :key="row.rowType === 'separator' ? `sep-${row.y}` : `row-${row.y}`"
+    <!-- Virtual scroll wrapper (absolute positioning) -->
+    <div 
+      v-if="media.totalRows > 0"
+      class="media-grid__content"
+      :style="{ height: media.totalHeight + 'px' }"
     >
-      <!-- Date separator -->
-      <div v-if="row.rowType === 'separator'" class="date-separator">
-        {{ (row as any).separatorLabel }}
-      </div>
-
-      <!-- Normal row -->
       <div
-        v-else
-        class="media-grid__row"
-        :style="{ height: (row as any).height + 'px', gap: GAP + 'px' }"
+        v-for="(row, ri) in visibleRows"
+        :key="row.rowType === 'separator' ? `sep-${row.y}` : `row-${row.y}`"
+        :class="row.rowType === 'separator' ? 'date-separator' : 'media-grid__row'"
+        :style="{
+          position: 'absolute',
+          top: 0,
+          transform: `translate3d(0, ${(row as any).y}px, 0)`,
+          willChange: 'transform',
+          left: 0,
+          right: 0,
+          height: (row as any).height + 'px',
+          gap: row.rowType === 'separator' ? undefined : GAP + 'px'
+        }"
       >
-        <div
-          v-for="item in (row as any).items"
-          :key="item.id"
-          class="media-card"
-          :style="{ width: item.w + 'px', height: item.h + 'px' }"
-          @click="openDetail(item.id)"
-        >
-          <MediaThumb
-            :id="item.id"
-            :w="item.w"
-            :h="item.h"
-            :media-type="item.mediaType"
-            :is-live-photo="item.isLivePhoto"
-            :duration-ms="item.durationMs"
-            :thumb-status="item.thumbStatus"
-            :thumb-path="item.thumbPath"
-            :thumbhash="item.thumbhash"
-            :cache-dir="cacheDir"
-            @request-thumb="onRequestThumb"
-          />
-        </div>
+        <!-- Date separator -->
+        <template v-if="row.rowType === 'separator'">
+          {{ (row as any).separatorLabel }}
+        </template>
+
+        <!-- Normal row -->
+        <template v-else>
+          <div
+            v-for="item in (row as any).items"
+            :key="item.id"
+            class="media-card"
+            :style="{ width: item.w + 'px', height: item.h + 'px' }"
+            @click="openDetail(item.id)"
+          >
+            <MediaThumb
+              :id="item.id"
+              :w="item.w"
+              :h="item.h"
+              :media-type="item.mediaType"
+              :is-live-photo="item.isLivePhoto"
+              :duration-ms="item.durationMs"
+              :thumb-status="item.thumbStatus"
+              :thumb-path="item.thumbPath"
+              :thumbhash="item.thumbhash"
+              :cache-dir="cacheDir"
+              @request-thumb="onRequestThumb"
+            />
+          </div>
+        </template>
       </div>
     </div>
+  </div>
 
-    <!-- Virtual scroll spacer (bottom) -->
-    <div :style="{ height: paddingBottom + 'px' }" />
+  <!-- Floating Scroll Buttons -->
+    <div v-if="media.totalRows > 0" class="scroll-fab">
+      <button class="fab-btn" @click="scrollGridToTop" title="回到顶部">
+        ↑
+      </button>
+      <button class="fab-btn" @click="scrollGridToBottom" title="滚到底部">
+        ↓
+      </button>
+    </div>
   </div>
 </template>
 
@@ -102,14 +114,37 @@ const cacheDir = ref('')
 
 // ── Virtual scroll ─────────────────────────────────────────────────────────
 
+const scrollCache = new Map<string, number>()
+
+function getViewKey() {
+  return ui.activeDirectoryId ? `dir-${ui.activeDirectoryId}` : `album-${ui.activeSmartAlbum}`
+}
+
 const {
-  visibleRows, paddingTop, paddingBottom, scrollToTop, updateVisible, onScroll,
+  visibleRows, paddingTop, paddingBottom, updateVisible, onScroll,
 } = useVirtualScroll({
   totalHeight:   () => media.totalHeight,
   totalRows:     () => media.totalRows,
-  fetchRows:     (start, end) => media.fetchRows(start, end),
+  fetchRowsByY:  (topY, bottomY) => media.fetchRowsByY(topY, bottomY),
   containerRef:  () => gridRef.value,
 })
+
+function onGridScroll(e: Event) {
+  onScroll()
+  if (gridRef.value) {
+    scrollCache.set(getViewKey(), gridRef.value.scrollTop)
+  }
+}
+
+function scrollGridToTop() {
+  if (!gridRef.value) return
+  gridRef.value.scrollTo({ top: 0, behavior: 'smooth' })
+}
+
+function scrollGridToBottom() {
+  if (!gridRef.value) return
+  gridRef.value.scrollTo({ top: gridRef.value.scrollHeight, behavior: 'smooth' })
+}
 
 // ── Layout ─────────────────────────────────────────────────────────────────
 
@@ -124,22 +159,17 @@ onMounted(async () => {
   const dir = await appDataDir()
   cacheDir.value = (await join(dir, 'cache')).replace(/\\/g, '/')
 
-  // Read container width immediately — use offsetWidth for accuracy
+  // Read container width immediately
   if (gridRef.value) {
-    // Use ResizeObserver's contentRect when available (avoids padding confusion).
-    // For the initial read before ResizeObserver fires, offsetWidth is reliable.
-    containerWidth.value = gridRef.value.offsetWidth
-    console.log('[MediaGrid] onMounted: offsetWidth=', gridRef.value.offsetWidth,
-      'clientWidth=', gridRef.value.clientWidth,
-      'clientHeight=', gridRef.value.clientHeight)
+    containerWidth.value = gridRef.value.clientWidth
   } else {
     console.warn('[MediaGrid] onMounted: gridRef is null!')
   }
 
   resizeObserver = new ResizeObserver(entries => {
     const w = entries[0].contentRect.width
-    console.log('[MediaGrid] ResizeObserver: w=', w, 'prev=', containerWidth.value)
-    if (w > 0 && w !== containerWidth.value) {
+    // Ignore sub-pixel changes (often caused by scrollbar rendering glitches)
+    if (w > 0 && Math.abs(w - containerWidth.value) > 1) {
       containerWidth.value = w
       onResize(w)
     }
@@ -147,34 +177,13 @@ onMounted(async () => {
   if (gridRef.value) resizeObserver.observe(gridRef.value)
 
   // Initial layout compute — after width is known
-  console.log('[MediaGrid] calling initial compute(), containerWidth=', containerWidth.value)
+
   await compute()
-  console.log('[MediaGrid] initial compute done, calling updateVisible()')
+
   updateVisible()
 })
 
 // ── Thumbnail request handling ──────────────────────────────────────────────
-//
-// When a MediaThumb emits 'request-thumb', we enqueue the id in the request
-// queue. When the batch resolves, we patch the item inside visibleRows in-place
-// so the thumb component's watch fires and loads the image.
-//
-// For thumb_status=3 (small file direct display), the backend does NOT store
-// an absolute path in thumb_path. We need to resolve the abs path via the
-// get_media_detail call — but that's heavy. Instead we store abs_path on the
-// item itself the first time we open detail. For the grid, we directly serve
-// status=3 by passing the thumb_path through convertFileSrc (the path is
-// already stored as abs in DB for status=3 — see generator.rs line 77:
-// thumb_path is None for status=3). So for status=3 we need to open detail
-// once to get absPath — too expensive.
-//
-// Simpler approach: batch_request_thumbnails returns ThumbResult with
-// thumb_status=3 & thumb_path=null. For status=3, MediaThumb should use the
-// original file. We patch a synthetic thumb_path = abs_path.
-// Since we don't have abs_path in layout rows, we invoke get_item_path_info
-// via an IPC that doesn't exist yet — instead we just accept that status=3
-// items will show their ThumbHash until the user opens the detail.
-// (Status=3 is only for files < 200KB, ThumbHash looks fine for those.)
 
 async function onRequestThumb(id: number) {
   try {
@@ -218,7 +227,7 @@ onMounted(async () => {
     if (enrichedDebounceTimer !== null) clearTimeout(enrichedDebounceTimer)
     enrichedDebounceTimer = setTimeout(async () => {
       enrichedDebounceTimer = null
-      console.log('[MediaGrid] MEDIA_ENRICHED debounce fired, recomputing')
+
       await compute()
       updateVisible()
     }, 2000)
@@ -234,30 +243,47 @@ onBeforeUnmount(() => {
 watch(
   () => media.totalItems,
   async (newVal, oldVal) => {
-    console.log('[MediaGrid] totalItems changed:', oldVal, '->', newVal, 'containerWidth=', containerWidth.value)
-    if (containerWidth.value < 100) {
-      console.warn('[MediaGrid] totalItems watch: containerWidth not ready, skipping compute')
-      return
-    }
+
+    if (containerWidth.value < 100) return
     await compute()
-    updateVisible()
+    // updateVisible will be called by the layoutVersion watch below
+  }
+)
+
+// When layout changes (due to resize, folder switch, filters, etc.), refresh visible rows
+watch(
+  () => media.layoutVersion,
+  async () => {
+
+    // Wait for the DOM to allow setting scrollTop before layout renders
+    if (gridRef.value) {
+      const saved = scrollCache.get(getViewKey()) || 0
+      gridRef.value.scrollTop = saved
+    }
+    updateVisible(true)
   }
 )
 </script>
 
 <style scoped>
+.media-grid-wrapper {
+  position: relative;
+  height: 100%;
+  width: 100%;
+}
+
 .media-grid {
   height: 100%;
   overflow-y: scroll;
   overflow-x: hidden;
-  /* No gap, no margin, no padding — row-to-row spacing is already encoded in
-     the Rust layout y coordinates (each row's y = prev_y + prev_h + gap).
-     Adding any extra vertical space here would make scrollHeight > totalHeight,
-     causing the browser to clamp scrollTop at the bottom and fire infinite
-     scroll events. */
   padding: 0;
-  display: flex;
-  flex-direction: column;
+  position: relative;
+  overflow-anchor: none;
+}
+
+.media-grid__content {
+  position: relative;
+  width: 100%;
 }
 
 .media-grid__loading {
@@ -277,14 +303,12 @@ watch(
 }
 
 .date-separator {
-  height: 36px;
   display: flex;
-  align-items: center;
-  font-size: var(--font-size-sm);
+  font-size: 16px;
   font-weight: 600;
-  color: var(--color-text-secondary);
-  letter-spacing: -0.2px;
-  padding: 0 2px;
+  color: var(--color-text-primary);
+  align-items: center;
+  padding-left: var(--spacing-sm);
 }
 
 .media-card {
@@ -293,7 +317,8 @@ watch(
   overflow: visible;
   border-radius: 2px;
   cursor: pointer;
-  flex-shrink: 0;
+  flex: 0 0 auto;
+  box-sizing: border-box;
 
   /* base: sits behind neighbours */
   z-index: 0;
@@ -314,6 +339,44 @@ watch(
   transition:
     transform 220ms cubic-bezier(0.34, 1.18, 0.64, 1),
     box-shadow 220ms ease;
+}
+
+.scroll-fab {
+  position: absolute;
+  bottom: 32px;
+  right: 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  z-index: 100;
+}
+
+.fab-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--color-surface-elevated);
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+  font-size: 20px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  transition: transform 0.2s cubic-bezier(0.34, 1.18, 0.64, 1), background 0.2s, box-shadow 0.2s;
+  opacity: 0.8;
+}
+
+.fab-btn:hover {
+  transform: scale(1.1);
+  background: var(--color-surface-hover);
+  opacity: 1;
+  box-shadow: 0 6px 16px rgba(0,0,0,0.3);
+}
+
+.fab-btn:active {
+  transform: scale(0.95);
 }
 
 </style>

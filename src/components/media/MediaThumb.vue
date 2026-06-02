@@ -132,24 +132,46 @@ async function loadThumb() {
       const src = convertFileSrc(abs)
       const img = new Image()
       img.src = src
-      await img.decode()
+      try {
+        await img.decode()
+      } catch (e) {
+        console.warn('MediaThumb decode() failed, falling back to DOM load', e)
+      }
       displaySrc.value = src
       isLoaded.value   = true
-    } catch { /* leave placeholder */ }
+    } catch (e) {
+      console.warn('Outer catch caught error for status 1:', e)
+    }
     return
   }
 
-  if (props.thumbStatus === 3 && props.thumbPath) {
-    // Small file: thumbPath holds the absolute path to the original file
-    try {
-      const src = convertFileSrc(props.thumbPath.replace(/\\/g, '/'))
-      const img = new Image()
-      img.src = src
-      await img.decode()
-      displaySrc.value = src
-      isLoaded.value   = true
-    } catch { /* leave placeholder */ }
-    return
+  if (props.thumbStatus === 3) {
+    if (props.thumbPath) {
+      // Small file: thumbPath holds the absolute path to the original file
+      try {
+        const src = convertFileSrc(props.thumbPath.replace(/\\/g, '/'))
+        const img = new Image()
+        img.src = src
+        try {
+          await img.decode()
+        } catch (e) {
+          console.warn('MediaThumb decode() failed, falling back to DOM load', e)
+        }
+        displaySrc.value = src
+        isLoaded.value   = true
+      } catch (e) {
+        console.warn('Outer catch caught error for status 3:', e)
+      }
+      return
+    } else {
+      // We know it's status 3 but we don't have the absPath in the layout row.
+      // Ask the queue for it! (The backend get_thumb_by_item_ids will resolve it)
+      if (!hasRequested.value) {
+        hasRequested.value = true
+        emit('request-thumb', props.id)
+      }
+      return
+    }
   }
 
   if (props.thumbStatus === 0) {

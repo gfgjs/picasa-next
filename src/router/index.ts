@@ -24,6 +24,11 @@ const router = createRouter({
       component: () => import('../components/media/MediaGrid.vue'),
       meta: { title: '回收站' },
     },
+    {
+      path: '/settings',
+      component: () => import('../views/SettingsView.vue'),
+      meta: { title: '设置' },
+    },
   ],
 })
 

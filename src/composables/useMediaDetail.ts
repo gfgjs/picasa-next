@@ -75,10 +75,14 @@ export function useMediaDetail() {
     document.removeEventListener('mouseup',   stopDrag)
   }
 
-  function onWheel(e: WheelEvent) {
-    e.preventDefault()
-    const factor = e.deltaY < 0 ? 1.1 : 0.9
-    scale.value = Math.max(0.1, Math.min(10, scale.value * factor))
+  function onWheel(e: WheelEvent): boolean {
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault()
+      const factor = e.deltaY < 0 ? 1.1 : 0.9
+      scale.value = Math.max(0.1, Math.min(10, scale.value * factor))
+      return true
+    }
+    return false
   }
 
   function toggleInfo() { showInfo.value = !showInfo.value }

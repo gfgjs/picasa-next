@@ -16,7 +16,7 @@
           <button
             class="sidebar__nav-item"
             :class="{ active: ui.activeSmartAlbum === album.id && !ui.activeDirectoryId }"
-            @click="ui.setSmartAlbum(album.id)"
+            @click="handleSmartAlbumClick(album.id)"
           >
             <span class="sidebar__nav-icon">{{ album.icon }}</span>
             <span class="sidebar__nav-label">{{ album.label }}</span>
@@ -106,6 +106,8 @@
 
     <!-- Settings / footer -->
     <div class="sidebar__footer">
+      <router-link to="/settings" class="btn-icon" title="设置" style="text-decoration: none;">⚙️</router-link>
+      <button class="btn-icon" title="[调试] 弹窗设置" @click="openSettings">🛠️</button>
       <button class="btn-icon" title="切换主题" @click="ui.cycleTheme()">
         {{ ui.theme === 'dark' ? '☀️' : ui.theme === 'light' ? '🌙' : '🖥️' }}
       </button>
@@ -116,22 +118,34 @@
         @click="clearAll"
       >🗑️ 清空</button>
     </div>
+
+    <SettingsModal ref="settingsModalRef" />
   </nav>
 </template>
 
 <script setup lang="ts">
-import { computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { open } from '@tauri-apps/plugin-dialog'
 import { useUiStore } from '../../stores/uiStore'
 import { useScanStore } from '../../stores/scanStore'
 import { useMediaStore } from '../../stores/mediaStore'
 import { useFolderTree } from '../../composables/useFolderTree'
+import SettingsModal from '../common/SettingsModal.vue'
 import type { DirNode } from '../../types/media'
 
 const ui       = useUiStore()
 const scan     = useScanStore()
 const media    = useMediaStore()
 const folderTree = useFolderTree()
+const router   = useRouter()
+const route    = useRoute()
+
+const settingsModalRef = ref<InstanceType<typeof SettingsModal> | null>(null)
+
+function openSettings() {
+  settingsModalRef.value?.openModal()
+}
 
 // ── Smart albums ───────────────────────────────────────────────────────────
 
@@ -153,6 +167,16 @@ function formatCount(n: number | undefined | null): string {
 
 function onNodeClick(node: DirNode) {
   ui.setActiveDirectory(node.id)
+  if (route.path !== '/') {
+    router.push('/')
+  }
+}
+
+function handleSmartAlbumClick(albumId: string) {
+  ui.setSmartAlbum(albumId as any)
+  if (route.path !== '/') {
+    router.push('/')
+  }
 }
 
 // ── Watch scan roots for live updates (NOT immediate — onMounted handles init) ─

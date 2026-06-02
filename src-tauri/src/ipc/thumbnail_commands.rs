@@ -56,11 +56,11 @@ pub async fn batch_request_thumbnails(
     if !needs_gen.is_empty() {
         // Override size if provided
         let config = if let Some(sz) = size {
-            let mut c = state.thumb_config.clone();
+            let mut c = state.thumb_config.read().unwrap().clone();
             c.size = sz;
             c
         } else {
-            state.thumb_config.clone()
+            state.thumb_config.read().unwrap().clone()
         };
 
         // Clone Arc so the blocking closure owns it (no unsafe raw pointers)
@@ -99,6 +99,24 @@ pub async fn batch_request_thumbnails(
         .iter()
         .filter_map(|id| result_map.remove(id))
         .collect();
+
+    // Update the in-memory layout cache so subsequent get_layout_rows calls are not stale
+    {
+        let mut cache_guard = state.layout_cache.write().unwrap();
+        if let Some(layout) = cache_guard.as_mut() {
+            for row in layout.rows.iter_mut() {
+                if let crate::layout::justified::LayoutRow::Normal { items, .. } = row {
+                    for item in items.iter_mut() {
+                        if let Some(res) = results.iter().find(|r| r.item_id == item.id) {
+                            item.thumb_status = res.thumb_status;
+                            item.thumb_path = res.thumb_path.clone();
+                            item.thumbhash = res.thumbhash.clone();
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     Ok(results)
 }

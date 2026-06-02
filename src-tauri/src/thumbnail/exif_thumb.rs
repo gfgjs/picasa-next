@@ -13,6 +13,8 @@ use std::path::Path;
 use crate::engine::traits::ImageEngine;
 use crate::error::{AppError, Result};
 
+use crate::scanner::metadata::read_jpeg_orientation;
+
 /// Attempt the EXIF fast path. Returns encoded WebP bytes, or `None` to fall back.
 pub fn try_exif_thumb(
     engine: &dyn ImageEngine,
@@ -22,7 +24,24 @@ pub fn try_exif_thumb(
     let embedded = engine.extract_embedded_thumb(path).ok()??;
 
     // Decode the embedded JPEG
-    let img = image::load_from_memory(&embedded).ok()?;
+    let mut img = image::load_from_memory(&embedded).ok()?;
+
+    // The embedded EXIF thumbnail usually shares the physical orientation of the main image.
+    // We must apply the EXIF orientation rotation before saving it as WebP,
+    // because WebP won't carry the EXIF metadata to the browser.
+    let orientation = read_jpeg_orientation(path);
+    img = match orientation {
+        1 => img,
+        2 => img.fliph(),
+        3 => img.rotate180(),
+        4 => img.flipv(),
+        5 => img.rotate90().fliph(),
+        6 => img.rotate90(),
+        7 => img.rotate270().fliph(),
+        8 => img.rotate270(),
+        _ => img,
+    };
+
     let (w, h) = (img.width(), img.height());
 
     // Only use if the embedded thumb is large enough

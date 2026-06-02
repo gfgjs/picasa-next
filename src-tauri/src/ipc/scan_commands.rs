@@ -136,18 +136,19 @@ pub async fn clear_all_data(
 
     // Wipe all DB tables
     {
-        let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        let tx = conn.unchecked_transaction()?;
+        let mut conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        let tx = conn.transaction()?;
         tx.execute_batch(
             "DELETE FROM image_meta;
              DELETE FROM media_items;
              DELETE FROM directories;
              DELETE FROM scan_roots;
-             DELETE FROM layout_cache;
-             DELETE FROM app_config;
-             VACUUM;",
+             DELETE FROM app_config;"
         )?;
         tx.commit()?;
+        
+        // VACUUM must be run outside of a transaction
+        conn.execute("VACUUM", [])?;
     }
 
     // Drop the thumbnail cache directory

@@ -19,7 +19,7 @@ use crate::db::queries::{get_item_path_info, get_media_item, update_thumb_result
 use crate::engine::EngineArena;
 use crate::error::{AppError, Result};
 use crate::thumbnail::cache::{ensure_thumb_dir, thumb_db_path, thumb_path};
-use crate::thumbnail::exif_thumb::{encode_as_jpeg, encode_as_webp, try_exif_thumb};
+use crate::thumbnail::exif_thumb::{encode_as_jpeg, encode_as_webp};
 use crate::thumbnail::thumbhash::generate_thumbhash;
 
 /// Configuration for thumbnail generation.
@@ -64,9 +64,17 @@ pub fn generate_thumbnail(
     }
 
     // ── 2. Small file direct display ─────────────────────────────────────
-    if item.file_size as u64 <= config.skip_max_bytes && item.media_type == "image" {
-        // Still generate ThumbHash for the placeholder
-        let hash = generate_thumbhash_from_file(arena, &item.file_format, abs_path)?;
+    let web_safe_formats = ["jpg", "jpeg", "png", "webp", "gif", "svg", "avif"];
+    let is_web_safe = web_safe_formats.contains(&item.file_format.to_lowercase().as_str());
+
+    if is_web_safe && item.file_size as u64 <= config.skip_max_bytes && item.media_type == "image" {
+        let mut hash = None;
+        if item.file_size <= 500 * 1024 {
+            // Only fall back to full decode for ThumbHash if the file is genuinely small
+            // (e.g., < 500KB). Full decoding large files just for a ThumbHash causes CPU spikes.
+            hash = generate_thumbhash_from_file(arena, &item.file_format, abs_path).unwrap_or(None);
+        }
+
         // Store the absolute path as thumb_path so the frontend can load the
         // original file directly via convertFileSrc without an extra IPC call.
         let abs_path_str = abs_path.to_string_lossy().replace('\\', "/");
@@ -114,61 +122,35 @@ fn generate_image_thumb(
         .engine_for(format)
         .ok_or_else(|| AppError::UnsupportedFormat(format.to_string()))?;
 
-    // Try EXIF fast path first
-    let webp_bytes = if let Some(bytes) = try_exif_thumb(engine.as_ref(), abs_path, config.size) {
-        bytes
-    } else {
-        // Full decode
-        let decoded = engine.decode(abs_path)?;
-        let hash_result = generate_thumbhash(&decoded);
+    // Full decode
+    let decoded = engine.decode(abs_path)?;
+    let hash_result = generate_thumbhash(&decoded);
 
-        // Resize with fast_image_resize
-        let webp = resize_and_encode(&decoded.pixels, decoded.width, decoded.height, config.size)?;
+    // Resize with fast_image_resize
+    let webp = resize_and_encode(&decoded.pixels, decoded.width, decoded.height, config.size)?;
 
-        // Write WebP to disk
-        ensure_thumb_dir(&config.cache_dir, config.size, cache_key)
-            .map_err(|e| AppError::Io(e.to_string()))?;
-        let disk_path = thumb_path(&config.cache_dir, config.size, cache_key);
-        std::fs::write(&disk_path, &webp).map_err(AppError::from)?;
-
-        let db_path = thumb_db_path(config.size, cache_key);
-        let hash = hash_result.ok();
-
-        {
-            let conn = writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
-            update_thumb_result(&conn, item_id, 1, Some(&db_path), hash.as_deref())?;
-        }
-
-        return Ok(ThumbResult {
-            item_id,
-            thumb_status: 1,
-            thumb_path: Some(db_path),
-            thumbhash: hash,
-        });
-    };
-
-    // Write EXIF-path WebP to disk
+    // Write WebP to disk
     ensure_thumb_dir(&config.cache_dir, config.size, cache_key)
         .map_err(|e| AppError::Io(e.to_string()))?;
     let disk_path = thumb_path(&config.cache_dir, config.size, cache_key);
-    std::fs::write(&disk_path, &webp_bytes).map_err(AppError::from)?;
+    std::fs::write(&disk_path, &webp).map_err(AppError::from)?;
 
     let db_path = thumb_db_path(config.size, cache_key);
-
-    // Generate ThumbHash from the written WebP
-    let hash = generate_thumbhash_from_webp_bytes(&webp_bytes).ok();
+    let hash = hash_result.ok();
 
     {
         let conn = writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
         update_thumb_result(&conn, item_id, 1, Some(&db_path), hash.as_deref())?;
     }
 
-    Ok(ThumbResult {
+    return Ok(ThumbResult {
         item_id,
         thumb_status: 1,
         thumb_path: Some(db_path),
         thumbhash: hash,
-    })
+    });
+
+
 }
 
 fn resize_and_encode(pixels: &[u8], w: u32, h: u32, target: u32) -> Result<Vec<u8>> {
@@ -221,12 +203,4 @@ fn generate_thumbhash_from_file(
     Ok(generate_thumbhash(&decoded).ok())
 }
 
-fn generate_thumbhash_from_webp_bytes(bytes: &[u8]) -> Result<Vec<u8>> {
-    let img = image::load_from_memory(bytes)
-        .map_err(|e| AppError::Engine(e.to_string()))?
-        .to_rgba8();
-    let w = img.width();
-    let h = img.height();
-    let pixels = img.into_raw();
-    Ok(thumbhash::rgba_to_thumb_hash(w as usize, h as usize, &pixels))
-}
+

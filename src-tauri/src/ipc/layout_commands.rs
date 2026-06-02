@@ -89,3 +89,15 @@ pub async fn get_layout_rows(
     get_rows(&state.layout_cache, start_row, end_row, layout_version)
         .ok_or(AppError::LayoutNotReady)
 }
+
+/// Fetch a slice of layout rows intersecting [top_y, bottom_y] from the in-memory cache.
+#[tauri::command]
+pub async fn get_layout_rows_by_y(
+    top_y: f64,
+    bottom_y: f64,
+    layout_version: Option<u64>,
+    state: State<'_, Arc<AppState>>,
+) -> Result<Vec<LayoutRow>> {
+    crate::layout::cache::get_rows_by_y(&state.layout_cache, top_y, bottom_y, layout_version)
+        .ok_or(AppError::LayoutNotReady)
+}

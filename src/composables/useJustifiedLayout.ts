@@ -18,13 +18,13 @@ export function useJustifiedLayout(containerWidthRef: () => number) {
   async function compute(width?: number) {
     const cw = width ?? containerWidthRef()
 
-    console.log('[JustifiedLayout] compute() cw=', cw)
+
 
     // Container not ready yet — defer to next tick and retry once.
     if (cw < 100) {
       await new Promise(r => setTimeout(r, 50))
       const retryW = containerWidthRef()
-      console.log('[JustifiedLayout] compute() retry: retryW=', retryW)
+
       if (retryW < 100) {
         console.warn('[JustifiedLayout] compute() retry failed: width still <100, giving up')
         return
@@ -39,7 +39,7 @@ export function useJustifiedLayout(containerWidthRef: () => number) {
       filters.favoritedOnly = true
     }
 
-    console.log('[JustifiedLayout] invoking computeLayout: cw=', cw, 'directoryId=', directoryId)
+
     await media.computeLayout({
       directoryId,
       filters,

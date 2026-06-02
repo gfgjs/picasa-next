@@ -9,13 +9,15 @@
         <!-- ── Viewer ───────────────────────────────────────────────────── -->
         <div
           class="detail-viewer"
-          @wheel.prevent="state.onWheel"
+          @wheel.prevent="onWheelHandler"
           @mousedown="state.startDrag"
+          @click="onImageClick"
         >
           <img
             v-if="detail.mediaType === 'image'"
             :src="absPath"
             class="detail-viewer__img"
+            :class="{ 'is-dragging': state.isDragging.value }"
             :style="{ transform: state.transform.value }"
             draggable="false"
           />
@@ -203,6 +205,41 @@ function onKeydown(e: KeyboardEvent) {
   if (e.key === '+' || e.key === '=') { state.zoomIn(); return }
   if (e.key === '-')                   { state.zoomOut(); return }
   if (e.key === 'i' || e.key === 'I') { state.toggleInfo(); return }
+  if (e.key === 'ArrowLeft')  { media.navigateDetail(-1); return }
+  if (e.key === 'ArrowRight') { media.navigateDetail(1); return }
+}
+
+let accumulatedDelta = 0
+let deltaTimer: ReturnType<typeof setTimeout> | null = null
+
+function onWheelHandler(e: WheelEvent) {
+  const handledZoom = state.onWheel(e)
+  
+  // If useMediaDetail wasn't HMR'd properly, handledZoom might be undefined.
+  // Explicitly check for true.
+  if (handledZoom !== true) {
+    accumulatedDelta += e.deltaY
+    
+    // Clear accumulator after scrolling stops (e.g. 50ms)
+    if (deltaTimer) clearTimeout(deltaTimer)
+    deltaTimer = setTimeout(() => { accumulatedDelta = 0 }, 50)
+
+    if (accumulatedDelta >= 50) {
+      media.navigateDetail(1)
+      accumulatedDelta = 0
+    } else if (accumulatedDelta <= -50) {
+      media.navigateDetail(-1)
+      accumulatedDelta = 0
+    }
+  }
+}
+
+function onImageClick(e: MouseEvent) {
+  // If user is dragging (scale > 1), we shouldn't close the info.
+  // We can just close it if it's open.
+  if (state.showInfo.value && state.scale.value <= 1) {
+    state.showInfo.value = false
+  }
 }
 
 onMounted(()        => document.addEventListener('keydown', onKeydown))
@@ -284,6 +321,10 @@ async function toggleLive() {
   transform-origin: center;
   user-select: none;
   pointer-events: none;
+  transition: transform 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+.detail-viewer__img.is-dragging {
+  transition: none;
 }
 .detail-viewer__video,
 .detail-viewer__audio {

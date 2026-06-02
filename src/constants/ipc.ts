@@ -12,6 +12,7 @@ export const IPC = {
   // ── Layout ────────────────────────────────────────────────────────────
   COMPUTE_LAYOUT:   'compute_layout',
   GET_LAYOUT_ROWS:  'get_layout_rows',
+  GET_LAYOUT_ROWS_BY_Y: 'get_layout_rows_by_y',
 
   // ── Media ─────────────────────────────────────────────────────────────
   GET_MEDIA_DETAIL:          'get_media_detail',

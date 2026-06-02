@@ -444,7 +444,19 @@ pub fn get_thumb_by_item_ids(conn: &Connection, ids: &[i64]) -> Result<Vec<Thumb
     }
     let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{i}")).collect();
     let sql = format!(
-        "SELECT id, thumb_status, thumb_path, thumbhash FROM media_items WHERE id IN ({})",
+        "SELECT m.id, m.thumb_status, 
+                CASE 
+                    WHEN m.thumb_status = 3 THEN 
+                        CASE WHEN d.rel_path = '' THEN r.path || '/' || m.file_name
+                             ELSE r.path || '/' || d.rel_path || '/' || m.file_name
+                        END
+                    ELSE m.thumb_path 
+                END, 
+                m.thumbhash 
+         FROM media_items m
+         JOIN directories d ON m.directory_id = d.id
+         JOIN scan_roots r ON d.root_id = r.id
+         WHERE m.id IN ({})",
         placeholders.join(",")
     );
     let mut stmt = conn.prepare(&sql)?;

@@ -37,7 +37,7 @@ export const useMediaStore = defineStore('media', () => {
     rowHeight?:      number
     gap?:            number
   }) {
-    console.log('[MediaStore] computeLayout: containerWidth=', params.containerWidth, 'directoryId=', params.directoryId)
+
     if (params.containerWidth < 100) {
       console.warn('[MediaStore] computeLayout: containerWidth too small, skipping')
       return
@@ -54,9 +54,7 @@ export const useMediaStore = defineStore('media', () => {
           gap:           params.gap ?? DEFAULTS.GRID_GAP,
         }
       })
-      console.log('[MediaStore] computeLayout result: totalRows=', layoutSummary.value?.totalRows,
-        'totalHeight=', layoutSummary.value?.totalHeight,
-        'version=', layoutSummary.value?.layoutVersion)
+
     } catch (e) {
       console.error('[MediaStore] computeLayout FAILED:', e)
     } finally {
@@ -66,14 +64,14 @@ export const useMediaStore = defineStore('media', () => {
 
   async function fetchRows(startRow: number, endRow: number): Promise<LayoutRow[]> {
     const version = layoutSummary.value?.layoutVersion
-    console.log(`[MediaStore] fetchRows(${startRow}, ${endRow}) layoutVersion=${version}`)
+
     try {
       const rows = await invoke<LayoutRow[]>(IPC.GET_LAYOUT_ROWS, {
         startRow,
         endRow,
         layoutVersion: version,
       })
-      console.log(`[MediaStore] fetchRows(${startRow}, ${endRow}) → ${rows.length} rows`)
+
       rows.forEach((row, i) => rowCache.value.set(startRow + i, row))
       return rows
     } catch (e) {
@@ -82,9 +80,36 @@ export const useMediaStore = defineStore('media', () => {
     }
   }
 
+  async function fetchRowsByY(topY: number, bottomY: number): Promise<LayoutRow[]> {
+    const version = layoutSummary.value?.layoutVersion
+
+    try {
+      const rows = await invoke<LayoutRow[]>(IPC.GET_LAYOUT_ROWS_BY_Y, {
+        topY,
+        bottomY,
+        layoutVersion: version,
+      })
+      return rows
+    } catch (e) {
+      console.error(`[MediaStore] fetchRowsByY(${topY}, ${bottomY}) FAILED:`, e)
+      throw e
+    }
+  }
+
   async function openDetail(id: number) {
     detailItem.value = await invoke<MediaDetail>(IPC.GET_MEDIA_DETAIL, { id })
     isDetailOpen.value = true
+  }
+
+  async function navigateDetail(offset: number) {
+    if (!detailItem.value) return
+    const adj = await invoke<MediaDetail | null>('get_adjacent_media', { 
+      currentId: detailItem.value.id, 
+      offset 
+    })
+    if (adj) {
+      detailItem.value = adj
+    }
   }
 
   function closeDetail() {
@@ -109,7 +134,7 @@ export const useMediaStore = defineStore('media', () => {
     detailItem, isDetailOpen,
     stats,
     totalItems, totalHeight, totalRows, layoutVersion,
-    computeLayout, fetchRows, openDetail, closeDetail,
+    computeLayout, fetchRows, fetchRowsByY, openDetail, closeDetail, navigateDetail,
     loadStats, toggleFavorite, setRating,
   }
 })

@@ -104,8 +104,10 @@ pub fn run() {
             // layout
             ipc::layout_commands::compute_layout,
             ipc::layout_commands::get_layout_rows,
+            ipc::layout_commands::get_layout_rows_by_y,
             // media
             ipc::media_commands::get_media_detail,
+            ipc::media_commands::get_adjacent_media,
             ipc::media_commands::get_companion_video_url,
             ipc::media_commands::toggle_favorite,
             ipc::media_commands::set_rating,

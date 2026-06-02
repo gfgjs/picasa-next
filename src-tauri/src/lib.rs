@@ -126,14 +126,19 @@ pub fn run() {
             let env_filter_term = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&log_level));
             let env_filter_file = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&log_level));
 
+            // Use Local time for log statements | 使用本地时间格式化日志
+            let timer = tracing_subscriber::fmt::time::ChronoLocal::rfc_3339();
+
             tracing_subscriber::registry()
                 .with(
                     tracing_subscriber::fmt::layer()
+                        .with_timer(timer.clone())
                         .with_ansi(true)
                         .with_filter(env_filter_term)
                 )
                 .with(
                     tracing_subscriber::fmt::layer()
+                        .with_timer(timer)
                         .with_writer(non_blocking)
                         .with_ansi(false)
                         .with_filter(env_filter_file)

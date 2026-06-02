@@ -115,12 +115,10 @@ pub fn run() {
                 }
                 fn flush(&mut self) -> std::io::Result<()> { self.inner.flush() }
             }
-            struct AutoFlush<M> { inner: M }
-            impl<'a, M: tracing_subscriber::fmt::MakeWriter<'a>> tracing_subscriber::fmt::MakeWriter<'a> for AutoFlush<M> {
-                type Writer = FlushWriter<M::Writer>;
-                fn make_writer(&'a self) -> Self::Writer { FlushWriter { inner: self.inner.make_writer() } }
-                fn make_writer_for(&'a self, meta: &tracing::Metadata<'_>) -> Self::Writer { FlushWriter { inner: self.inner.make_writer_for(meta) } }
-            }
+
+            // Use non_blocking to offload writes and flushes to a background thread | 使用 non_blocking 将写入和刷新转移到后台线程
+            let (non_blocking, guard) = tracing_appender::non_blocking(FlushWriter { inner: file_appender });
+            Box::leak(Box::new(guard));
 
             let env_filter_term = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&log_level));
             let env_filter_file = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&log_level));
@@ -133,7 +131,7 @@ pub fn run() {
                 )
                 .with(
                     tracing_subscriber::fmt::layer()
-                        .with_writer(AutoFlush { inner: file_appender })
+                        .with_writer(non_blocking)
                         .with_ansi(false)
                         .with_filter(env_filter_file)
                 )

@@ -64,6 +64,21 @@
 
         <div class="settings-card__item">
           <div class="settings-card__info">
+            <div class="settings-card__label">{{ $t('settings.thumbSize') || '缩略图大小' }}</div>
+            <div class="settings-card__desc">{{ $t('settings.thumbSizeDesc') || '生成的缩略图的最大边长 (像素)' }}</div>
+          </div>
+          <input
+            type="number"
+            v-model.number="thumbSize"
+            min="4"
+            max="1024"
+            class="input-number"
+            @change="saveThumbSize"
+          />
+        </div>
+
+        <div class="settings-card__item">
+          <div class="settings-card__info">
             <div class="settings-card__label">{{ $t('settings.thumbSkipMaxKb') }}</div>
             <div class="settings-card__desc">{{ $t('settings.thumbSkipDesc') }}</div>
           </div>
@@ -187,6 +202,7 @@ const router = useRouter()
 const { t } = useI18n()
 
 const thumbSkipMaxKb = ref(200)
+const thumbSize = ref(300)
 const timelineScrollWidth = ref(6)
 const uiFontSize = ref(16)
 const enableHoverScale = ref(true)
@@ -210,6 +226,9 @@ onMounted(async () => {
 
     const val4 = await invoke<string | null>('get_app_config', { key: 'enable_thumb_hover_scale' })
     if (val4) enableHoverScale.value = val4 === 'true'
+
+    const val5 = await invoke<string | null>('get_app_config', { key: 'thumb_size' })
+    if (val5) thumbSize.value = parseInt(val5, 10)
   } catch (e) {
     console.error('Failed to get config:', e)
   }
@@ -218,10 +237,16 @@ onMounted(async () => {
 async function saveConfig(key: string, value: string) {
   try {
     await invoke('set_app_config', { key, value })
-    ui.addToast('success', t('settings.saveSuccess'))
+    ui.addToast('success', t('settings.saveSuccess') || '保存成功')
   } catch (e) {
-    ui.addToast('error', t('settings.saveFailed', { error: String(e) }))
+    ui.addToast('error', t('settings.saveFailed', { error: String(e) }) || `保存失败: ${e}`)
   }
+}
+
+async function saveThumbSize() {
+  await saveConfig('thumb_size', thumbSize.value.toString())
+  // 提示用户可能需要重新生成缩略图
+  ui.addToast('success', '已修改生成尺寸，新尺寸将在生成新缩略图时生效')
 }
 
 async function saveScrollbarWidth() {

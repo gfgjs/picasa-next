@@ -48,6 +48,8 @@ export function useVirtualScroll(opts: UseVirtualScrollOptions) {
 
   // ── Scroll handler (called by host @scroll) ────────────────────────────
 
+  let pendingUpdate = false
+
   function onScroll() {
     scheduleUpdate()
   }
@@ -56,11 +58,25 @@ export function useVirtualScroll(opts: UseVirtualScrollOptions) {
     if (force) {
       lastFetchedTop = -1
     }
+    
+    // If a fetch is already in flight, flag that we need another update after it finishes
+    if (isFetching.value) {
+      pendingUpdate = true
+      return
+    }
+
     if (!ticking) {
       ticking = true
-      requestAnimationFrame(() => {
-        updateVisible(false)
+      requestAnimationFrame(async () => {
+        // Await the fetch so we don't start overlapping requests
+        await updateVisible(false)
         ticking = false
+        
+        // If the user kept scrolling while we were fetching, run it again to catch up
+        if (pendingUpdate) {
+          pendingUpdate = false
+          scheduleUpdate()
+        }
       })
     }
   }

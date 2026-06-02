@@ -83,6 +83,37 @@ export const useUiStore = defineStore('ui', () => {
   // ── Loading states ─────────────────────────────────────────────────────
   const isLayoutLoading = ref(false)
 
+  // ── Fullscreen ─────────────────────────────────────────────────────────
+  const isFullscreen = ref(false)
+
+  async function initFullscreen() {
+    try {
+      const { getCurrentWindow } = await import('@tauri-apps/api/window')
+      const appWindow = getCurrentWindow()
+      isFullscreen.value = await appWindow.isFullscreen()
+    } catch {
+      isFullscreen.value = !!document.fullscreenElement
+    }
+  }
+
+  async function toggleFullscreen() {
+    try {
+      const { getCurrentWindow } = await import('@tauri-apps/api/window')
+      const appWindow = getCurrentWindow()
+      const current = await appWindow.isFullscreen()
+      await appWindow.setFullscreen(!current)
+      isFullscreen.value = !current
+    } catch {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(console.error)
+        isFullscreen.value = true
+      } else {
+        document.exitFullscreen().catch(console.error)
+        isFullscreen.value = false
+      }
+    }
+  }
+
   return {
     // theme
     theme, setTheme, cycleTheme, applyTheme,
@@ -98,5 +129,7 @@ export const useUiStore = defineStore('ui', () => {
     searchQuery, isSearching,
     // loading
     isLayoutLoading,
+    // fullscreen
+    isFullscreen, initFullscreen, toggleFullscreen,
   }
 })

@@ -111,12 +111,17 @@
       <button class="btn-icon" title="切换主题" @click="ui.cycleTheme()">
         {{ ui.theme === 'dark' ? '☀️' : ui.theme === 'light' ? '🌙' : '🖥️' }}
       </button>
-      <!-- Dev-only: clear all data -->
+      <!-- Dev-only: clear data -->
       <button
         class="btn-icon btn-danger-sm"
-        title="[开发] 清除所有数据"
-        @click="clearAll"
-      >🗑️ 清空</button>
+        title="[开发] 清空数据库"
+        @click="clearDb"
+      >🗑️ 数据</button>
+      <button
+        class="btn-icon btn-danger-sm"
+        title="[开发] 清空设置"
+        @click="clearSettings"
+      >🗑️ 设置</button>
     </div>
 
     <SettingsModal ref="settingsModalRef" />
@@ -133,6 +138,8 @@ import { useMediaStore } from '../../stores/mediaStore'
 import { useFolderTree } from '../../composables/useFolderTree'
 import SettingsModal from '../common/SettingsModal.vue'
 import type { DirNode } from '../../types/media'
+import { invoke } from '@tauri-apps/api/core'
+import { IPC } from '../../constants/ipc'
 
 const ui       = useUiStore()
 const scan     = useScanStore()
@@ -240,15 +247,25 @@ onMounted(async () => {
   }
 })
 
-async function clearAll() {
-  if (!confirm('确定清除所有数据吗？\n\n这将删除所有扫描根目录、媒体库记录、缩略图索引。\n本地文件不受影响。')) return
+async function clearDb() {
+  if (!confirm('确定清空数据库吗？\n\n这将删除所有扫描根目录、媒体库记录、缩略图索引。\n本地文件不受影响。')) return
   try {
-    await scan.clearAllData()
+    await scan.clearDatabase()
     folderTree.loadRoots([])
     media.loadStats()
-    ui.addToast('success', '数据已清除')
+    ui.addToast('success', '数据库已清空')
   } catch (e) {
-    ui.addToast('error', '清除失败: ' + e)
+    ui.addToast('error', '清空失败: ' + e)
+  }
+}
+
+async function clearSettings() {
+  if (!confirm('确定清空设置吗？\n\n这将重置主题、偏好设置等，并刷新页面。')) return
+  try {
+    await invoke(IPC.CLEAR_SETTINGS)
+    window.location.reload()
+  } catch (e) {
+    ui.addToast('error', '清空设置失败: ' + e)
   }
 }
 </script>

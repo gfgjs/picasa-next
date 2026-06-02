@@ -64,12 +64,13 @@ fn map_layout_item(row: &Row<'_>) -> rusqlite::Result<LayoutItem> {
         width:         row.get(1)?,
         height:        row.get(2)?,
         sort_datetime: row.get(3)?,
-        media_type:    row.get(4)?,
-        is_live_photo: row.get::<_, i64>(5)? != 0,
-        duration_ms:   row.get(6)?,
-        thumb_status:  row.get(7)?,
-        thumb_path:    row.get(8)?,
-        thumbhash:     row.get(9)?,
+        file_format:   row.get(4)?,
+        media_type:    row.get(5)?,
+        is_live_photo: row.get::<_, i64>(6)? != 0,
+        duration_ms:   row.get(7)?,
+        thumb_status:  row.get(8)?,
+        thumb_path:    row.get(9)?,
+        thumbhash:     row.get(10)?,
     })
 }
 
@@ -349,7 +350,7 @@ pub fn query_layout_items(
     filter: &MediaFilter,
 ) -> Result<Vec<LayoutItem>> {
     let mut sql = String::from(
-        "SELECT id, width, height, sort_datetime, media_type, is_live_photo,
+        "SELECT id, width, height, sort_datetime, file_format, media_type, is_live_photo,
                 duration_ms, thumb_status, thumb_path, thumbhash
          FROM media_items
          WHERE is_deleted=0 AND companion_of IS NULL",

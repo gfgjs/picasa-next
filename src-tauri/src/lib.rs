@@ -100,7 +100,8 @@ pub fn run() {
             ipc::scan_commands::list_scan_roots,
             ipc::scan_commands::start_scan,
             ipc::scan_commands::stop_scan,
-            ipc::scan_commands::clear_all_data,
+            ipc::scan_commands::clear_database,
+            ipc::scan_commands::clear_settings,
             // layout
             ipc::layout_commands::compute_layout,
             ipc::layout_commands::get_layout_rows,

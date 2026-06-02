@@ -122,12 +122,8 @@ pub async fn stop_scan(root_id: i64, state: State<'_, Arc<AppState>>) -> Result<
     Ok(())
 }
 
-/// [Dev] Clear all data — wipe every table and the thumbnail cache directory.
-///
-/// This is intended for development / QA resets only. It does not delete any
-/// original media files on disk.
 #[tauri::command]
-pub async fn clear_all_data(
+pub async fn clear_database(
     state: State<'_, Arc<AppState>>,
     app:   AppHandle,
 ) -> Result<()> {
@@ -142,8 +138,7 @@ pub async fn clear_all_data(
             "DELETE FROM image_meta;
              DELETE FROM media_items;
              DELETE FROM directories;
-             DELETE FROM scan_roots;
-             DELETE FROM app_config;"
+             DELETE FROM scan_roots;"
         )?;
         tx.commit()?;
         
@@ -167,6 +162,16 @@ pub async fn clear_all_data(
     // Reset the layout cache in memory
     *state.layout_cache.write().unwrap() = None;
 
-    info!("clear_all_data: all data wiped");
+    info!("clear_database: all media data wiped");
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn clear_settings(
+    state: State<'_, Arc<AppState>>,
+) -> Result<()> {
+    let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    conn.execute("DELETE FROM app_config", [])?;
+    info!("clear_settings: settings wiped");
     Ok(())
 }

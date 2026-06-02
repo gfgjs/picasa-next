@@ -3,6 +3,7 @@
     <div
       ref="gridRef"
       class="media-grid"
+      :class="{ 'is-scrolling': isScrolling }"
       @scroll.passive="onGridScroll"
     >
     <!-- Empty state -->
@@ -63,8 +64,10 @@
               :thumb-status="item.thumbStatus"
               :thumb-path="item.thumbPath"
               :thumbhash="item.thumbhash"
+              :file-format="item.fileFormat"
               :cache-dir="cacheDir"
               @request-thumb="onRequestThumb"
+              @cancel-thumb="onCancelThumb"
             />
           </div>
         </template>
@@ -111,6 +114,8 @@ const queue  = useRequestQueue()
 
 const gridRef  = ref<HTMLElement | null>(null)
 const cacheDir = ref('')
+const isScrolling = ref(false)
+let scrollTimeout: ReturnType<typeof setTimeout> | null = null
 
 // ── Virtual scroll ─────────────────────────────────────────────────────────
 
@@ -131,9 +136,16 @@ const {
 
 function onGridScroll(e: Event) {
   onScroll()
-  if (gridRef.value) {
-    scrollCache.set(getViewKey(), gridRef.value.scrollTop)
+  if (!isScrolling.value) {
+    isScrolling.value = true
   }
+  if (scrollTimeout !== null) clearTimeout(scrollTimeout)
+  scrollTimeout = setTimeout(() => {
+    isScrolling.value = false
+    if (gridRef.value) {
+      scrollCache.set(getViewKey(), gridRef.value.scrollTop)
+    }
+  }, 150)
 }
 
 function scrollGridToTop() {
@@ -184,6 +196,10 @@ onMounted(async () => {
 })
 
 // ── Thumbnail request handling ──────────────────────────────────────────────
+
+function onCancelThumb(id: number) {
+  queue.cancel(id)
+}
 
 async function onRequestThumb(id: number) {
   try {
@@ -279,6 +295,10 @@ watch(
   padding: 0;
   position: relative;
   overflow-anchor: none;
+}
+
+.media-grid.is-scrolling .media-card {
+  pointer-events: none !important;
 }
 
 .media-grid__content {

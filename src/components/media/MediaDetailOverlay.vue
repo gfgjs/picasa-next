@@ -71,7 +71,7 @@
 
           <!-- Center: file name -->
           <div class="detail-controls__center">
-            <span class="detail-controls__name">{{ detail.fileName }}</span>
+            <span class="detail-controls__name" :title="detail.fileName">{{ detail.fileName }}</span>
           </div>
 
           <!-- Right -->
@@ -98,7 +98,7 @@
             <div class="info-section">
               <div class="info-row">
                 <span class="info-label">文件名</span>
-                <span class="info-value">{{ detail.fileName }}</span>
+                <span class="info-value" :title="detail.fileName">{{ detail.fileName }}</span>
               </div>
               <div class="info-row">
                 <span class="info-label">文件大小</span>
@@ -387,6 +387,9 @@ async function toggleLive() {
   overflow: hidden;
   text-overflow: ellipsis;
   display: block;
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
 }
 
 /* ── Info sidebar ─────────────────────────────────────────────────────── */
@@ -402,6 +405,8 @@ async function toggleLive() {
   z-index: 12;
   display: flex;
   flex-direction: column;
+  user-select: text;
+  -webkit-user-select: text;
 }
 .detail-info__header {
   display: flex;
@@ -446,6 +451,9 @@ async function toggleLive() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
 }
 
 .rating-stars {

@@ -6,8 +6,10 @@ export const IPC = {
   ADD_SCAN_ROOT:    'add_scan_root',
   REMOVE_SCAN_ROOT: 'remove_scan_root',
   LIST_SCAN_ROOTS:  'list_scan_roots',
-  START_SCAN:       'start_scan',
-  STOP_SCAN:        'stop_scan',
+  START_SCAN:             'start_scan',
+  STOP_SCAN:              'stop_scan',
+  CLEAR_DATABASE:         'clear_database',
+  CLEAR_SETTINGS:         'clear_settings',
 
   // ── Layout ────────────────────────────────────────────────────────────
   COMPUTE_LAYOUT:   'compute_layout',

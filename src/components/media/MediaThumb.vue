@@ -5,12 +5,14 @@
     :style="thumbStyle"
     :class="{ loaded: isLoaded, 'media-thumb--placeholder': !isLoaded }"
   >
-    <!-- Placeholder blur -->
+    <!-- Placeholder solid color + file format text -->
     <div
-      v-if="!isLoaded && placeholderBg"
+      v-if="!isLoaded"
       class="media-thumb__placeholder"
-      :style="{ backgroundImage: placeholderBg }"
-    />
+      :style="{ backgroundColor: placeholderBgColor }"
+    >
+      <span v-if="fileFormat" class="media-thumb__ext">{{ fileFormat.toUpperCase() }}</span>
+    </div>
     <!-- Actual image -->
     <img
       v-if="displaySrc"
@@ -21,10 +23,7 @@
       loading="lazy"
       @error="onError"
     />
-    <!-- Empty state (no thumb yet) -->
-    <div v-if="!displaySrc && !placeholderBg" class="media-thumb__fallback">
-      <span>{{ mediaTypeIcon }}</span>
-    </div>
+
 
     <!-- Overlays -->
     <div class="media-thumb__overlays">
@@ -57,9 +56,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { convertFileSrc } from '@tauri-apps/api/core'
-import { thumbhashToBackgroundImage } from '../../utils/thumbhash'
+import { thumbhashToAverageColor } from '../../utils/thumbhash'
 import { formatDuration } from '../../utils/format'
 
 interface Props {
@@ -72,6 +71,7 @@ interface Props {
   thumbStatus:     number
   thumbPath?:      string | null
   thumbhash?:      number[] | null
+  fileFormat?:     string
   isFavorited?:    boolean
   isSelected?:     boolean
   isSelectionMode?: boolean
@@ -93,6 +93,7 @@ const emit = defineEmits<{
   (e: 'select', id: number): void
   (e: 'favorite', id: number): void
   (e: 'request-thumb', id: number): void
+  (e: 'cancel-thumb', id: number): void
 }>()
 
 const isLoaded      = ref(false)
@@ -106,16 +107,11 @@ const thumbStyle = computed(() => ({
   height: `${props.h}px`,
 }))
 
-const placeholderBg = computed(() =>
-  props.thumbhash ? thumbhashToBackgroundImage(props.thumbhash) : ''
+const placeholderBgColor = computed(() =>
+  props.thumbhash ? thumbhashToAverageColor(props.thumbhash) : 'var(--color-bg-elevated)'
 )
 
-const mediaTypeIcon = computed(() => {
-  if (props.mediaType === 'video')    return '🎬'
-  if (props.mediaType === 'audio')    return '🎵'
-  if (props.mediaType === 'document') return '📄'
-  return '🖼️'
-})
+
 
 async function loadThumb() {
   // thumb_status meanings:
@@ -135,12 +131,12 @@ async function loadThumb() {
       try {
         await img.decode()
       } catch (e) {
-        console.warn('MediaThumb decode() failed, falling back to DOM load', e)
+        // console.warn('MediaThumb decode() failed, falling back to DOM load', e)
       }
       displaySrc.value = src
       isLoaded.value   = true
     } catch (e) {
-      console.warn('Outer catch caught error for status 1:', e)
+      // console.warn('Outer catch caught error for status 1:', e)
     }
     return
   }
@@ -155,12 +151,12 @@ async function loadThumb() {
         try {
           await img.decode()
         } catch (e) {
-          console.warn('MediaThumb decode() failed, falling back to DOM load', e)
+          // console.warn('MediaThumb decode() failed, falling back to DOM load', e)
         }
         displaySrc.value = src
         isLoaded.value   = true
       } catch (e) {
-        console.warn('Outer catch caught error for status 3:', e)
+      // console.warn('Outer catch caught error for status 3:', e)
       }
       return
     } else {
@@ -208,6 +204,12 @@ function onError() {
 }
 
 onMounted(() => loadThumb())
+
+onBeforeUnmount(() => {
+  if (hasRequested.value && !isLoaded.value) {
+    emit('cancel-thumb', props.id)
+  }
+})
 </script>
 
 <style scoped>
@@ -228,10 +230,17 @@ onMounted(() => loadThumb())
 .media-thumb__placeholder {
   position: absolute;
   inset: 0;
-  background-size: cover;
-  background-position: center;
-  filter: blur(8px);
-  transform: scale(1.05); /* hide blur edges */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.media-thumb__ext {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.4);
+  letter-spacing: 1px;
 }
 
 .media-thumb__img {
@@ -242,15 +251,7 @@ onMounted(() => loadThumb())
   object-fit: cover;
 }
 
-.media-thumb__fallback {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 32px;
-  opacity: 0.4;
-}
+
 
 /* ── Overlays ─────────────────────────────────────────────────────────── */
 .media-thumb__overlays {

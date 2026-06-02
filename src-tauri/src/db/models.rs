@@ -92,6 +92,7 @@ pub struct LayoutItem {
     pub width:         i64,
     pub height:        i64,
     pub sort_datetime: i64,
+    pub file_format:   String,
     pub media_type:    String,
     pub is_live_photo: bool,
     pub duration_ms:   Option<i64>,

@@ -118,6 +118,27 @@ function thumbHashToRGBA(hash: Uint8Array): { rgba: Uint8Array; w: number; h: nu
 }
 
 /**
+ * Extract the average RGB color from a ThumbHash.
+ * This is O(1) and extremely fast, ideal for solid color placeholders.
+ */
+export function thumbhashToAverageColor(hash: number[] | Uint8Array): string {
+  const bytes = hash instanceof Uint8Array ? hash : new Uint8Array(hash)
+  if (bytes.length < 3) return '#333333'
+  
+  const header = bytes[0] | (bytes[1] << 8) | (bytes[2] << 16)
+  const l = (header & 63) / 63
+  const p = ((header >> 6) & 63) / 31.5 - 1
+  const q = ((header >> 12) & 63) / 31.5 - 1
+  
+  const r = l + p + q
+  const g = l - p
+  const b = l - q
+  
+  const toHex = (c: number) => Math.max(0, Math.min(255, Math.round(c * 255))).toString(16).padStart(2, '0')
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`
+}
+
+/**
  * Create a CSS blur placeholder string from a thumbhash.
  * Returns a `background-image: url(...)` value.
  */
@@ -125,3 +146,55 @@ export function thumbhashToBackgroundImage(hash: number[] | Uint8Array): string 
   const url = thumbhashToDataURL(hash)
   return url ? `url(${url})` : ''
 }
+
+// ── Async / Idle Queue for Thumbhash Generation ───────────────────────────
+
+const bgCache = new Map<string, string>()
+const pendingQueue: { hash: number[] | Uint8Array, key: string, resolve: (val: string) => void }[] = []
+let isIdleScheduled = false
+
+function processIdleQueue(deadline: IdleDeadline) {
+  // Process tasks as long as we have at least 2ms remaining in the idle frame
+  while (pendingQueue.length > 0 && deadline.timeRemaining() > 2) {
+    const task = pendingQueue.shift()!
+    if (bgCache.has(task.key)) {
+      task.resolve(bgCache.get(task.key)!)
+    } else {
+      const bg = thumbhashToBackgroundImage(task.hash)
+      bgCache.set(task.key, bg)
+      task.resolve(bg)
+    }
+  }
+
+  if (pendingQueue.length > 0) {
+    window.requestIdleCallback(processIdleQueue)
+  } else {
+    isIdleScheduled = false
+  }
+}
+
+/**
+ * Lazily generates the thumbhash background image during browser idle periods.
+ * This completely eliminates main-thread stuttering during fast scrolling.
+ */
+export function getThumbhashBgAsync(hash: number[] | Uint8Array): Promise<string> {
+  const bytes = hash instanceof Uint8Array ? hash : new Uint8Array(hash)
+  const key = bytes.join(',')
+  
+  if (bgCache.has(key)) {
+    return Promise.resolve(bgCache.get(key)!)
+  }
+
+  return new Promise(resolve => {
+    pendingQueue.push({ hash: bytes, key, resolve })
+    if (!isIdleScheduled) {
+      isIdleScheduled = true
+      if ('requestIdleCallback' in window) {
+        window.requestIdleCallback(processIdleQueue)
+      } else {
+        setTimeout(() => processIdleQueue({ timeRemaining: () => 50, didTimeout: false }), 1)
+      }
+    }
+  })
+}
+

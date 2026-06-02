@@ -32,11 +32,28 @@
 </template>
 
 <script setup lang="ts">
+import { onMounted, onBeforeUnmount } from 'vue'
 import { useUiStore } from '../../stores/uiStore'
 import { useSidebarResize } from '../../composables/useSidebarResize'
 
 const ui      = useUiStore()
 const resizer = useSidebarResize()
+
+function onKeyDown(e: KeyboardEvent) {
+  if (e.key === 'F11') {
+    e.preventDefault()
+    ui.toggleFullscreen()
+  }
+}
+
+onMounted(() => {
+  ui.initFullscreen()
+  window.addEventListener('keydown', onKeyDown)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKeyDown)
+})
 </script>
 
 <style scoped>

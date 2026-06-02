@@ -33,6 +33,15 @@
 
   <!-- Right controls -->
   <div class="toolbar__right">
+    <!-- Fullscreen -->
+    <button
+      class="btn-icon"
+      :title="ui.isFullscreen ? '退出全屏 (F11)' : '全屏 (F11)'"
+      @click="ui.toggleFullscreen()"
+    >
+      {{ ui.isFullscreen ? '🗗' : '🖵' }}
+    </button>
+
     <!-- Search -->
     <div class="toolbar__search-wrap" :class="{ focused: isSearchFocused }">
       <span class="toolbar__search-icon">🔍</span>

@@ -96,8 +96,8 @@ export const useScanStore = defineStore('scan', () => {
     return progressMap.value[rootId] ?? null
   }
 
-  async function clearAllData() {
-    await invoke(IPC.CLEAR_ALL_DATA)
+  async function clearDatabase() {
+    await invoke(IPC.CLEAR_DATABASE)
     scanRoots.value   = []
     progressMap.value = {}
   }
@@ -106,6 +106,6 @@ export const useScanStore = defineStore('scan', () => {
     scanRoots, progressMap, isLoadingRoots,
     hasScanRoots, isAnyScanRunning,
     loadScanRoots, addScanRoot, removeScanRoot,
-    startScan, stopScan, getProgress, clearAllData,
+    startScan, stopScan, getProgress, clearDatabase,
   }
 })

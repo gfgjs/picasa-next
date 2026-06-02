@@ -70,6 +70,11 @@ custom-protocol = ["tauri/custom-protocol"]
 [profile.dev]
 incremental = true
 
+# Compile all dependencies with full optimizations even in dev mode
+# 在开发模式下也使用完全优化来编译所有依赖库（极大提升图片解码速度）
+[profile.dev.package."*"]
+opt-level = 3
+
 [profile.release]
 panic    = "abort"
 codegen-units = 1

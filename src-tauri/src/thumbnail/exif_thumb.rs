@@ -40,9 +40,13 @@ pub fn try_exif_thumb(
 
     let (w, h) = (img.width(), img.height());
 
-    // Only use if the embedded thumb is large enough
-    // 仅当内嵌的缩略图足够大时使用
-    if w < target_size && h < target_size {
+    // Only use if the embedded thumb is reasonably large (e.g. >= 120px on longest edge).
+    // Standard camera EXIF thumbnails are typically 160x120 or 256x160.
+    // If the target_size is 300, we accept upscaling these to avoid a massive full decode.
+    // 仅当内嵌的缩略图足够大时（例如，最长边 >= 120px）才使用。
+    // 标准相机的 EXIF 缩略图通常是 160x120 或 256x160。
+    // 如果 target_size 是 300，我们允许放大它们以避免进行代价极高的全量解码。
+    if w.max(h) < 120 {
         return None;
     }
 

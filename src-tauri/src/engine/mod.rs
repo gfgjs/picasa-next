@@ -5,6 +5,7 @@
 
 pub mod image_rs;
 pub mod traits;
+pub mod gpu;
 // pub mod heic; // Phase 2
 // pub mod heic; // 阶段 2
 // pub mod raw;  // Phase 2

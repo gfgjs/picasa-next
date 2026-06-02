@@ -26,7 +26,7 @@ use crate::db::queries::{get_item_path_info, get_media_item, update_thumb_result
 use crate::engine::EngineArena;
 use crate::error::{AppError, Result};
 use crate::thumbnail::cache::{ensure_thumb_dir, thumb_db_path, thumb_path};
-use crate::thumbnail::exif_thumb::{encode_as_jpeg, encode_as_webp};
+
 use crate::thumbnail::thumbhash::generate_thumbhash;
 
 /// Configuration for thumbnail generation.
@@ -36,6 +36,8 @@ pub struct ThumbConfig {
     pub cache_dir:       std::path::PathBuf,
     pub size:            u32,
     pub skip_max_bytes:  u64,
+    pub strategy:        String,
+    pub gpu_engine:      String,
 }
 
 /// Generate a thumbnail for a single media item.
@@ -79,9 +81,16 @@ pub fn generate_thumbnail(
     let web_safe_formats = ["jpg", "jpeg", "png", "webp", "gif", "svg", "avif"];
     let is_web_safe = web_safe_formats.contains(&item.file_format.to_lowercase().as_str());
 
-    if is_web_safe && item.file_size as u64 <= config.skip_max_bytes && item.media_type == "image" {
+    let mut is_direct = false;
+    if config.strategy == "direct" && is_web_safe && item.media_type == "image" {
+        is_direct = true;
+    } else if is_web_safe && item.file_size as u64 <= config.skip_max_bytes && item.media_type == "image" {
+        is_direct = true;
+    }
+
+    if is_direct {
         let mut hash = None;
-        if item.file_size <= 500 * 1024 {
+        if config.strategy != "direct" && item.file_size <= 500 * 1024 {
             // Only fall back to full decode for ThumbHash if the file is genuinely small
             // (e.g., < 500KB). Full decoding large files just for a ThumbHash causes CPU spikes.
             // 只有当文件确实很小（例如 < 500KB）时，才回退到完整解码以获取 ThumbHash。
@@ -110,7 +119,17 @@ pub fn generate_thumbnail(
     // ── 3. 根据 media_type 分发 ────────────────────────────────────────────
     match item.media_type.as_str() {
         "image" => {
-            generate_image_thumb(writer, arena, item_id, item.cache_key, abs_path, &item.file_format, config)
+            if config.strategy == "gpu" {
+                match generate_gpu_image_thumb(writer, item_id, item.cache_key, abs_path, &item.file_format, config) {
+                    Ok(res) => Ok(res),
+                    Err(e) => {
+                        tracing::warn!("GPU generation failed for {:?}, falling back to CPU: {}", abs_path.file_name(), e);
+                        generate_image_thumb(writer, arena, item_id, item.cache_key, abs_path, &item.file_format, config)
+                    }
+                }
+            } else {
+                generate_image_thumb(writer, arena, item_id, item.cache_key, abs_path, &item.file_format, config)
+            }
         }
         _ => {
             // Phase 2: video/audio/document — mark as failed for now
@@ -141,8 +160,8 @@ fn generate_image_thumb(
         .ok_or_else(|| AppError::UnsupportedFormat(format.to_string()))?;
 
     let start_total = std::time::Instant::now();
-    let mut final_webp = None;
-    let mut final_hash = None;
+    let final_webp;
+    let final_hash;
 
     // Try fast EXIF path first
     // 首先尝试快速 EXIF 路径
@@ -156,7 +175,7 @@ fn generate_image_thumb(
         // Full decode fallback
         // 完整解码回退
         let start_decode = std::time::Instant::now();
-        let mut decoded = engine.decode(abs_path)?;
+        let mut decoded = engine.decode(abs_path, None)?;
         tracing::debug!("engine.decode for {:?} took {:?}", abs_path.file_name(), start_decode.elapsed());
 
         let start_resize = std::time::Instant::now();
@@ -209,6 +228,11 @@ fn generate_image_thumb(
 }
 
 fn resize_to_rgba(pixels: &mut [u8], w: u32, h: u32, target: u32) -> Result<image::RgbaImage> {
+    if w <= target && h <= target {
+        return image::RgbaImage::from_raw(w, h, pixels.to_vec())
+            .ok_or_else(|| AppError::Engine("resize buffer mismatch".into()));
+    }
+
     use fast_image_resize::{images::Image as FirImage, Resizer, ResizeOptions};
     use fast_image_resize::pixels::PixelType;
 
@@ -251,6 +275,68 @@ fn generate_thumbhash_from_file(
     let Some(engine) = arena.engine_for(format) else {
         return Ok(None);
     };
-    let decoded = engine.decode(path)?;
+    let decoded = engine.decode(path, None)?;
     Ok(generate_thumbhash(&decoded).ok())
+}
+
+fn generate_gpu_image_thumb(
+    writer: &Mutex<Connection>,
+    item_id: i64,
+    cache_key: i64,
+    abs_path: &Path,
+    format: &str,
+    config: &ThumbConfig,
+) -> Result<ThumbResult> {
+    let gpu_engine = crate::engine::gpu::get_gpu_engine(&config.gpu_engine)
+        .ok_or_else(|| AppError::Engine(format!("Unknown GPU engine: {}", config.gpu_engine)))?;
+
+    if !gpu_engine.can_handle(format) {
+        return Err(AppError::UnsupportedFormat(format.to_string()));
+    }
+
+    let start_total = std::time::Instant::now();
+    
+    let start_decode = std::time::Instant::now();
+    let mut decoded = gpu_engine.decode(abs_path, Some(config.size))?;
+    tracing::debug!("GPU decode for {:?} took {:?}", abs_path.file_name(), start_decode.elapsed());
+
+    let start_resize = std::time::Instant::now();
+    let rgba_img = resize_to_rgba(&mut decoded.pixels, decoded.width, decoded.height, config.size)?;
+    tracing::debug!("resize_to_rgba (CPU) for {:?} took {:?}", abs_path.file_name(), start_resize.elapsed());
+
+    let start_hash = std::time::Instant::now();
+    let decoded_for_hash = crate::engine::traits::DecodedImage {
+        pixels: rgba_img.as_raw().clone(),
+        width: rgba_img.width(),
+        height: rgba_img.height(),
+    };
+    let final_hash = generate_thumbhash(&decoded_for_hash).ok();
+    tracing::debug!("generate_thumbhash for {:?} took {:?}", abs_path.file_name(), start_hash.elapsed());
+
+    let start_encode = std::time::Instant::now();
+    let webp = crate::thumbnail::exif_thumb::encode_as_webp(&rgba_img, rgba_img.width(), rgba_img.height())
+        .or_else(|_| crate::thumbnail::exif_thumb::encode_as_jpeg(&rgba_img))
+        .map_err(|_| AppError::Engine("WebP encode failed".into()))?;
+    tracing::debug!("encode for {:?} took {:?}", abs_path.file_name(), start_encode.elapsed());
+
+    ensure_thumb_dir(&config.cache_dir, config.size, cache_key)
+        .map_err(|e| AppError::Io(e.to_string()))?;
+    let disk_path = thumb_path(&config.cache_dir, config.size, cache_key);
+    std::fs::write(&disk_path, &webp).map_err(AppError::from)?;
+
+    let db_path = thumb_db_path(config.size, cache_key);
+    
+    {
+        let conn = writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        update_thumb_result(&conn, item_id, 1, Some(&db_path), final_hash.as_deref())?;
+    }
+
+    tracing::debug!("Total generate_gpu_image_thumb for {:?} took {:?}", abs_path.file_name(), start_total.elapsed());
+
+    Ok(ThumbResult {
+        item_id,
+        thumb_status: 1,
+        thumb_path: Some(db_path),
+        thumbhash: final_hash,
+    })
 }

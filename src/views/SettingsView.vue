@@ -64,6 +64,32 @@
 
         <div class="settings-card__item">
           <div class="settings-card__info">
+            <div class="settings-card__label">解码引擎策略</div>
+            <div class="settings-card__desc">选择缩略图生成使用的硬件加速策略。源文件直显性能最佳但会占用更多内存。</div>
+          </div>
+          <div class="select-wrap">
+            <select v-model="thumbStrategy" @change="saveThumbStrategy" class="select">
+              <option value="cpu">CPU (最稳定)</option>
+              <option value="gpu">GPU (高性能)</option>
+              <option value="direct">源文件直显 (极限性能)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="settings-card__item" v-if="thumbStrategy === 'gpu'">
+          <div class="settings-card__info">
+            <div class="settings-card__label">GPU 引擎选择</div>
+            <div class="settings-card__desc">选择系统调用 API 进行硬件解码。</div>
+          </div>
+          <div class="select-wrap">
+            <select v-model="gpuEngine" @change="saveGpuEngine" class="select">
+              <option value="wic">WIC (Direct2D)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="settings-card__item">
+          <div class="settings-card__info">
             <div class="settings-card__label">{{ $t('settings.thumbCacheDir') || '缓存目录' }}</div>
             <div 
               class="settings-card__desc clickable-path" 
@@ -274,6 +300,9 @@ const uiFontSize = ref(16)
 const enableHoverScale = ref(true)
 const logLevel = ref('info')
 
+const thumbStrategy = ref('cpu')
+const gpuEngine = ref('wic')
+
 const thumbGenPercent = computed(() => {
   const { generated, total } = scan.thumbGenProgress
   if (!total) return 0
@@ -284,6 +313,18 @@ onMounted(async () => {
   try {
     const val1 = await invoke<string | null>('get_app_config', { key: 'thumb_skip_max_kb' })
     if (val1) thumbSkipMaxKb.value = parseInt(val1, 10)
+
+    const strat = await invoke<string | null>('get_app_config', { key: 'thumb_strategy' })
+    if (strat) {
+      thumbStrategy.value = strat
+      ui.thumbStrategy = strat
+    }
+
+    const gpu = await invoke<string | null>('get_app_config', { key: 'gpu_engine' })
+    if (gpu) {
+      gpuEngine.value = gpu
+      ui.gpuEngine = gpu
+    }
 
     const val2 = await invoke<string | null>('get_app_config', { key: 'timeline_scroll_width' })
     if (val2) timelineScrollWidth.value = parseInt(val2, 10)
@@ -323,6 +364,17 @@ async function saveConfig(key: string, value: string) {
   } catch (e) {
     ui.addToast('error', t('settings.saveFailed', { error: String(e) }) || `保存失败: ${e}`)
   }
+}
+
+async function saveThumbStrategy() {
+  await saveConfig('thumb_strategy', thumbStrategy.value)
+  ui.setThumbStrategy(thumbStrategy.value)
+  ui.addToast('success', '解码策略已修改，将在加载新图片时生效')
+}
+
+async function saveGpuEngine() {
+  await saveConfig('gpu_engine', gpuEngine.value)
+  ui.setGpuEngine(gpuEngine.value)
 }
 
 async function saveThumbSize() {

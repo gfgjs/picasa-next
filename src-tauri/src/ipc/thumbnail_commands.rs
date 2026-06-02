@@ -127,6 +127,14 @@ pub async fn start_full_thumbnail_generation(
     on_progress: tauri::ipc::Channel<FullThumbProgressPayload>,
     state: State<'_, Arc<AppState>>,
 ) -> Result<()> {
+    // Force reset all thumbnail statuses to 0 to always regenerate everything
+    // 强制将所有缩略图状态重置为 0，以便始终重新生成所有内容
+    {
+        let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        conn.execute("UPDATE media_items SET thumb_status = 0 WHERE is_deleted = 0", [])
+            .map_err(|e| AppError::Db(e.to_string()))?;
+    }
+
     // Check total needed
     let total = {
         let pool = state.db_read_pool.get().map_err(AppError::from)?;

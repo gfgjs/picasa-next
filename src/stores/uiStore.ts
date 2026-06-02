@@ -46,6 +46,21 @@ export const useUiStore = defineStore('ui', () => {
     setTheme(next[theme.value])
   }
 
+  // ── Thumbnail Strategy ───────────────────────────────────────────────────
+  // ── 缩略图生成策略 ────────────────────────────────────────────────────────
+  const thumbStrategy = ref<string>('cpu')
+  const gpuEngine = ref<string>('wic')
+
+  function setThumbStrategy(strategy: string) {
+    thumbStrategy.value = strategy
+    invoke(IPC.SET_APP_CONFIG, { key: 'thumb_strategy', value: strategy }).catch(console.error)
+  }
+
+  function setGpuEngine(engine: string) {
+    gpuEngine.value = engine
+    invoke(IPC.SET_APP_CONFIG, { key: 'gpu_engine', value: engine }).catch(console.error)
+  }
+
   // ── Sidebar ────────────────────────────────────────────────────────────
   // ── 侧边栏 ────────────────────────────────────────────────────────────
   const sidebarWidth = ref(260)
@@ -143,6 +158,10 @@ export const useUiStore = defineStore('ui', () => {
     // 主题与语言
     theme, setTheme, cycleTheme, applyTheme,
     language, applyLanguage, setLanguage,
+    // thumbnail strategy
+    // 缩略图生成策略
+    thumbStrategy, setThumbStrategy,
+    gpuEngine, setGpuEngine,
     // sidebar
     // 侧边栏
     sidebarWidth, sidebarCollapsed, setSidebarWidth, persistSidebarWidth,

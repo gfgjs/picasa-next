@@ -41,6 +41,12 @@ pub async fn set_app_config(key: String, value: String, state: State<'_, Arc<App
         let mut config = state.thumb_config.write().unwrap();
         config.cache_dir = std::path::PathBuf::from(&value);
         std::fs::create_dir_all(&config.cache_dir).unwrap_or_default();
+    } else if key == "thumb_strategy" {
+        let mut config = state.thumb_config.write().unwrap();
+        config.strategy = value;
+    } else if key == "gpu_engine" {
+        let mut config = state.thumb_config.write().unwrap();
+        config.gpu_engine = value;
     }
 
     Ok(())

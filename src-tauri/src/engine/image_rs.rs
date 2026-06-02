@@ -23,7 +23,7 @@ impl ImageEngine for ImageRsEngine {
         &["jpg", "jpeg", "png", "webp", "bmp", "gif", "tif", "tiff"]
     }
 
-    fn decode(&self, file_path: &Path) -> Result<DecodedImage, AppError> {
+    fn decode(&self, file_path: &Path, _target_size: Option<u32>) -> Result<DecodedImage, AppError> {
         let img = ImageReader::open(file_path)
             .map_err(|e| AppError::Engine(e.to_string()))?
             .with_guessed_format()

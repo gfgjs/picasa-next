@@ -29,7 +29,7 @@ pub trait ImageEngine: Send + Sync {
 
     /// Fully decode the image at `file_path` into RGBA pixels.
     /// 将 `file_path` 处的图像完全解码为 RGBA 像素。
-    fn decode(&self, file_path: &Path) -> Result<DecodedImage, AppError>;
+    fn decode(&self, file_path: &Path, target_size: Option<u32>) -> Result<DecodedImage, AppError>;
 
     /// Attempt to extract an embedded thumbnail (e.g. EXIF JPEG thumbnail).
     /// 尝试提取嵌入的缩略图（例如 EXIF JPEG 缩略图）。

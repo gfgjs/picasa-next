@@ -61,6 +61,8 @@ impl AppState {
         log_dir: PathBuf,
         thumb_size: u32,
         thumb_skip_max_kb: u64,
+        thumb_strategy: String,
+        gpu_engine: String,
     ) -> Self {
         Self {
             db_writer,
@@ -72,6 +74,8 @@ impl AppState {
                 cache_dir,
                 size: thumb_size,
                 skip_max_bytes: thumb_skip_max_kb * 1024,
+                strategy: thumb_strategy,
+                gpu_engine,
             }),
             thumb_gen_token: Mutex::new(None),
             cancelled_thumb_ids: Mutex::new(HashSet::new()),

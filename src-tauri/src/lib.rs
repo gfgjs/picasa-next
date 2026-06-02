@@ -61,7 +61,7 @@ pub fn run() {
 
             // ── Read persisted config ─────────────────────────────────────
             // ── 读取持久化配置 ─────────────────────────────────────
-            let (thumb_size, thumb_skip_max_kb, custom_cache_dir, log_level, custom_log_dir) = {
+            let (thumb_size, thumb_skip_max_kb, thumb_strategy, gpu_engine, custom_cache_dir, log_level, custom_log_dir) = {
                 let pool = db_read_pool.get().expect("Pool error");
                 let size: u32 = get_config(&pool, "thumb_size")
                     .ok()
@@ -73,6 +73,14 @@ pub fn run() {
                     .flatten()
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(200);
+                let strategy: String = get_config(&pool, "thumb_strategy")
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| "cpu".to_string());
+                let gpu_eng: String = get_config(&pool, "gpu_engine")
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| "wic".to_string());
                 let cache_dir: Option<String> = get_config(&pool, "thumb_cache_dir")
                     .ok()
                     .flatten();
@@ -83,7 +91,7 @@ pub fn run() {
                 let l_dir: Option<String> = get_config(&pool, "log_dir")
                     .ok()
                     .flatten();
-                (size, skip, cache_dir, lvl, l_dir)
+                (size, skip, strategy, gpu_eng, cache_dir, lvl, l_dir)
             };
 
             let cache_dir = custom_cache_dir
@@ -157,6 +165,8 @@ pub fn run() {
                 log_dir,
                 thumb_size,
                 thumb_skip_max_kb,
+                thumb_strategy,
+                gpu_engine,
             );
 
             app.manage(Arc::new(app_state));

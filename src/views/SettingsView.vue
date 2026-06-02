@@ -241,7 +241,6 @@ import { useMediaStore } from '../stores/mediaStore'
 import { useI18n } from 'vue-i18n'
 import { X, Database, Paintbrush, RotateCcw } from '@lucide/vue'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
-import { open as shellOpen } from '@tauri-apps/plugin-shell'
 import { IPC } from '../constants/ipc'
 
 const ui = useUiStore()
@@ -328,7 +327,7 @@ async function changeCacheDir() {
 async function openDirectory(path: string) {
   if (!path) return
   try {
-    await shellOpen(path)
+    await invoke('open_directory', { path })
   } catch (e) {
     ui.addToast('error', `无法打开目录: ${e}`)
   }

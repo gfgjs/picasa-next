@@ -48,6 +48,37 @@ pub async fn show_in_explorer(item_id: i64, state: State<'_, Arc<AppState>>) -> 
     Ok(())
 }
 
+/// Open an arbitrary directory in the OS file explorer.
+/// 在操作系统文件资源管理器中打开任意目录。
+#[tauri::command]
+pub async fn open_directory(path: String) -> Result<()> {
+    info!("open_directory: {path}");
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(&path.replace('/', "\\"))
+            .spawn()
+            .map_err(AppError::from)?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&path)
+            .spawn()
+            .map_err(AppError::from)?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&path)
+            .spawn()
+            .map_err(AppError::from)?;
+    }
+
+    Ok(())
+}
+
 /// Move items to the system trash (Phase 2 — stub for now).
 /// 将项目移至系统垃圾桶（阶段 2 — 暂时为存根）。
 #[tauri::command]

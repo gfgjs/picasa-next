@@ -7,10 +7,10 @@
           :key="toast.id"
           class="toast"
           :class="`toast--${toast.type}`"
-          @click="ui.removeToast(toast.id)"
         >
           <component :is="iconMap[toast.type]" :size="16" class="toast__icon" />
           <span class="toast__msg">{{ toast.message }}</span>
+          <X :size="14" class="toast__close" @click="ui.removeToast(toast.id)" />
         </div>
       </TransitionGroup>
     </div>
@@ -47,11 +47,26 @@ const iconMap: Record<string, any> = { success: Check, error: X, warning: AlertT
   font-size: var(--font-size-sm);
   font-weight: 500;
   pointer-events: auto;
-  cursor: pointer;
+  cursor: default;
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   box-shadow: var(--shadow-lg);
-  max-width: 360px;
+  max-width: 460px;
+  user-select: text;
+}
+.toast__msg {
+  flex-grow: 1;
+  word-break: break-all;
+}
+.toast__close {
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+  flex-shrink: 0;
+  margin-left: 8px;
+}
+.toast__close:hover {
+  opacity: 1;
 }
 .toast--success { background: rgba(52, 199, 89, 0.9);  color: #fff; }
 .toast--error   { background: rgba(255, 59, 48, 0.9);  color: #fff; }

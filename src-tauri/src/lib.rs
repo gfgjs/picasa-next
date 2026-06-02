@@ -179,6 +179,7 @@ pub fn run() {
             // system
             // system
             ipc::system_commands::show_in_explorer,
+            ipc::system_commands::open_directory,
             ipc::system_commands::move_to_trash,
         ])
         .run(tauri::generate_context!())

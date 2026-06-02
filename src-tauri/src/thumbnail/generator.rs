@@ -231,9 +231,12 @@ fn resize_to_rgba(pixels: &mut [u8], w: u32, h: u32, target: u32) -> Result<imag
 
     let mut dst = FirImage::new(new_w.max(1), new_h.max(1), PixelType::U8x4);
 
+    use fast_image_resize::{ResizeAlg, FilterType};
+    let options = ResizeOptions::new().resize_alg(ResizeAlg::Convolution(FilterType::Bilinear));
+
     let mut resizer = Resizer::new();
     resizer
-        .resize(&src, &mut dst, &ResizeOptions::default())
+        .resize(&src, &mut dst, &options)
         .map_err(|e| AppError::Engine(e.to_string()))?;
 
     image::RgbaImage::from_raw(new_w.max(1), new_h.max(1), dst.into_vec())

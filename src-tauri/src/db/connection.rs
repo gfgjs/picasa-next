@@ -45,7 +45,7 @@ fn apply_pragmas(conn: &Connection) -> Result<()> {
 /// Open the write connection (read-write, serialised access via `Mutex`).
 /// 打开写入连接（读写，通过 `Mutex` 串行化访问）。
 pub fn create_write_connection(db_path: &Path) -> Result<DbWriter> {
-    info!("Opening write connection at {:?}", db_path);
+    info!("Opening write connection at {:?} | 正在 {:?} 建立数据库写连接", db_path, db_path);
     let conn = Connection::open(db_path)?;
     apply_pragmas(&conn)?;
     debug!("Write connection PRAGMAs applied");
@@ -73,8 +73,8 @@ impl r2d2::CustomizeConnection<Connection, rusqlite::Error> for ReadPoolCustomis
 /// `pool_size`：桌面端为 4，移动端为 2（由调用者决定）。
 pub fn create_read_pool(db_path: &Path, pool_size: u32) -> Result<DbPool> {
     info!(
-        "Creating read pool (size={}) at {:?}",
-        pool_size, db_path
+        "Opening read pool at {:?} with max_size={} | 正在 {:?} 建立读连接池，最大连接数={}",
+        db_path, pool_size, db_path, pool_size
     );
 
     let manager = SqliteConnectionManager::file(db_path).with_flags(

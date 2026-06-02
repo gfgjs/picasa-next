@@ -104,9 +104,6 @@ pub fn run() {
                 .filename_suffix("log")
                 .build(&log_dir)
                 .expect("Failed to initialize rolling file appender");
-            let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
-            // Leak the guard so the background writer lives until the process exits
-            Box::leak(Box::new(guard));
 
             let env_filter_term = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&log_level));
             let env_filter_file = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&log_level));
@@ -119,14 +116,14 @@ pub fn run() {
                 )
                 .with(
                     tracing_subscriber::fmt::layer()
-                        .with_writer(non_blocking)
+                        .with_writer(file_appender)
                         .with_ansi(false)
                         .with_filter(env_filter_file)
                 )
                 .init();
 
-            info!("Picasa Next starting up, database path: {:?}", db_path);
-            info!("Log level set to: {}", log_level);
+            info!("Picasa Next starting up, database path: {:?} | Picasa Next 正在启动，数据库路径: {:?}", db_path, db_path);
+            info!("Log level set to: {} | 日志级别已设置为: {}", log_level, log_level);
 
             // ── Build AppState ─────────────────────────────────────────────
             // ── 构建 AppState ─────────────────────────────────────────────
@@ -140,7 +137,7 @@ pub fn run() {
             );
 
             app.manage(Arc::new(app_state));
-            info!("AppState initialised");
+            info!("AppState initialised | 应用状态 (AppState) 初始化完成");
             Ok(())
         })
         // ── IPC command handlers ───────────────────────────────────────────

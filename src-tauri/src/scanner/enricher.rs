@@ -66,7 +66,7 @@ pub fn run_enrichment(
     cancel: &CancellationToken,
 ) -> Result<()> {
     let started = std::time::Instant::now();
-    info!("Enrichment started: root_id={root_id}");
+    info!("Enrichment started: root_id={root_id} | 增量补全开始: root_id={root_id}");
 
     // ── Count total unenriched items ──────────────────────────────────────
     // ── 计算未丰富信息的项目总数 ──────────────────────────────────────
@@ -82,7 +82,7 @@ pub fn run_enrichment(
         )?
     };
 
-    info!("Enrichment: {total} items to process for root_id={root_id}");
+    info!("Enrichment: {total} items to process for root_id={root_id} | 增量补全: root_id={root_id} 共有 {total} 项待处理");
 
     let mut enriched_total: i64 = 0;
 
@@ -227,7 +227,7 @@ pub fn run_enrichment(
     }
 
     let elapsed_ms = started.elapsed().as_millis() as u64;
-    info!("Enrichment complete: root_id={root_id} enriched={enriched_total} elapsed={elapsed_ms}ms");
+    info!("Enrichment complete: root_id={root_id} enriched={enriched_total} elapsed={elapsed_ms}ms | 增量补全完成: root_id={root_id} 补全={enriched_total} 耗时={elapsed_ms}ms");
 
     let _ = app.emit(
         "enrichment:completed",

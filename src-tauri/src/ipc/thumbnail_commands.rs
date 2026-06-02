@@ -75,7 +75,7 @@ pub async fn batch_request_thumbnails(
         }
     }
 
-    tracing::info!("batch_request_thumbnails: total={} needs_gen={}", item_ids.len(), needs_gen.len());
+    tracing::info!("batch_request_thumbnails: total={} needs_gen={} | 批量请求缩略图: 总计={} 需要生成={}", item_ids.len(), needs_gen.len(), item_ids.len(), needs_gen.len());
 
     if !needs_gen.is_empty() {
         let config = config.clone();
@@ -101,7 +101,7 @@ pub async fn batch_request_thumbnails(
                         }
                     }
                 });
-            tracing::info!("batch_request_thumbnails: finished parallel block");
+            tracing::info!("batch_request_thumbnails: finished parallel block | 批量生成缩略图并行块完成");
         })
         .await
         .map_err(|e| AppError::Io(e.to_string()))?;
@@ -194,7 +194,7 @@ pub async fn start_full_thumbnail_generation(
                         }
                     }
 
-                    tracing::info!("Full gen: processing id={} ({})", id, filename);
+                    tracing::info!("Full gen: processing id={} ({}) | 全量生成: 处理中 id={} ({})", id, filename, id, filename);
 
                     let current = generated_count.load(std::sync::atomic::Ordering::Relaxed);
                     let _ = on_progress.send(FullThumbProgressPayload {
@@ -226,7 +226,7 @@ pub async fn start_full_thumbnail_generation(
                 }
             }
             
-            tracing::info!("Full gen: batch completed, generated_count={}", generated_count.load(std::sync::atomic::Ordering::Relaxed));
+            tracing::info!("Full gen: batch completed, generated_count={} | 全量生成: 批次完成，已生成={}", generated_count.load(std::sync::atomic::Ordering::Relaxed), generated_count.load(std::sync::atomic::Ordering::Relaxed));
 
             // Update in-memory layout cache
             if !successful_results.is_empty() {
@@ -283,7 +283,7 @@ pub async fn start_full_thumbnail_generation(
 
 #[tauri::command]
 pub fn stop_full_thumbnail_generation(state: State<'_, Arc<AppState>>) -> Result<()> {
-    tracing::info!("User action: Stopping full thumbnail generation");
+    tracing::info!("User action: Stopping full thumbnail generation | 用户操作：停止全量缩略图生成");
     state.cancel_thumb_gen();
     Ok(())
 }

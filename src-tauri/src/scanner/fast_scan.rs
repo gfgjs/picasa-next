@@ -187,7 +187,7 @@ pub fn run_fast_scan(
     cancel: &CancellationToken,
 ) -> Result<u64> {
     let started = std::time::Instant::now();
-    info!("Fast scan started: root_id={root_id} path={root_path}");
+    info!("Fast scan started: root_id={root_id} path={root_path} | 快速扫描开始: root_id={root_id} 路径={root_path}");
 
     let root = Path::new(root_path);
 
@@ -206,7 +206,7 @@ pub fn run_fast_scan(
         return Err(AppError::Cancelled);
     }
     let total = walked_files.len() as u64;
-    info!("Walker found {} files", total);
+    info!("Walker found {} files | 扫描器发现 {} 个文件", total, total);
 
     // ── Step 2: Parallel dimension extraction ─────────────────────────────
     // ── 第 2 步：并行提取尺寸 ─────────────────────────────
@@ -307,7 +307,7 @@ pub fn run_fast_scan(
     }
 
     let elapsed_ms = started.elapsed().as_millis() as u64;
-    info!("Fast scan done: root_id={root_id} inserted={inserted} elapsed={elapsed_ms}ms");
+    info!("Fast scan done: root_id={root_id} inserted={inserted} elapsed={elapsed_ms}ms | 快速扫描完成: root_id={root_id} 插入={inserted} 耗时={elapsed_ms}ms");
 
     let _ = channel.send(ScanChannelPayload::Completed(ScanCompletedPayload {
         root_id,

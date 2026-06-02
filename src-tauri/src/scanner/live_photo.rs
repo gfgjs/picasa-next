@@ -37,7 +37,7 @@ struct PairingRecord {
 ///    - JPEG: `is_live_photo = 1`
 ///    - MOV:  `companion_of = JPEG.id`
 pub fn pair_live_photos(conn: &Connection, root_id: i64) -> Result<u64> {
-    info!("Pairing Live Photos for root_id={root_id}");
+    info!("Pairing Live Photos for root_id={root_id} | 正在配对实况照片 root_id={root_id}");
 
     // Fetch candidate items (JPEG or MOV, not already marked as companion)
     // 获取候选项目（JPEG 或 MOV，尚未标记为关联文件）
@@ -109,6 +109,6 @@ pub fn pair_live_photos(conn: &Connection, root_id: i64) -> Result<u64> {
         }
     }
 
-    info!("Live Photo pairing complete: {paired} pairs found");
+    info!("Live Photo pairing complete: {paired} pairs found | 实况照片配对完成：发现 {paired} 对");
     Ok(paired)
 }

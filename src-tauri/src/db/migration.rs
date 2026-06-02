@@ -51,14 +51,14 @@ fn write_version(conn: &Connection, version: u32) -> Result<()> {
 /// 这必须在启动时在任何其他数据库操作之前调用。
 pub fn run_migrations(conn: &Connection) -> Result<()> {
     let version = read_version(conn);
-    info!("DB schema version = {}, target = {}", version, CURRENT_VERSION);
+    info!("DB schema version = {}, target = {} | 数据库结构版本 = {}, 目标版本 = {}", version, CURRENT_VERSION, version, CURRENT_VERSION);
 
     if version < 1 {
-        info!("Applying migration → v1");
+        info!("Applying migration → v1 | 正在应用数据库迁移 → v1");
         conn.execute_batch(SCHEMA_V1)
             .map_err(|e| AppError::Db(format!("Migration v1 failed: {e}")))?;
         write_version(conn, 1)?;
-        info!("Migration v1 complete");
+        info!("Migration v1 complete | v1 数据库迁移完成");
     }
 
     // Future migrations follow the same pattern:
@@ -69,7 +69,7 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
     // }
 
     if version == CURRENT_VERSION {
-        info!("DB schema is up-to-date (v{})", CURRENT_VERSION);
+        info!("DB schema is up-to-date (v{}) | 数据库结构已是最新 (v{})", CURRENT_VERSION, CURRENT_VERSION);
     } else {
         warn!("Post-migration version check: expected {CURRENT_VERSION}");
     }

@@ -32,7 +32,7 @@ pub async fn add_scan_root(
         let pool = state.db_read_pool.get().map_err(AppError::from)?;
         let roots = q::list_scan_roots(&pool)?;
         if let Some(existing) = roots.into_iter().find(|r| r.path == norm) {
-            info!("Scan root already exists: id={} path={}", existing.id, norm);
+            info!("Scan root already exists: id={} path={} | 扫描根目录已存在: id={} path={}", existing.id, norm, existing.id, norm);
             return Ok(existing);
         }
     }
@@ -52,7 +52,7 @@ pub async fn add_scan_root(
     q::upsert_directory(&conn, id, None, "", &dir_name, 0, None)?;
 
     let root = q::get_scan_root(&conn, id)?;
-    info!("Scan root added: id={id} path={norm}");
+    info!("Scan root added: id={id} path={norm} | 已添加扫描根目录: id={id} path={norm}");
     Ok(root)
 }
 
@@ -60,11 +60,11 @@ pub async fn add_scan_root(
 /// 移除扫描根目录及其所有数据 (CASCADE)。
 #[tauri::command]
 pub async fn remove_scan_root(id: i64, state: State<'_, Arc<AppState>>) -> Result<()> {
-    info!("User action: Removing scan root ID: {}", id);
+    info!("User action: Removing scan root ID: {} | 用户操作：正在移除扫描根目录 ID: {}", id, id);
     state.cancel_scan(id);
     let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
     q::delete_scan_root(&conn, id)?;
-    info!("Scan root removed: id={id}");
+    info!("Scan root removed: id={id} | 已移除扫描根目录: id={id}");
     Ok(())
 }
 
@@ -90,7 +90,7 @@ pub async fn start_scan(
     app: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<()> {
-    info!("User action: Starting scan for root ID: {}", root_id);
+    info!("User action: Starting scan for root ID: {} | 用户操作：开始扫描根目录 ID: {}", root_id, root_id);
     // Cancel any existing scan for this root
     // 取消该根目录任何现有的扫描
     state.cancel_scan(root_id);
@@ -103,7 +103,7 @@ pub async fn start_scan(
         q::get_scan_root(&pool, root_id)?.path
     };
 
-    info!("start_scan: root_id={root_id} path={root_path}");
+    info!("start_scan: root_id={root_id} path={root_path} | 开始扫描: root_id={root_id} path={root_path}");
 
     // Clone the Arc so the closure owns an independent reference (no unsafe needed)
     // 克隆 Arc 以便闭包拥有独立的引用（不需要 unsafe）
@@ -145,9 +145,9 @@ pub async fn start_scan(
 /// 停止（取消）正在进行的扫描。
 #[tauri::command]
 pub async fn stop_scan(root_id: i64, state: State<'_, Arc<AppState>>) -> Result<()> {
-    info!("User action: Stopping scan for root ID: {}", root_id);
+    info!("User action: Stopping scan for root ID: {} | 用户操作：停止扫描根目录 ID: {}", root_id, root_id);
     state.cancel_scan(root_id);
-    info!("stop_scan: root_id={root_id}");
+    info!("stop_scan: root_id={root_id} | 停止扫描: root_id={root_id}");
     Ok(())
 }
 
@@ -156,7 +156,7 @@ pub async fn clear_database(
     state: State<'_, Arc<AppState>>,
     app:   AppHandle,
 ) -> Result<()> {
-    info!("User action: Clearing database");
+    info!("User action: Clearing database | 用户操作：正在清除数据库");
     // Cancel all running scans first
     // 首先取消所有正在运行的扫描
     state.cancel_all_scans();
@@ -197,7 +197,7 @@ pub async fn clear_database(
     // 重置内存中的布局缓存
     *state.layout_cache.write().unwrap() = None;
 
-    info!("clear_database: all media data wiped");
+    info!("clear_database: all media data wiped | 清除数据库：所有媒体数据已擦除");
     Ok(())
 }
 
@@ -205,9 +205,9 @@ pub async fn clear_database(
 pub async fn clear_settings(
     state: State<'_, Arc<AppState>>,
 ) -> Result<()> {
-    info!("User action: Clearing settings");
+    info!("User action: Clearing settings | 用户操作：正在清除设置");
     let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
     conn.execute("DELETE FROM app_config", [])?;
-    info!("clear_settings: settings wiped");
+    info!("clear_settings: settings wiped | 清除设置：设置项已擦除");
     Ok(())
 }

@@ -19,7 +19,7 @@ pub async fn show_in_explorer(item_id: i64, state: State<'_, Arc<AppState>>) -> 
     let pool = state.db_read_pool.get().map_err(AppError::from)?;
     let (root, rel, name) = get_item_path_info(&pool, item_id)?;
     let abs_path = resolve_media_path(&root, &rel, &name);
-    info!("show_in_explorer: {abs_path}");
+    info!("show_in_explorer: {abs_path} | 在资源管理器中显示: {abs_path}");
 
     // Platform-specific file reveal
     // 特定平台的文件显示
@@ -52,7 +52,7 @@ pub async fn show_in_explorer(item_id: i64, state: State<'_, Arc<AppState>>) -> 
 /// 在操作系统文件资源管理器中打开任意目录。
 #[tauri::command]
 pub async fn open_directory(path: String) -> Result<()> {
-    info!("open_directory: {path}");
+    info!("open_directory: {path} | 打开目录: {path}");
 
     #[cfg(target_os = "windows")]
     {

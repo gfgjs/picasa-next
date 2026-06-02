@@ -81,26 +81,77 @@ pub async fn batch_request_thumbnails(
         let config = config.clone();
 
         tokio::task::spawn_blocking(move || {
-            needs_gen
+            let results: Vec<ThumbResult> = needs_gen
                 .par_iter()
-                .for_each(|&id| {
+                .filter_map(|&id| {
                     if state_arc.cancelled_thumb_ids.lock().unwrap().remove(&id) {
-                        return;
+                        return None;
                     }
-                    let res = generate_thumbnail(&state_arc.db_writer, &state_arc.engine_arena, id, &config);
-                    match res {
-                        Ok(r) => { let _ = on_result.send(r); },
+
+                    let pool = match state_arc.db_read_pool.get() {
+                        Ok(p) => p,
                         Err(e) => {
-                            let _ = on_result.send(ThumbResult {
+                            tracing::error!("Failed to get read pool: {e}");
+                            return None;
+                        }
+                    };
+
+                    let item = match crate::db::queries::get_media_item(&pool, id) {
+                        Ok(i) => i,
+                        Err(e) => {
+                            tracing::error!("Failed to get item {id}: {e}");
+                            return None;
+                        }
+                    };
+
+                    let (root_path, rel_path, file_name) = match crate::db::queries::get_item_path_info(&pool, id) {
+                        Ok(paths) => paths,
+                        Err(e) => {
+                            tracing::error!("Failed to get path info for {id}: {e}");
+                            return None;
+                        }
+                    };
+                    
+                    let abs_path_str = crate::utils::path::resolve_media_path(&root_path, &rel_path, &file_name);
+                    let abs_path = std::path::Path::new(&abs_path_str);
+
+                    let res = generate_thumbnail(&item, abs_path, &state_arc.engine_arena, &config);
+                    match res {
+                        Ok(r) => { 
+                            let _ = on_result.send(r.clone()); 
+                            Some(r)
+                        },
+                        Err(e) => {
+                            let r = ThumbResult {
                                 item_id:      id,
                                 thumb_status: 2,
                                 thumb_path:   None,
                                 thumbhash:    None,
-                            });
+                            };
+                            let _ = on_result.send(r.clone());
                             tracing::error!("Thumbnail gen failed for id={id}: {e}");
+                            Some(r)
                         }
                     }
-                });
+                })
+                .collect();
+
+            if !results.is_empty() {
+                if let Ok(mut conn) = state_arc.db_writer.lock() {
+                    if let Ok(tx) = conn.transaction() {
+                        for res in results {
+                            let _ = crate::db::queries::update_thumb_result(
+                                &tx, 
+                                res.item_id, 
+                                res.thumb_status, 
+                                res.thumb_path.as_deref(), 
+                                res.thumbhash.as_deref()
+                            );
+                        }
+                        let _ = tx.commit();
+                    }
+                }
+            }
             tracing::info!("batch_request_thumbnails: finished parallel block | 批量生成缩略图并行块完成");
         })
         .await
@@ -195,24 +246,35 @@ pub async fn start_full_thumbnail_generation(
                         return None;
                     }
                     
-                    let mut filename = String::new();
-                    if let Ok(pool) = state_arc.db_read_pool.get() {
-                        if let Ok((_, _, name)) = crate::db::queries::get_item_path_info(&pool, id) {
-                            filename = name;
-                        }
-                    }
+                    let pool = match state_arc.db_read_pool.get() {
+                        Ok(p) => p,
+                        Err(_) => return None,
+                    };
+                    
+                    let item = match crate::db::queries::get_media_item(&pool, id) {
+                        Ok(i) => i,
+                        Err(_) => return None,
+                    };
+                    
+                    let (root_path, rel_path, file_name) = match crate::db::queries::get_item_path_info(&pool, id) {
+                        Ok(p) => p,
+                        Err(_) => return None,
+                    };
 
-                    tracing::info!("Full gen: processing id={} ({}) | 全量生成: 处理中 id={} ({})", id, filename, id, filename);
+                    let abs_path_str = crate::utils::path::resolve_media_path(&root_path, &rel_path, &file_name);
+                    let abs_path = std::path::Path::new(&abs_path_str);
+
+                    tracing::info!("Full gen: processing id={} ({}) | 全量生成: 处理中 id={} ({})", id, file_name, id, file_name);
 
                     let current = generated_count.load(std::sync::atomic::Ordering::Relaxed);
                     let _ = on_progress.send(FullThumbProgressPayload {
                         generated: current,
                         total: total as u64,
                         status: "running".to_string(),
-                        current_item: Some(filename),
+                        current_item: Some(file_name),
                     });
                     
-                    let res = generate_thumbnail(&state_arc.db_writer, &state_arc.engine_arena, id, &config);
+                    let res = generate_thumbnail(&item, abs_path, &state_arc.engine_arena, &config);
                     
                     generated_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     
@@ -221,16 +283,23 @@ pub async fn start_full_thumbnail_generation(
                 .collect();
                 
             let mut successful_results = Vec::new();
-            for (id, res) in batch_results {
-                match res {
-                    Ok(r) => successful_results.push(r),
-                    Err(e) => {
-                        tracing::error!("Full gen failed for id={id}: {e}");
-                        // Write failure status to prevent endless retry
-                        if let Ok(conn) = state_arc.db_writer.lock() {
-                            let _ = crate::db::queries::update_thumb_result(&conn, id, 2, None, None);
+            
+            // Batch update database
+            if let Ok(mut conn) = state_arc.db_writer.lock() {
+                if let Ok(tx) = conn.transaction() {
+                    for (id, res) in &batch_results {
+                        match res {
+                            Ok(r) => {
+                                successful_results.push(r.clone());
+                                let _ = crate::db::queries::update_thumb_result(&tx, r.item_id, r.thumb_status, r.thumb_path.as_deref(), r.thumbhash.as_deref());
+                            }
+                            Err(e) => {
+                                tracing::error!("Full gen failed for id={}: {}", id, e);
+                                let _ = crate::db::queries::update_thumb_result(&tx, *id, 2, None, None);
+                            }
                         }
                     }
+                    let _ = tx.commit();
                 }
             }
             

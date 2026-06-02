@@ -46,18 +46,12 @@ pub struct ThumbConfig {
 /// Returns a `ThumbResult` that can be sent directly to the frontend.
 /// 返回一个可以直接发送到前端的 `ThumbResult`。
 pub fn generate_thumbnail(
-    writer: &Mutex<Connection>,
+    item: &crate::db::models::MediaItem,
+    abs_path: &Path,
     arena: &EngineArena,
-    item_id: i64,
     config: &ThumbConfig,
 ) -> Result<ThumbResult> {
-    let conn = writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    let item = get_media_item(&conn, item_id)?;
-    let (root_path, rel_path, file_name) = get_item_path_info(&conn, item_id)?;
-    drop(conn);
-
-    let abs_path_str = crate::utils::path::resolve_media_path(&root_path, &rel_path, &file_name);
-    let abs_path = Path::new(&abs_path_str);
+    let item_id = item.id;
 
     // ── 1. Cache hit ──────────────────────────────────────────────────────
     // ── 1. 缓存命中 ────────────────────────────────────────────────────────
@@ -103,10 +97,6 @@ pub fn generate_thumbnail(
         // 将绝对路径存储为 thumb_path，以便前端可以通过 convertFileSrc 直接加载原始文件，
         // 而无需额外的 IPC 调用。
         let abs_path_str = abs_path.to_string_lossy().replace('\\', "/");
-        {
-            let conn = writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
-            update_thumb_result(&conn, item_id, 3, Some(abs_path_str.as_str()), hash.as_deref())?;
-        }
         return Ok(ThumbResult {
             item_id,
             thumb_status: 3,
@@ -120,22 +110,20 @@ pub fn generate_thumbnail(
     match item.media_type.as_str() {
         "image" => {
             if config.strategy == "gpu" {
-                match generate_gpu_image_thumb(writer, item_id, item.cache_key, abs_path, &item.file_format, config) {
+                match generate_gpu_image_thumb(item_id, item.cache_key, abs_path, &item.file_format, config) {
                     Ok(res) => Ok(res),
                     Err(e) => {
                         tracing::warn!("GPU generation failed for {:?}, falling back to CPU: {}", abs_path.file_name(), e);
-                        generate_image_thumb(writer, arena, item_id, item.cache_key, abs_path, &item.file_format, config)
+                        generate_image_thumb(arena, item_id, item.cache_key, abs_path, &item.file_format, config)
                     }
                 }
             } else {
-                generate_image_thumb(writer, arena, item_id, item.cache_key, abs_path, &item.file_format, config)
+                generate_image_thumb(arena, item_id, item.cache_key, abs_path, &item.file_format, config)
             }
         }
         _ => {
             // Phase 2: video/audio/document — mark as failed for now
             // 第 2 阶段：视频/音频/文档 — 目前标记为失败
-            let conn = writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
-            update_thumb_result(&conn, item_id, 2, None, None)?;
             Ok(ThumbResult {
                 item_id,
                 thumb_status: 2,
@@ -147,7 +135,6 @@ pub fn generate_thumbnail(
 }
 
 fn generate_image_thumb(
-    writer: &Mutex<Connection>,
     arena: &EngineArena,
     item_id: i64,
     cache_key: i64,
@@ -209,11 +196,6 @@ fn generate_image_thumb(
 
     let db_path = thumb_db_path(config.size, cache_key);
     let hash = final_hash;
-
-    {
-        let conn = writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        update_thumb_result(&conn, item_id, 1, Some(&db_path), hash.as_deref())?;
-    }
 
     tracing::debug!("Total generate_image_thumb for {:?} took {:?}", abs_path.file_name(), start_total.elapsed());
 
@@ -280,7 +262,6 @@ fn generate_thumbhash_from_file(
 }
 
 fn generate_gpu_image_thumb(
-    writer: &Mutex<Connection>,
     item_id: i64,
     cache_key: i64,
     abs_path: &Path,
@@ -325,11 +306,6 @@ fn generate_gpu_image_thumb(
     std::fs::write(&disk_path, &webp).map_err(AppError::from)?;
 
     let db_path = thumb_db_path(config.size, cache_key);
-    
-    {
-        let conn = writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        update_thumb_result(&conn, item_id, 1, Some(&db_path), final_hash.as_deref())?;
-    }
 
     tracing::debug!("Total generate_gpu_image_thumb for {:?} took {:?}", abs_path.file_name(), start_total.elapsed());
 

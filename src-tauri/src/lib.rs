@@ -45,11 +45,43 @@ pub fn run() {
 
             let db_path = app_data_dir.join("picasa_next.db");
 
-            // ── ort global init (called once per process) ─────────────────────
-            // ── ort 全局初始化（每个进程只调用一次）─────────────────────────
-            // commit() returns true if successfully initialised or already initialised.
-            // commit() 如果成功初始化或已初始化则返回 true。
-            let _ort_init_ok = ort::init().commit();
+            // ── ORT DLL path resolution ──────────────────────────────────────
+            // WebView2 on Windows may load a stripped onnxruntime.dll from System32 into our process
+            // space BEFORE we load ours. Setting ORT_DYLIB_PATH forces an explicit side-by-side load.
+            //
+            // Priority order:
+            //   1. ORT_DYLIB_PATH already set in env (set by cargo build via download-binaries/copy-dylibs
+            //      pointing at the correctly versioned ORT DLL) → keep it, don't override.
+            //   2. onnxruntime.dll next to the executable (production/bundled build) → use it.
+            //   3. Neither → let ORT find the DLL itself (will warn in logs).
+            //
+            // 优先级：
+            //   1. 环境变量 ORT_DYLIB_PATH 已设置（由 cargo build 通过 download-binaries 指定）→ 保留，不覆盖
+            //   2. 可执行文件旁边的 onnxruntime.dll（生产/打包版本）→ 使用
+            //   3. 都没有 → 让 ORT 自己查找（日志中会有警告）
+            if std::env::var("ORT_DYLIB_PATH").is_err() {
+                // Only set it ourselves if NOT already configured by the build system
+                // 只有在构建系统未配置时才自行设置
+                if let Ok(exe_path) = std::env::current_exe() {
+                    if let Some(exe_dir) = exe_path.parent() {
+                        let ort_dylib = exe_dir.join("onnxruntime.dll");
+                        if ort_dylib.exists() {
+                            std::env::set_var("ORT_DYLIB_PATH", ort_dylib.to_str().unwrap());
+                            info!("Set ORT_DYLIB_PATH to exe-relative path (production mode): {:?}", ort_dylib);
+                        } else {
+                            info!("onnxruntime.dll not found next to exe, ORT will search system PATH");
+                        }
+                    }
+                }
+            } else {
+                info!("ORT_DYLIB_PATH already set (by build system): {}", std::env::var("ORT_DYLIB_PATH").unwrap_or_default());
+            }
+
+
+            let ort_init_res = ort::init()
+                .with_name("PicasaNext")
+                .commit();
+            info!("ORT initialization result: {:?}", ort_init_res);
 
             // ── Write connection + migrations ─────────────────────────────
             // ── 写入连接 + 迁移 ─────────────────────────────
@@ -238,7 +270,23 @@ pub fn run() {
             ipc::ai_commands::start_ai_analysis,
             ipc::ai_commands::stop_ai_analysis,
             ipc::ai_commands::rebuild_embeddings,
+            ipc::ai_commands::list_ai_models,
+            ipc::ai_commands::import_ai_model,
+            ipc::ai_commands::reload_ai_engine,
         ])
-        .run(tauri::generate_context!())
-        .expect("Error while running Tauri application");
+        .build(tauri::generate_context!())
+        .expect("Error while building Tauri application")
+        .run(|_app_handle, event| {
+            match event {
+                tauri::RunEvent::ExitRequested { .. } => {
+                    info!("Application exit requested, forcing process termination.");
+                    std::process::exit(0);
+                }
+                tauri::RunEvent::Exit => {
+                    info!("Application exiting, forcing process termination.");
+                    std::process::exit(0);
+                }
+                _ => {}
+            }
+        });
 }

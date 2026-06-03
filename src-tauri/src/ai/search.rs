@@ -32,8 +32,8 @@ pub fn semantic_search(
 ) -> Result<Vec<SemanticSearchResult>> {
     info!("Semantic search started | 语义搜索开始: {:?}", query);
 
-    // 1. Encode the query text into a 512-d unit vector (~5ms)
-    // 1. 将查询文本编码为 512-d 单位向量（约 5ms）
+    // 1. Encode the text query into a 512-d unit vector
+    // 1. 将文本查询编码为 512-d 单位向量
     let query_vec = encode_text(text_session, tokenizer, query)?;
 
     // 2. Load all embeddings from SQLite
@@ -113,9 +113,9 @@ pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     debug_assert_eq!(a.len(), b.len(), "Embedding dimension mismatch | 嵌入向量维度不匹配");
 
     let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
-    // Clamp to [0, 1] — both vectors should already be unit-normalised,
+    // Clamp to [-1, 1] — both vectors should already be unit-normalised,
     // but floating point errors can push slightly outside.
-    // 截断到 [0, 1] — 两个向量应该已经是单位归一化的，
+    // 截断到 [-1, 1] — 两个向量应该已经是单位归一化的，
     // 但浮点误差可能会稍微超出范围。
-    dot.clamp(0.0, 1.0)
+    dot.clamp(-1.0, 1.0)
 }

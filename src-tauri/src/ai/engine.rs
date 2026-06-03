@@ -51,6 +51,15 @@
 //!   图像: `image: f32[1,3,224,224]` → `unnorm_image_features: f32[1,512]`（未归一化！）
 //!   文本: `text: i64[1,52]`（仅 token IDs）→ `unnorm_text_features: f32[1,512]`
 //! **应对**：推理后必须手动 L2 归一化；文本编码器不再需要 attention_mask/token_type_ids。
+//!
+//! ## 坑8（致命）：vocab.txt 与模型不匹配 → 准确率降为随机
+//! `eisneim/cn-clip_vit-b-16` 仓库附带的 vocab.txt 是**英文 CLIP 的 BPE 词表**
+//! （~5594 tokens），而非 Chinese-CLIP 需要的 **bert-base-chinese 词表**
+//! （21128 tokens）。误用导致所有中文字符被编码为 [UNK]，
+//! 任何查询产生完全相同的嵌入向量（cosine=1.0），搜索准确率降至随机水平。
+//! **应对**：从模型原始作者 `OFA-Sys/chinese-clip-vit-base-patch16` 获取 vocab.txt；
+//! 加载后校验 vocab_size ≥ 10000，否则立即报错。
+//! **详细记录**：见 `clip.rs` 模块头部的踩坑记录。
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -60,7 +69,8 @@ use ort::session::Session;
 use ort::session::builder::GraphOptimizationLevel;
 use tracing::{info, warn};
 
-use crate::ai::provider::{AiProvider, ProviderInfo};
+use crate::ai::clip::ClipTokenizer;
+use crate::ai::provider::AiProvider;
 use crate::error::Result;
 
 /// 会话加载超时时间。
@@ -89,6 +99,12 @@ pub struct AiEnginePool {
     /// Chinese-CLIP text encoder session.
     /// Chinese-CLIP 文本编码器 Session。
     pub clip_text_session: Option<Arc<Mutex<Session>>>,
+
+    /// Cached BERT tokenizer (loaded from vocab.txt).
+    /// 缓存的 BERT 分词器（从 vocab.txt 加载）。
+    /// Avoids re-reading vocab.txt on every semantic search call.
+    /// 避免每次语义搜索都重新读取 vocab.txt。
+    pub clip_tokenizer: Option<ClipTokenizer>,
 
     /// Phase 4B: face detection session (placeholder).
     /// 第 4B 阶段：人脸检测 Session（占位符）。
@@ -141,6 +157,7 @@ impl AiEnginePool {
             gpu_name: provider_info.gpu_name,
             clip_image_session,
             clip_text_session,
+            clip_tokenizer: None,  // loaded lazily from models_dir in ai_commands
             face_detect_session: None,
             face_embed_session: None,
         })
@@ -200,7 +217,19 @@ fn load_session(
 
     match rx.recv_timeout(SESSION_LOAD_TIMEOUT) {
         Ok(Ok(session)) => {
-            info!("Loaded {} successfully | {} 加载成功", label, label);
+            // ── Diagnostic: log model I/O spec ──────────────────────────
+            // ── 诊断：记录模型输入/输出规格 ──────────────────────────────
+            let input_names: Vec<&str> = session.inputs().iter()
+                .map(|i| i.name())
+                .collect();
+            let output_names: Vec<&str> = session.outputs().iter()
+                .map(|o| o.name())
+                .collect();
+            info!(
+                "Loaded {} — inputs: {:?}, outputs: {:?} | {} 加载成功 — 输入: {:?}, 输出: {:?}",
+                label, input_names, output_names,
+                label, input_names, output_names
+            );
             Some(Arc::new(Mutex::new(session)))
         }
         Ok(Err(e)) => {

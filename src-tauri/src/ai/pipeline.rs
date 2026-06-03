@@ -51,7 +51,9 @@ struct AiTask {
 /// 从消费者发送到写入器的嵌入向量结果。
 struct AiResult {
     item_id:   i64,
-    embedding: Vec<u8>,  // raw f32 bytes
+    /// `Some(bytes)` on success, `None` on inference failure.
+    /// 成功时为 `Some(bytes)`，推理失败时为 `None`。
+    embedding: Option<Vec<u8>>,
 }
 
 /// Start the background AI analysis pipeline.
@@ -195,24 +197,29 @@ fn produce_tasks(
         // Mark items as "processing" to avoid re-queuing on restart
         // 将项标记为"处理中"，避免重启时重新排队
         let write_conn = state.db_writer.lock().unwrap();
-        let ids: Vec<i64> = batch.iter().map(|(id, _)| *id).collect();
+        let ids: Vec<i64> = batch.iter().map(|(id, _, _)| *id).collect();
         if let Err(e) = batch_update_ai_status(&write_conn, &ids, AiStatus::Processing.as_i64()) {
             warn!("Failed to mark items as processing | 标记项为处理中失败: {}", e);
         }
         drop(write_conn);
 
-        for (item_id, cache_key) in batch {
+        for (item_id, db_thumb_path, thumb_status) in batch {
             if token.is_cancelled() { break; }
 
-            // Build thumb path from cache_key using the configured size
-            // 使用配置的大小根据 cache_key 构建缩略图路径
-            let thumb_path = if cache_key != 0 {
-                let thumb_config = state.thumb_config.read().unwrap();
-                Some(crate::thumbnail::cache::thumb_path(
-                    &thumb_config.cache_dir,
-                    thumb_config.size,
-                    cache_key,
-                ))
+            // Only process if thumbnail is ready (1) or direct display (3)
+            if thumb_status != 1 && thumb_status != 3 {
+                continue;
+            }
+
+            let thumb_path = if let Some(path) = db_thumb_path {
+                if path.starts_with('/') || path.chars().nth(1) == Some(':') {
+                    // Absolute path (is_direct=true)
+                    Some(std::path::PathBuf::from(path))
+                } else {
+                    // Relative path (e.g. "300/a3/a3...webp" or just "{id}.webp")
+                    let thumb_config = state.thumb_config.read().unwrap();
+                    Some(thumb_config.cache_dir.join("thumbnails").join(path))
+                }
             } else {
                 None
             };
@@ -247,15 +254,16 @@ fn consume_tasks(
                 let embedding_result = process_task(&task, &session);
                 match embedding_result {
                     Ok(embedding) => {
-                        let _ = result_tx.send(AiResult { item_id: task.item_id, embedding });
+                        let _ = result_tx.send(AiResult { item_id: task.item_id, embedding: Some(embedding) });
                     }
                     Err(e) => {
                         debug!(
                             "CLIP inference failed for item {} | 项 {} CLIP 推理失败: {}",
                             task.item_id, task.item_id, e
                         );
-                        // We'll handle status updates in the writer via missing results
-                        // 我们将通过写入器中的缺失结果处理状态更新
+                        // Send failure marker so writer can set ai_status=Error
+                        // 发送失败标记，让写入器将 ai_status 设为 Error
+                        let _ = result_tx.send(AiResult { item_id: task.item_id, embedding: None });
                     }
                 }
             });
@@ -290,16 +298,31 @@ fn write_results(
     let mut batch: Vec<(i64, String, Vec<u8>, i64)> = Vec::with_capacity(BATCH_SIZE as usize);
     let mut total_written = 0u64;
 
+    let mut failed_ids: Vec<i64> = Vec::new();
+
     for result in result_rx {
         if token.is_cancelled() {
             info!("AI writer cancelled | AI 写入器已取消");
             break;
         }
 
-        batch.push((result.item_id, MODEL_NAME.to_string(), result.embedding, 1));
+        match result.embedding {
+            Some(emb) => {
+                batch.push((result.item_id, MODEL_NAME.to_string(), emb, 1));
+            }
+            None => {
+                // Inference failed — collect for bulk status update
+                // 推理失败 — 收集起来批量更新状态
+                failed_ids.push(result.item_id);
+            }
+        }
 
         if batch.len() >= BATCH_SIZE as usize {
             flush_batch(state, &mut batch, &mut total_written);
+        }
+
+        if failed_ids.len() >= BATCH_SIZE as usize {
+            flush_failed(state, &mut failed_ids);
         }
     }
 
@@ -307,6 +330,9 @@ fn write_results(
     // 刷新剩余项
     if !batch.is_empty() {
         flush_batch(state, &mut batch, &mut total_written);
+    }
+    if !failed_ids.is_empty() {
+        flush_failed(state, &mut failed_ids);
     }
 
     info!(
@@ -344,4 +370,22 @@ fn flush_batch(
     }
 
     batch.clear();
+}
+
+/// Mark a batch of failed items as `ai_status=3` (Error) in the database.
+/// 将一批失败的项在数据库中标记为 `ai_status=3`（错误）。
+fn flush_failed(
+    state: &Arc<AppState>,
+    failed_ids: &mut Vec<i64>,
+) {
+    let conn = state.db_writer.lock().unwrap();
+    if let Err(e) = batch_update_ai_status(&conn, failed_ids, AiStatus::Error.as_i64()) {
+        warn!("Failed to mark items as error | 标记项为错误失败: {}", e);
+    } else {
+        debug!(
+            "Marked {} items as ai_status=Error | 已将 {} 个项标记为 ai_status=Error",
+            failed_ids.len(), failed_ids.len()
+        );
+    }
+    failed_ids.clear();
 }

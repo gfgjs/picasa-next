@@ -74,6 +74,10 @@ export const useAiStore = defineStore('ai', () => {
     try {
       await invoke('start_ai_analysis')
       status.value.isAnalyzing = true
+      // Embeddings are reset server-side — clear stale search results immediately
+      // 服务端已重置嵌入向量，立即清除前端过时的搜索结果
+      semanticResults.value = []
+      searchError.value = null
       startStatusPolling()
     } catch (e) {
       console.error('[AI] Start analysis error | 启动分析错误:', e)

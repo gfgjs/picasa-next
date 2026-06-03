@@ -85,6 +85,10 @@ pub fn create_read_pool(db_path: &Path, pool_size: u32) -> Result<DbPool> {
 
     let pool = Pool::builder()
         .max_size(pool_size)
+        // Defer connection creation to first use — avoids blocking setup() with
+        // 4× SQLite open + PRAGMA batches during cold start.
+        // 延迟连接创建到首次使用，避免在冷启动时阻塞 setup()（4 次 SQLite 打开 + PRAGMA 批次）
+        .min_idle(Some(0))
         .connection_customizer(Box::new(ReadPoolCustomiser))
         .build(manager)
         .map_err(|e| AppError::Pool(e.to_string()))?;

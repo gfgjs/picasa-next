@@ -13,7 +13,7 @@ import i18n from '../i18n'
 export const useUiStore = defineStore('ui', () => {
   // ── Theme & Language ───────────────────────────────────────────────────
   // ── 主题与语言 ──────────────────────────────────────────────────────────
-  const theme = ref<Theme>('dark')
+  const theme = ref<Theme>('system')
   const language = ref<string>('zh-CN')
 
   function applyLanguage(lang: string) {

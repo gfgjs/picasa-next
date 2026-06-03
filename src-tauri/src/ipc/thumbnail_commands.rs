@@ -578,7 +578,13 @@ pub async fn start_full_thumbnail_generation(
                 current_item: None,
             });
         }
-        
+
+        // Clear the token after completion/cancellation so AI pipeline won't yield forever.
+        // This mirrors how the AI pipeline itself clears ai_analysis_token on completion.
+        // 清除 token，防止 AI pipeline 永远让步（与 AI pipeline 的 cancel_ai_analysis() 模式一致）。
+        *state_arc.thumb_gen_token.lock().unwrap() = None;
+        tracing::info!("Thumbnail gen token cleared after completion | 全量缩略图 token 已清除");
+
         Ok(())
     });
 

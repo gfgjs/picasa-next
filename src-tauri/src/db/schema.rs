@@ -23,7 +23,7 @@ INSERT OR IGNORE INTO app_config (key, value) VALUES
     ('thumb_format',      'webp'),
     ('thumb_quality',     '80'),
     ('thumb_skip_max_kb', '200'),
-    ('thumb_strategy',    'cpu'),
+    ('thumb_strategy',    'gpu'),
     ('gpu_engine',        'wic'),
     ('theme',             'system'),
     ('last_directory_id', ''),

@@ -6,6 +6,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Mutex, RwLock};
+use std::time::Instant;
 
 use tokio_util::sync::CancellationToken;
 
@@ -60,6 +61,13 @@ pub struct AppState {
     /// Cancellation token for the background AI analysis pipeline.
     /// 后台 AI 分析流水线的取消令牌。
     pub ai_analysis_token: Mutex<Option<CancellationToken>>,
+
+    /// Instant captured right after AppState::new() returns.
+    /// Used to measure time-to-first-frame (AppState init → main window visible).
+    ///
+    /// AppState::new() 返回后立即记录的时间点。
+    /// 用于测量从初始化完成到主界面弹出的耗时。
+    pub startup_instant: Instant,
 }
 
 impl AppState {
@@ -91,6 +99,7 @@ impl AppState {
             log_dir,
             ai_engine: RwLock::new(None),
             ai_analysis_token: Mutex::new(None),
+            startup_instant: Instant::now(),
         }
     }
 

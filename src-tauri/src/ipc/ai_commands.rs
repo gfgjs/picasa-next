@@ -6,9 +6,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use tauri::State;
-use tracing::info;
+use tracing::{info, warn};
 
-use crate::ai::clip::{ClipTokenizer, MODEL_NAME};
+use crate::ai::clip::MODEL_NAME;
 use crate::ai::engine::AiEnginePool;
 use crate::ai::pipeline::start_ai_pipeline;
 use crate::ai::search::semantic_search;
@@ -50,6 +50,14 @@ fn ensure_engine_initialised(state: &AppState) -> Result<()> {
         return Ok(());  // Race check | 竞争检查
     }
 
+    // Initialise ORT runtime once, lazily (avoids blocking Tauri setup() and the
+    // white-screen delay caused by loading the 160 MB onnxruntime.dll at startup).
+    // 惰性初始化 ORT runtime（避免在 Tauri setup() 中阻塞并导致白屏）。
+    let ort_init_res = ort::init()
+        .with_name("PicasaNext")
+        .commit();
+    info!("ORT initialization result: {:?}", ort_init_res);
+
     let models = models_dir(state);
     std::fs::create_dir_all(&models)
         .map_err(|e| AppError::Io(format!("Cannot create models dir | 无法创建模型目录: {e}")))?;
@@ -72,7 +80,24 @@ fn ensure_engine_initialised(state: &AppState) -> Result<()> {
         .unwrap_or(None)
         .unwrap_or_else(|| "auto".to_string());
         
-    let pool = AiEnginePool::init(&models, &image_model_name, &text_model_name, &provider_override)?;
+    let mut pool = AiEnginePool::init(&models, &image_model_name, &text_model_name, &provider_override)?;
+
+    // Load tokenizer eagerly and cache it in the pool.
+    // Avoids reading vocab.txt on every semantic_search_cmd call.
+    // 立即加载分词器并缓存到池中。
+    // 避免每次调用 semantic_search_cmd 都重读 vocab.txt。
+    let vocab_path = models.join("vocab.txt");
+    if vocab_path.exists() {
+        match crate::ai::clip::ClipTokenizer::from_vocab(&vocab_path) {
+            Ok(tokenizer) => {
+                pool.clip_tokenizer = Some(tokenizer);
+                info!("CLIP tokenizer cached in engine pool | CLIP 分词器已缓存到引擎池");
+            }
+            Err(e) => warn!("Failed to load tokenizer | 分词器加载失败: {}", e),
+        }
+    } else {
+        warn!("vocab.txt not found at {:?} | vocab.txt 未找到: {:?}", vocab_path, vocab_path);
+    }
 
     // Persist detected provider to app_config
     // 将探测到的提供者持久化到 app_config
@@ -183,24 +208,33 @@ pub async fn semantic_search_cmd(
         let text_session = engine.clip_text_session.as_ref()
             .ok_or_else(|| "Text encoder not loaded | 文本编码器未加载".to_string())?;
 
-        // Load tokenizer from models dir
-        // 从模型目录加载分词器
-        let models = models_dir(&state);
-        let vocab_path = models.join("vocab.txt");
-        let tokenizer = ClipTokenizer::from_vocab(&vocab_path)
-            .map_err(|e| e.to_string())?;
-
         let conn = state.db_read_pool.get().map_err(|e| e.to_string())?;
 
-        semantic_search(&conn, text_session, &tokenizer, &query, top_k)
-            .map_err(|e| e.to_string())
+        // Use cached tokenizer if available, otherwise load from disk.
+        // 使用缓存的分词器，如果没有则从磁盘加载。
+        if let Some(tokenizer) = engine.clip_tokenizer.as_ref() {
+            semantic_search(&conn, text_session, tokenizer, &query, top_k)
+                .map_err(|e| e.to_string())
+        } else {
+            // Fallback: load tokenizer from disk (happens if vocab.txt wasn't present at init time)
+            // 回退：从磁盘加载分词器（vocab.txt 初始化时不存在的情况）
+            let models = models_dir(&state);
+            let vocab_path = models.join("vocab.txt");
+            let tokenizer = crate::ai::clip::ClipTokenizer::from_vocab(&vocab_path)
+                .map_err(|e| e.to_string())?;
+            semantic_search(&conn, text_session, &tokenizer, &query, top_k)
+                .map_err(|e| e.to_string())
+        }
     })
     .await
     .map_err(|e| e.to_string())?
 }
 
 /// Start the background AI analysis pipeline.
+/// Always resets existing embeddings first for a full fresh analysis.
+///
 /// 启动后台 AI 分析流水线。
+/// 始终先清除已有嵌入向量，保证每次都是全量重新分析。
 #[tauri::command]
 pub async fn start_ai_analysis(
     state: State<'_, Arc<AppState>>,
@@ -221,12 +255,28 @@ pub async fn start_ai_analysis(
     // 开始新的分析前取消任何现有的分析
     state_arc.cancel_ai_analysis();
 
+    // Always clear previous embeddings so every click is a complete fresh run.
+    // The button is "全量 AI 分析" — "全量" means full/complete, not incremental.
+    // 始终清除之前的嵌入向量，保证每次点击都是全量重新分析。
+    tokio::task::spawn_blocking({
+        let s = Arc::clone(&state_arc);
+        move || {
+            let conn = s.db_writer.lock().unwrap();
+            reset_ai_embeddings(&conn, MODEL_NAME)
+                .map_err(|e| e.to_string())
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+
     let token = state_arc.new_ai_analysis_token();
-    info!("Starting AI analysis pipeline | 启动 AI 分析流水线");
+    info!("Starting AI analysis pipeline (full reset) | 启动 AI 分析流水线（全量重置）");
     start_ai_pipeline(Arc::clone(&state_arc), token);
 
     Ok(())
 }
+
 
 /// Stop the running AI analysis pipeline.
 /// 停止正在运行的 AI 分析流水线。

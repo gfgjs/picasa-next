@@ -956,14 +956,14 @@ pub fn batch_update_ai_status(conn: &Connection, item_ids: &[i64], status: i64) 
 pub fn get_pending_ai_items(
     conn: &Connection,
     limit: i64,
-) -> Result<Vec<(i64, i64)>> {  // (id, cache_key)
+) -> Result<Vec<(i64, Option<String>, i64)>> {  // (id, thumb_path, thumb_status)
     let mut stmt = conn.prepare(
-        "SELECT id, cache_key FROM media_items
+        "SELECT id, thumb_path, thumb_status FROM media_items
          WHERE ai_status=0 AND is_deleted=0 AND media_type='image'
          ORDER BY created_at DESC
          LIMIT ?1",
     )?;
-    let rows = stmt.query_map(params![limit], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    let rows = stmt.query_map(params![limit], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
     rows.map(|r| r.map_err(AppError::from)).collect()
 }
 
@@ -1008,6 +1008,11 @@ pub fn reset_ai_embeddings(conn: &Connection, model_name: &str) -> Result<()> {
 
 /// Fetch media item thumbnail info for a list of IDs (for semantic search results).
 /// 获取一批 ID 的媒体项缩略图信息（用于语义搜索结果）。
+///
+/// For `thumb_status=3` (small-file direct display), the `thumb_path` column is NULL
+/// but we resolve the absolute path via JOIN, exactly like `get_thumb_by_item_ids` does.
+/// 对于 `thumb_status=3`（小文件直接显示），`thumb_path` 列为 NULL，
+/// 但通过 JOIN 解析绝对路径（与 `get_thumb_by_item_ids` 的处理方式完全一致）。
 pub fn get_search_results_by_ids(
     conn: &Connection,
     ids: &[i64],
@@ -1017,9 +1022,19 @@ pub fn get_search_results_by_ids(
     }
     let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{i}")).collect();
     let sql = format!(
-        "SELECT id, file_name, media_type, thumb_path, thumbhash, thumb_status
-         FROM media_items
-         WHERE id IN ({})",
+        "SELECT m.id, m.file_name, m.media_type,
+                CASE
+                    WHEN m.thumb_status = 3 THEN
+                        CASE WHEN d.rel_path = '' THEN r.path || '/' || m.file_name
+                             ELSE r.path || '/' || d.rel_path || '/' || m.file_name
+                        END
+                    ELSE m.thumb_path
+                END AS thumb_path,
+                m.thumbhash, m.thumb_status
+         FROM media_items m
+         JOIN directories d ON m.directory_id = d.id
+         JOIN scan_roots r ON d.root_id = r.id
+         WHERE m.id IN ({})",
         placeholders.join(",")
     );
     let mut stmt = conn.prepare(&sql)?;

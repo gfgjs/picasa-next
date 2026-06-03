@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use tauri::State;
+use tauri::{Manager, State};
 use tracing::info;
 
 use crate::db::queries::get_item_path_info;
@@ -90,3 +90,44 @@ pub async fn move_to_trash(item_ids: Vec<i64>, state: State<'_, Arc<AppState>>) 
     let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
     crate::db::queries::soft_delete_items(&conn, &item_ids)
 }
+
+/// Atomically close the splashscreen window and reveal the main window.
+/// Called by the frontend once App.vue onMounted is complete.
+///
+/// 原子化关闭 Splashscreen 窗口并显示主窗口。
+/// 由前端在 App.vue onMounted 完成后调用。
+#[tauri::command]
+pub async fn close_splashscreen(
+    app: tauri::AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> std::result::Result<(), String> {
+    // ── Startup timing ────────────────────────────────────────────────────
+    // Measure elapsed time from AppState initialisation to main window reveal.
+    // This covers: WebView2 cold-start + Vite bundle load + Vue bootstrap + IPC round-trips.
+    //
+    // ── 启动耗时统计 ──────────────────────────────────────────────────────
+    // 测量从 AppState 初始化完成到主窗口弹出的总耗时。
+    // 涵盖：WebView2 冷启动 + Vite 包加载 + Vue 初始化 + IPC 往返。
+    let elapsed = state.startup_instant.elapsed();
+    info!(
+        "⏱  AppState → main window: {:.0?} ({} ms) | ⏱  AppState 初始化完成 → 主界面弹出: {:.0?} ({} ms)",
+        elapsed,
+        elapsed.as_millis(),
+        elapsed,
+        elapsed.as_millis(),
+    );
+
+    // Close splashscreen first so there is no flash of both windows being visible.
+    // 先关闭 splashscreen，避免两个窗口同时可见的闪烁。
+    if let Some(splash) = app.get_webview_window("splashscreen") {
+        splash.close().map_err(|e| e.to_string())?;
+    }
+    // Show main window and bring it to focus.
+    // 显示主窗口并使其获得焦点。
+    if let Some(main_win) = app.get_webview_window("main") {
+        main_win.show().map_err(|e| e.to_string())?;
+        main_win.set_focus().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+

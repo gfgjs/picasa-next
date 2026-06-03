@@ -38,19 +38,58 @@ import { ImageIcon } from '@lucide/vue'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import type { SemanticSearchResult } from '../../types/ai'
 
-const props = defineProps<{ item: SemanticSearchResult }>()
+const props = defineProps<{
+  item: SemanticSearchResult
+  /** Absolute path to app cache dir (e.g. C:/Users/.../AppData/.../cache) */
+  /** 应用缓存目录的绝对路径 */
+  cacheDir?: string
+}>()
 const emit = defineEmits<{ (e: 'click', item: SemanticSearchResult): void }>()
 
+/**
+ * Resolve thumb_path to a displayable URL, mirroring MediaThumb.vue's logic:
+ *   status=1 → relative path under cacheDir/thumbnails/ (e.g. "300/a3/xxx.webp")
+ *   status=3 → absolute path already resolved by backend SQL JOIN
+ *   others   → null (show placeholder)
+ *
+ * thumbPath 路径解析逻辑（与 MediaThumb.vue 完全一致）：
+ *   status=1 → 相对路径，需要拼接 cacheDir/thumbnails/
+ *   status=3 → 后端已通过 SQL JOIN 解析为绝对路径
+ *   其他     → null（显示占位图）
+ */
 const thumbSrc = computed(() => {
-  if (!props.item.thumbPath) return null
+  const { thumbPath, thumbStatus } = props.item
+  if (!thumbPath) return null
   try {
-    return convertFileSrc(props.item.thumbPath)
+    if (thumbStatus === 1) {
+      // Relative path stored in DB — must prepend full cache dir
+      // 数据库中存储的相对路径 — 必须拼接完整缓存目录
+      if (!props.cacheDir) return null
+      const abs = `${props.cacheDir}/thumbnails/${thumbPath}`.replace(/\\/g, '/')
+      return convertFileSrc(abs)
+    }
+    if (thumbStatus === 3) {
+      // Absolute path resolved by backend SQL (via scan_roots JOIN)
+      // 后端通过 SQL JOIN 解析好的绝对路径
+      return convertFileSrc(thumbPath.replace(/\\/g, '/'))
+    }
+    return null
   } catch {
     return null
   }
 })
 
-const similarityPercent = computed(() => Math.round(props.item.similarity * 100))
+// Map raw cosine similarity [0.20, 0.35] to [10, 99] for better UX UX
+// 映射原始的余弦相似度到对用户更友好的百分比，避免误解
+const similarityPercent = computed(() => {
+  const raw = props.item.similarity
+  // Clip's raw cosine similarity rarely exceeds 0.35 for cross-modal tasks
+  const minVal = 0.20
+  const maxVal = 0.35
+  let mapped = ((raw - minVal) / (maxVal - minVal)) * 100
+  mapped = Math.max(10, Math.min(99, mapped))
+  return Math.round(mapped)
+})
 
 const badgeClass = computed(() => {
   const pct = similarityPercent.value

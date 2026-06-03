@@ -35,6 +35,7 @@ import { onMounted } from 'vue'
 import { invoke }    from '@tauri-apps/api/core'
 import { useTheme }    from './composables/useTheme'
 import { useUiStore }  from './stores/uiStore'
+import { useMediaStore } from './stores/mediaStore'
 
 import AppShell           from './components/layout/AppShell.vue'
 import AppSidebar         from './components/sidebar/AppSidebar.vue'
@@ -49,12 +50,13 @@ import type { SemanticSearchResult } from './types/ai'
 
 const ui = useUiStore()
 const ai = useAiStore()
+const media = useMediaStore()
 const route = useRoute()
 
 function onSemanticItemClick(item: SemanticSearchResult) {
-  // TODO Phase 4A+: open detail overlay for the clicked result
-  // TODO 第 4A+ 阶段：为点击的结果打开详情覆盖层
-  console.debug('[AI] Item clicked:', item.id, item.fileName)
+  // Open the detail overlay for the clicked semantic search result.
+  // 为点击的语义搜索结果打开详情视图。
+  media.openDetail(item.id)
 }
 
 // Init theme
@@ -74,44 +76,58 @@ onMounted(async () => {
   // Theme init only — data loading is handled in AppSidebar.vue onMounted
   // 仅初始化主题 — 数据加载在 AppSidebar.vue 的 onMounted 中处理
 
-  // Fetch initial AI status (non-blocking) | 获取初始 AI 状态（非阻塞）
-  ai.fetchStatus().catch(() => {})
-
-  // Load global UI configurations
-  // 加载全局 UI 配置
+  // Load global UI config in a SINGLE IPC round-trip via get_startup_config.
+  // Previously 4× get_app_config calls (even in parallel) each incurred:
+  //   serialisation + Tokio scheduling + r2d2 pool acquire + SQLite read + deserialisation
+  // Now reduced to 1× that overhead + 4 cheap SQLite row reads on the same connection.
+  //
+  // 通过 get_startup_config 在单次 IPC 往返内批量获取所有启动配置。
+  // 之前 4 次并行 get_app_config 各自承担：序列化 + Tokio 调度 + 连接池获取 + SQLite 读 + 反序列化
+  // 现在降低为 1 次相同开销 + 同一连接上 4 次轻量 SQLite 行读取。
   try {
-    const lang = await invoke<string | null>('get_app_config', { key: 'language' })
-    if (lang) {
-      ui.applyLanguage(lang)
+    const cfg = await invoke<{
+      language: string | null
+      timelineScrollWidth: string | null
+      uiFontSize: string | null
+      enableThumbHoverScale: string | null
+    }>('get_startup_config')
+
+    if (cfg.language) {
+      ui.applyLanguage(cfg.language)
     } else {
-      // Default initialized language in uiStore / i18n
       ui.applyLanguage(ui.language)
     }
 
-    const val = await invoke<string | null>('get_app_config', { key: 'timeline_scroll_width' })
-    if (val) {
-      document.documentElement.style.setProperty('--scrollbar-width', `${val}px`)
+    if (cfg.timelineScrollWidth) {
+      document.documentElement.style.setProperty('--scrollbar-width', `${cfg.timelineScrollWidth}px`)
     }
 
-    const valFontSize = await invoke<string | null>('get_app_config', { key: 'ui_font_size' })
-    if (valFontSize) {
-      const size = parseInt(valFontSize, 10)
+    if (cfg.uiFontSize) {
+      const size = parseInt(cfg.uiFontSize, 10)
       const diff = size - 15
-      document.documentElement.style.setProperty('--font-size-xs', `${12 + diff}px`);
-      document.documentElement.style.setProperty('--font-size-sm', `${13 + diff}px`);
-      document.documentElement.style.setProperty('--font-size-base', `${15 + diff}px`);
-      document.documentElement.style.setProperty('--font-size-md', `${16 + diff}px`);
-      document.documentElement.style.setProperty('--font-size-lg', `${19 + diff}px`);
-      document.documentElement.style.setProperty('--font-size-xl', `${23 + diff}px`);
-      document.documentElement.style.setProperty('--font-size-2xl', `${28 + diff}px`);
+      document.documentElement.style.setProperty('--font-size-xs',   `${12 + diff}px`)
+      document.documentElement.style.setProperty('--font-size-sm',   `${13 + diff}px`)
+      document.documentElement.style.setProperty('--font-size-base', `${15 + diff}px`)
+      document.documentElement.style.setProperty('--font-size-md',   `${16 + diff}px`)
+      document.documentElement.style.setProperty('--font-size-lg',   `${19 + diff}px`)
+      document.documentElement.style.setProperty('--font-size-xl',   `${23 + diff}px`)
+      document.documentElement.style.setProperty('--font-size-2xl',  `${28 + diff}px`)
     }
 
-    const valHoverScale = await invoke<string | null>('get_app_config', { key: 'enable_thumb_hover_scale' })
-    if (valHoverScale === 'false') {
+    if (cfg.enableThumbHoverScale === 'false') {
       document.documentElement.classList.add('disable-hover-scale')
     }
   } catch (e) {
-    console.error('Failed to load global config:', e)
+    console.error('Failed to load startup config:', e)
   }
+
+  // Close splashscreen and reveal the main window now that the app is fully ready.
+  // App.vue 已挂载完成，通知 Rust 全次关闭 splashscreen 并显示主窗口。
+  invoke('close_splashscreen').catch(() => {})
+
+  // Fetch AI status AFTER the window is shown — non-blocking background refresh.
+  // Deferring this avoids competing with the 4 config IPC calls on the critical path.
+  // AI 状态在窗口显示后再获取，不影响启动速度。
+  ai.fetchStatus().catch(() => {})
 })
 </script>

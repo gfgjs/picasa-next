@@ -64,26 +64,26 @@
 
         <div class="settings-card__item">
           <div class="settings-card__info">
-            <div class="settings-card__label">解码引擎策略</div>
-            <div class="settings-card__desc">选择缩略图生成使用的硬件加速策略。源文件直显性能最佳但会占用更多内存。</div>
+            <div class="settings-card__label">{{ $t('settings.thumbDecodeStrategy') }}</div>
+            <div class="settings-card__desc">{{ $t('settings.thumbDecodeDesc') }}</div>
           </div>
           <div class="select-wrap">
             <select v-model="thumbStrategy" @change="saveThumbStrategy" class="select">
-              <option value="cpu">CPU (最稳定)</option>
-              <option value="gpu">GPU (高性能)</option>
-              <option value="direct">源文件直显 (极限性能)</option>
+              <option value="cpu">{{ $t('settings.thumbStrategyCpu') }}</option>
+              <option value="gpu">{{ $t('settings.thumbStrategyGpu') }}</option>
+              <option value="direct">{{ $t('settings.thumbStrategyDirect') }}</option>
             </select>
           </div>
         </div>
 
         <div class="settings-card__item" v-if="thumbStrategy === 'gpu'">
           <div class="settings-card__info">
-            <div class="settings-card__label">GPU 引擎选择</div>
-            <div class="settings-card__desc">选择系统调用 API 进行硬件解码。</div>
+            <div class="settings-card__label">{{ $t('settings.gpuEngine') }}</div>
+            <div class="settings-card__desc">{{ $t('settings.gpuEngineDesc') }}</div>
           </div>
           <div class="select-wrap">
             <select v-model="gpuEngine" @change="saveGpuEngine" class="select">
-              <option value="wic">WIC (Direct2D)</option>
+              <option value="wic">{{ $t('settings.gpuEngineWic') }}</option>
             </select>
           </div>
         </div>
@@ -201,11 +201,11 @@
 
       <!-- ── AI 模型配置 ──────────────────────────────────── -->
       <div class="settings-card">
-        <div class="settings-card__header">AI 模型配置 (AI Models)</div>
+        <div class="settings-card__header">{{ $t('settings.aiModels') }}</div>
 
         <div class="settings-card__item">
           <div class="settings-card__info">
-            <div class="settings-card__label">当前推理引擎状态</div>
+            <div class="settings-card__label">{{ $t('settings.aiEngineStatus') }}</div>
             <div class="settings-card__desc">
               {{ ai.providerLabel }} {{ ai.status.gpuName ? `(${ai.status.gpuName})` : '' }}
               <span v-if="!ai.status.clipLoaded" style="color: var(--color-warning);"> (未加载)</span>
@@ -213,39 +213,42 @@
             </div>
           </div>
           <button class="btn btn-secondary" @click="ai.initEngine" :disabled="ai.status.clipLoaded">
-            测试加载
+            {{ $t('settings.aiTestLoad') }}
           </button>
         </div>
 
         <div class="settings-card__item">
           <div class="settings-card__info">
-            <div class="settings-card__label">硬件加速策略 (Hardware Acceleration)</div>
+            <div class="settings-card__label">{{ $t('settings.aiHardwareStrategy') }}</div>
             <div class="settings-card__desc">
-              如果选择自动且加载模型时软件卡死，请强制选择 CPU。切换后需点击上方“测试加载”或重载引擎。
+              {{ $t('settings.aiHardwareDesc') }}
             </div>
           </div>
           <div class="select-wrap">
             <select v-model="aiProviderOverride" @change="saveAiProvider" class="select">
-              <option value="auto">自动 (探测最优硬件加速)</option>
-              <option value="cpu">强制使用 CPU</option>
+              <option value="auto">{{ $t('settings.aiAutoHardware') }}</option>
+              <option value="cpu">{{ $t('settings.aiForceCpu') }}</option>
             </select>
           </div>
         </div>
 
         <div class="settings-card__item">
           <div class="settings-card__info">
-            <div class="settings-card__label">导入模型文件</div>
-            <div class="settings-card__desc">支持导入从 Hugging Face 下载的 .onnx 格式模型文件。</div>
+            <div class="settings-card__label">{{ $t('settings.aiImportModel') }}</div>
+            <div class="settings-card__desc">{{ $t('settings.aiImportDesc') }}</div>
           </div>
-          <button class="btn btn-secondary" @click="importModel">
-            导入模型
-          </button>
+          <div style="display: flex; align-items: center; gap: var(--spacing-sm);">
+            <span style="font-size: var(--font-size-xs); color: var(--color-text-secondary);">{{ $t('settings.aiImportTip') }}</span>
+            <button class="btn btn-secondary" @click="importModel">
+              {{ $t('settings.aiImportBtn') }}
+            </button>
+          </div>
         </div>
 
         <div class="settings-card__item">
           <div class="settings-card__info">
-            <div class="settings-card__label">图像特征编码模型 (Vision Model)</div>
-            <div class="settings-card__desc">用于从图片中提取视觉特征。</div>
+            <div class="settings-card__label">{{ $t('settings.aiVisionModel') }}</div>
+            <div class="settings-card__desc">{{ $t('settings.aiVisionDesc') }}</div>
           </div>
           <div class="select-wrap">
             <select v-model="aiImageModel" @change="saveAiModels" class="select">
@@ -256,8 +259,8 @@
 
         <div class="settings-card__item">
           <div class="settings-card__info">
-            <div class="settings-card__label">文本特征编码模型 (Text Model)</div>
-            <div class="settings-card__desc">用于理解自然语言搜索词。</div>
+            <div class="settings-card__label">{{ $t('settings.aiTextModel') }}</div>
+            <div class="settings-card__desc">{{ $t('settings.aiTextDesc') }}</div>
           </div>
           <div class="select-wrap">
             <select v-model="aiTextModel" @change="saveAiModels" class="select">
@@ -293,8 +296,8 @@
 
         <div class="settings-card__item">
           <div class="settings-card__info">
-            <div class="settings-card__label">日志输出级别</div>
-            <div class="settings-card__desc">修改后需重启应用生效</div>
+            <div class="settings-card__label">{{ $t('settings.logLevel') }}</div>
+            <div class="settings-card__desc">{{ $t('settings.logLevelDesc') }}</div>
           </div>
           <div class="select-wrap">
             <select
@@ -302,18 +305,18 @@
               @change="saveLogLevel"
               class="select"
             >
-              <option value="trace">Trace (极度详细)</option>
-              <option value="debug">Debug (调试信息)</option>
-              <option value="info">Info (常规信息)</option>
-              <option value="warn">Warn (警告信息)</option>
-              <option value="error">Error (仅错误)</option>
+              <option value="trace">{{ $t('settings.logLevelTrace') }}</option>
+              <option value="debug">{{ $t('settings.logLevelDebug') }}</option>
+              <option value="info">{{ $t('settings.logLevelInfo') }}</option>
+              <option value="warn">{{ $t('settings.logLevelWarn') }}</option>
+              <option value="error">{{ $t('settings.logLevelError') }}</option>
             </select>
           </div>
         </div>
 
         <div class="settings-card__item">
           <div class="settings-card__info">
-            <div class="settings-card__label">日志目录</div>
+            <div class="settings-card__label">{{ $t('settings.logDir') }}</div>
             <div 
               class="settings-card__desc clickable-path" 
               @click="openDirectory(logDir)"
@@ -323,17 +326,17 @@
             </div>
           </div>
           <button class="btn btn-secondary" @click="changeLogDir">
-            更改目录
+            {{ $t('settings.changeDir') }}
           </button>
         </div>
 
         <div class="settings-card__item">
           <div class="settings-card__info">
-            <div class="settings-card__label">清除缓存</div>
-            <div class="settings-card__desc">清理浏览器缓存的图片并重载应用</div>
+            <div class="settings-card__label">{{ $t('settings.clearBrowserCache') }}</div>
+            <div class="settings-card__desc">{{ $t('settings.clearBrowserCacheDesc') }}</div>
           </div>
           <button class="btn btn-danger" @click="clearBrowserCache">
-            <RotateCcw :size="14" /> 缓存
+            <RotateCcw :size="14" /> {{ $t('settings.clearBrowserCacheBtn') }}
           </button>
         </div>
       </div>

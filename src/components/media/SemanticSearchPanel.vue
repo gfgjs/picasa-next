@@ -107,6 +107,7 @@
             v-for="item in ai.semanticResults"
             :key="item.id"
             :item="item"
+            :cache-dir="cacheDir"
             @click="emit('item-click', item)"
           />
         </div>
@@ -117,8 +118,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { Sparkles, Zap, Square, RefreshCw, AlertCircle, Search } from '@lucide/vue'
+import { appDataDir, join } from '@tauri-apps/api/path'
 import { useAiStore } from '../../stores/aiStore'
 import SemanticResultCard from './SemanticResultCard.vue'
 import type { SemanticSearchResult } from '../../types/ai'
@@ -129,6 +131,18 @@ const emit = defineEmits<{
 
 const ai = useAiStore()
 const isInitialising = ref(false)
+
+// Resolve cache directory (same logic as MediaGrid.vue)
+// 解析缓存目录（与 MediaGrid.vue 相同逻辑）
+const cacheDir = ref('')
+onMounted(async () => {
+  try {
+    const dir = await appDataDir()
+    cacheDir.value = (await join(dir, 'cache')).replace(/\\/g, '/')
+  } catch (e) {
+    console.warn('[SemanticSearchPanel] Failed to resolve cacheDir:', e)
+  }
+})
 
 async function initAndStart() {
   isInitialising.value = true

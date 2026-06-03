@@ -5,6 +5,7 @@
   "identifier": "com.picasanext.app",
   "build": {
     "beforeDevCommand": "npm run dev",
+
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
@@ -12,6 +13,20 @@
   "app": {
     "windows": [
       {
+        "label": "splashscreen",
+        "url": "splashscreen.html",
+        "title": "Picasa Next",
+        "width": 400,
+        "height": 280,
+        "decorations": false,
+        "resizable": false,
+        "center": true,
+        "visible": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true
+      },
+      {
+        "label": "main",
         "title": "Picasa Next",
         "width": 1280,
         "height": 820,
@@ -19,7 +34,8 @@
         "minHeight": 560,
         "decorations": true,
         "resizable": true,
-        "center": true
+        "center": true,
+        "visible": false
       }
     ],
     "security": {

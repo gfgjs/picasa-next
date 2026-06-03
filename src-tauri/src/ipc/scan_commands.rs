@@ -126,7 +126,10 @@ pub async fn start_scan(
     .map_err(|e| AppError::Io(e.to_string()))??;
 
     // Spawn background enrichment (fire-and-forget, emits events)
+    // After enrichment completes, remove the scan token so the AI pipeline
+    // can start without waiting forever (was the root cause of infinite yielding).
     // 生成后台内容丰富任务（触发后不管，发出事件）
+    // Enrichment 完成后移除 scan token，AI pipeline 才能正常启动（否则会无限让步）。
     {
         let state_arc2 = Arc::clone(&*state);
         let app_clone   = app.clone();
@@ -135,6 +138,12 @@ pub async fn start_scan(
             if let Err(e) = run_enrichment(&app_clone, &state_arc2.db_writer, root_id, &cancel_enrich) {
                 tracing::error!("Enrichment error for root_id={root_id}: {e}");
             }
+            // Remove the token for this root — work is done (or was cancelled).
+            // This prevents should_yield_to_higher_priority() from returning true forever.
+            // 移除此根目录的 token — 工作已完成（或已取消）。
+            // 这可以防止 should_yield_to_higher_priority() 永远返回 true。
+            state_arc2.scan_tokens.lock().unwrap().remove(&root_id);
+            tracing::info!("Scan token cleared for root_id={root_id} | 已清除扫描 token: root_id={root_id}");
         });
     }
 

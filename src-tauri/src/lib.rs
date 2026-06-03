@@ -17,6 +17,7 @@ pub mod utils;
 use std::sync::Arc;
 
 use tauri::Manager;
+use tauri_plugin_window_state::StateFlags;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
 
@@ -30,7 +31,20 @@ pub fn run() {
     tauri::Builder::default()
         // ── Plugins ───────────────────────────────────────────────────────
         // ── 插件 ───────────────────────────────────────────────────────
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                // Only persist geometry — never persist VISIBLE state.
+                // If VISIBLE were saved, the plugin would restore main window as
+                // visible on the NEXT launch (overriding visible:false in config),
+                // causing it to flash before setup() can hide it.
+                //
+                // 只持久化窗口几何信息，绝不持久化 VISIBLE 状态。
+                // 否则插件会在下次启动时恢复 visible:true，导致主窗口在
+                // splashscreen 出现前闪烁（setup() 来不及 hide() 它）。
+                .with_state_flags(StateFlags::SIZE | StateFlags::POSITION | StateFlags::MAXIMIZED)
+                .skip_initial_state("splashscreen")
+                .build()
+        )
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
@@ -81,11 +95,6 @@ pub fn run() {
                 info!("ORT_DYLIB_PATH already set (by build system): {}", std::env::var("ORT_DYLIB_PATH").unwrap_or_default());
             }
 
-
-            let ort_init_res = ort::init()
-                .with_name("PicasaNext")
-                .commit();
-            info!("ORT initialization result: {:?}", ort_init_res);
 
 
             // ── Write connection + migrations ─────────────────────────────
@@ -213,8 +222,33 @@ pub fn run() {
                 gpu_engine,
             );
 
+            // ── Pre-warm one read-pool connection ─────────────────────────────
+            // Eagerly acquire (and immediately release) one read connection so the pool
+            // establishes its first SQLite file handle during WebView2 cold-start, which
+            // runs concurrently. By the time the frontend's first IPC calls arrive the
+            // connection is already open and warmed up, saving ~50-100ms per call.
+            //
+            // ── 预热一个读连接池连接 ──────────────────────────────────────────
+            // 提前获取（立即释放）一个读连接，让连接池在 WebView2 冷启动（并发进行）期间
+            // 建立第一个 SQLite 文件句柄。等前端首批 IPC 调用到达时，连接已就绪，
+            // 每次调用可节省约 50-100ms。
+            drop(app_state.db_read_pool.get());
+
             app.manage(Arc::new(app_state));
             info!("AppState initialised | 应用状态 (AppState) 初始化完成");
+
+            // Force-hide the main window regardless of what tauri-plugin-window-state
+            // may have restored from the previous session (it saves visible:true after
+            // close_splashscreen shows the window). The splashscreen is visible:true by
+            // default; main window will be revealed only when close_splashscreen is invoked
+            // by the frontend after App.vue onMounted completes.
+            //
+            // 强制隐藏主窗口，覆盖 tauri-plugin-window-state 可能恢复的上次 visible:true 状态。
+            // 主窗口仅在前端 App.vue onMounted 完成并调用 close_splashscreen 后才显示。
+            if let Some(main_win) = app.get_webview_window("main") {
+                let _ = main_win.hide();
+            }
+
             Ok(())
         })
         // ── IPC command handlers ───────────────────────────────────────────
@@ -259,6 +293,7 @@ pub fn run() {
             // config
             // config
             ipc::config_commands::get_app_config,
+            ipc::config_commands::get_startup_config,
             ipc::config_commands::set_app_config,
             ipc::config_commands::get_thumb_cache_dir,
             ipc::config_commands::get_log_dir,
@@ -267,6 +302,7 @@ pub fn run() {
             ipc::system_commands::show_in_explorer,
             ipc::system_commands::open_directory,
             ipc::system_commands::move_to_trash,
+            ipc::system_commands::close_splashscreen,
             // AI
             // AI
             ipc::ai_commands::detect_ai_provider,

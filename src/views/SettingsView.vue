@@ -199,6 +199,74 @@
         </div>
       </div>
 
+      <!-- ── AI 模型配置 ──────────────────────────────────── -->
+      <div class="settings-card">
+        <div class="settings-card__header">AI 模型配置 (AI Models)</div>
+
+        <div class="settings-card__item">
+          <div class="settings-card__info">
+            <div class="settings-card__label">当前推理引擎状态</div>
+            <div class="settings-card__desc">
+              {{ ai.providerLabel }} {{ ai.status.gpuName ? `(${ai.status.gpuName})` : '' }}
+              <span v-if="!ai.status.clipLoaded" style="color: var(--color-warning);"> (未加载)</span>
+              <span v-else style="color: var(--color-success);"> (已加载)</span>
+            </div>
+          </div>
+          <button class="btn btn-secondary" @click="ai.initEngine" :disabled="ai.status.clipLoaded">
+            测试加载
+          </button>
+        </div>
+
+        <div class="settings-card__item">
+          <div class="settings-card__info">
+            <div class="settings-card__label">硬件加速策略 (Hardware Acceleration)</div>
+            <div class="settings-card__desc">
+              如果选择自动且加载模型时软件卡死，请强制选择 CPU。切换后需点击上方“测试加载”或重载引擎。
+            </div>
+          </div>
+          <div class="select-wrap">
+            <select v-model="aiProviderOverride" @change="saveAiProvider" class="select">
+              <option value="auto">自动 (探测最优硬件加速)</option>
+              <option value="cpu">强制使用 CPU</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="settings-card__item">
+          <div class="settings-card__info">
+            <div class="settings-card__label">导入模型文件</div>
+            <div class="settings-card__desc">支持导入从 Hugging Face 下载的 .onnx 格式模型文件。</div>
+          </div>
+          <button class="btn btn-secondary" @click="importModel">
+            导入模型
+          </button>
+        </div>
+
+        <div class="settings-card__item">
+          <div class="settings-card__info">
+            <div class="settings-card__label">图像特征编码模型 (Vision Model)</div>
+            <div class="settings-card__desc">用于从图片中提取视觉特征。</div>
+          </div>
+          <div class="select-wrap">
+            <select v-model="aiImageModel" @change="saveAiModels" class="select">
+              <option v-for="m in availableAiModels" :key="m" :value="m">{{ m }}</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="settings-card__item">
+          <div class="settings-card__info">
+            <div class="settings-card__label">文本特征编码模型 (Text Model)</div>
+            <div class="settings-card__desc">用于理解自然语言搜索词。</div>
+          </div>
+          <div class="select-wrap">
+            <select v-model="aiTextModel" @change="saveAiModels" class="select">
+              <option v-for="m in availableAiModels" :key="m" :value="m">{{ m }}</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
       <!-- ── 开发者工具 ─────────────────────────────────── -->
       <div class="settings-card">
         <div class="settings-card__header">{{ $t('sidebar.debugSettings') || '开发者工具' }}</div>
@@ -280,6 +348,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { useUiStore } from '../stores/uiStore'
 import { useScanStore } from '../stores/scanStore'
 import { useMediaStore } from '../stores/mediaStore'
+import { useAiStore } from '../stores/aiStore'
 import { useI18n } from 'vue-i18n'
 import { X, Database, Paintbrush, RotateCcw } from '@lucide/vue'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
@@ -288,6 +357,7 @@ import { IPC } from '../constants/ipc'
 const ui = useUiStore()
 const scan = useScanStore()
 const media = useMediaStore()
+const ai = useAiStore()
 const router = useRouter()
 const { t } = useI18n()
 
@@ -302,6 +372,11 @@ const logLevel = ref('info')
 
 const thumbStrategy = ref('cpu')
 const gpuEngine = ref('wic')
+
+const availableAiModels = ref<string[]>([])
+const aiImageModel = ref('cn-clip-vit-b16-image.onnx')
+const aiTextModel = ref('cn-clip-vit-b16-text.onnx')
+const aiProviderOverride = ref('auto')
 
 const thumbGenPercent = computed(() => {
   const { generated, total } = scan.thumbGenProgress
@@ -352,6 +427,18 @@ onMounted(async () => {
 
     const val6 = await invoke<string | null>('get_app_config', { key: 'log_level' })
     if (val6) logLevel.value = val6
+
+    const valImage = await invoke<string | null>('get_app_config', { key: 'ai_image_model' })
+    if (valImage) aiImageModel.value = valImage
+
+    const valText = await invoke<string | null>('get_app_config', { key: 'ai_text_model' })
+    if (valText) aiTextModel.value = valText
+
+    const valProvider = await invoke<string | null>('get_app_config', { key: 'ai_provider_override' })
+    if (valProvider) aiProviderOverride.value = valProvider
+
+    availableAiModels.value = await ai.listAiModels()
+    await ai.fetchStatus()
   } catch (e) {
     console.error('Failed to get config:', e)
   }
@@ -453,6 +540,39 @@ async function saveHoverScale() {
     document.documentElement.classList.remove('disable-hover-scale')
   } else {
     document.documentElement.classList.add('disable-hover-scale')
+  }
+}
+
+async function importModel() {
+  try {
+    const selected = await openDialog({
+      multiple: false,
+      title: '导入 AI 模型 (.onnx)',
+      filters: [{ name: 'ONNX Model', extensions: ['onnx'] }]
+    })
+    if (selected && typeof selected === 'string') {
+      await ai.importAiModel(selected)
+      availableAiModels.value = await ai.listAiModels()
+      ui.addToast('success', '模型导入成功，请在下拉列表中选择。')
+    }
+  } catch (e) {
+    ui.addToast('error', `导入失败: ${e}`)
+  }
+}
+
+async function saveAiProvider() {
+  await saveConfig('ai_provider_override', aiProviderOverride.value)
+  ui.addToast('success', '硬件加速策略已保存！需点击“测试加载”或重载引擎后生效。')
+}
+
+async function saveAiModels() {
+  await saveConfig('ai_image_model', aiImageModel.value)
+  await saveConfig('ai_text_model', aiTextModel.value)
+  try {
+    await ai.reloadAiEngine()
+    ui.addToast('success', 'AI 引擎重载成功，已应用新模型！')
+  } catch (e) {
+    ui.addToast('error', `AI 引擎重载失败: ${e}`)
   }
 }
 

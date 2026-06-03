@@ -57,6 +57,18 @@ export const IPC = {
   // ── Dev / maintenance ─────────────────────────────────────────────────
   // ── 开发 / 维护 ─────────────────────────────────────────────────
   CLEAR_ALL_DATA:   'clear_all_data',
+
+  // ── AI ────────────────────────────────────────────────────────────────
+  // ── AI ────────────────────────────────────────────────────────────────
+  DETECT_AI_PROVIDER: 'detect_ai_provider',
+  GET_AI_STATUS:      'get_ai_status',
+  SEMANTIC_SEARCH_CMD: 'semantic_search_cmd',
+  START_AI_ANALYSIS:  'start_ai_analysis',
+  STOP_AI_ANALYSIS:   'stop_ai_analysis',
+  REBUILD_EMBEDDINGS: 'rebuild_embeddings',
+  LIST_AI_MODELS:     'list_ai_models',
+  IMPORT_AI_MODEL:    'import_ai_model',
+  RELOAD_AI_ENGINE:   'reload_ai_engine',
 } as const
 
 // ── Tauri events ──────────────────────────────────────────────────────────

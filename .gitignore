@@ -1,3 +1,4 @@
+models
 # Logs
 logs
 *.log
@@ -22,3 +23,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Python environments
+venv/
+Chinese-CLIP/

@@ -13,7 +13,7 @@
 
     <!-- Default slot: media content OR semantic search panel -->
     <!-- 默认插槽：媒体内容或语义搜索面板 -->
-    <SemanticSearchPanel @item-click="onSemanticItemClick" />
+    <SemanticSearchPanel v-show="route.path === '/'" @item-click="onSemanticItemClick" />
     <RouterView />
 
     <template #statusbar>
@@ -44,10 +44,12 @@ import MediaDetailOverlay from './components/media/MediaDetailOverlay.vue'
 import SemanticSearchPanel from './components/media/SemanticSearchPanel.vue'
 import ToastContainer     from './components/common/ToastContainer.vue'
 import { useAiStore }     from './stores/aiStore'
+import { useRoute }       from 'vue-router'
 import type { SemanticSearchResult } from './types/ai'
 
 const ui = useUiStore()
 const ai = useAiStore()
+const route = useRoute()
 
 function onSemanticItemClick(item: SemanticSearchResult) {
   // TODO Phase 4A+: open detail overlay for the clicked result

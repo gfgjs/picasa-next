@@ -160,6 +160,32 @@ export const useAiStore = defineStore('ai', () => {
     }
   }
 
+  /** List available AI models | 列出可用的 AI 模型 */
+  async function listAiModels(): Promise<string[]> {
+    try {
+      return await invoke<string[]>('list_ai_models')
+    } catch (e) {
+      console.error('[AI] List models error | 列出模型错误:', e)
+      return []
+    }
+  }
+
+  /** Import an AI model | 导入 AI 模型 */
+  async function importAiModel(sourcePath: string): Promise<void> {
+    await invoke('import_ai_model', { sourcePath })
+  }
+
+  /** Reload the AI engine | 重新加载 AI 引擎 */
+  async function reloadAiEngine(): Promise<void> {
+    try {
+      await invoke('reload_ai_engine')
+      await fetchStatus()
+    } catch (e) {
+      console.error('[AI] Reload engine error | 重载引擎错误:', e)
+      throw e
+    }
+  }
+
   return {
     // state
     status,
@@ -183,5 +209,8 @@ export const useAiStore = defineStore('ai', () => {
     setSearchMode,
     startStatusPolling,
     stopStatusPolling,
+    listAiModels,
+    importAiModel,
+    reloadAiEngine,
   }
 })

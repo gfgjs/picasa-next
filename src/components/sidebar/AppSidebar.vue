@@ -60,6 +60,31 @@
             </div>
           </div>
         </li>
+        <li>
+          <div class="sidebar__nav-item" style="flex-direction: column; align-items: flex-start; gap: 8px; cursor: default;">
+            <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span class="sidebar__nav-icon"><Sparkles :size="18" /></span>
+                <span class="sidebar__nav-label">全量 AI 分析</span>
+              </div>
+              <button class="btn-icon" @click="toggleAiAnalysis" :disabled="isAiInitialising" :title="ai.status.isAnalyzing ? '停止分析' : '开始分析'">
+                <Square v-if="ai.status.isAnalyzing" :size="14" />
+                <RefreshCw v-else-if="isAiInitialising" :size="14" class="spinning" style="animation: spin 1s linear infinite;" />
+                <Play v-else :size="14" />
+              </button>
+            </div>
+            
+            <div v-if="ai.status.isAnalyzing || ai.status.totalItems > 0" style="width: 100%; font-size: 12px; color: var(--color-text-tertiary);">
+              <div v-if="ai.status.isAnalyzing" class="progress-bar" style="margin-bottom: 4px;">
+                <div class="progress-bar__fill" style="background: var(--color-accent);" :style="{ width: ai.analyzeProgress + '%' }" />
+              </div>
+              <div style="display: flex; justify-content: space-between;">
+                <span>{{ ai.status.analyzedItems }} / {{ ai.status.totalItems }}</span>
+                <span style="font-family: monospace;">{{ ai.analyzeProgress }}%</span>
+              </div>
+            </div>
+          </div>
+        </li>
       </ul>
     </section>
 
@@ -175,6 +200,7 @@ import { IPC } from '../../constants/ipc'
 import { useUiStore } from '../../stores/uiStore'
 import { useScanStore } from '../../stores/scanStore'
 import { useMediaStore } from '../../stores/mediaStore'
+import { useAiStore } from '../../stores/aiStore'
 import { useFolderTree } from '../../composables/useFolderTree'
 import {
   Aperture, FolderPlus, ChevronRight, Folder,
@@ -185,6 +211,7 @@ import {
 const ui       = useUiStore()
 const scan     = useScanStore()
 const media    = useMediaStore()
+const ai       = useAiStore()
 const folderTree = useFolderTree()
 const router   = useRouter()
 const route    = useRoute()
@@ -267,6 +294,25 @@ function toggleThumbGen() {
     scan.stopFullThumbnailGeneration()
   } else {
     scan.startFullThumbnailGeneration()
+  }
+}
+
+const isAiInitialising = ref(false)
+
+async function toggleAiAnalysis() {
+  if (ai.status.isAnalyzing) {
+    await ai.stopAnalysis()
+  } else {
+    if (isAiInitialising.value) return
+    isAiInitialising.value = true
+    try {
+      if (!ai.status.clipLoaded) {
+        await ai.initEngine()
+      }
+      await ai.startAnalysis()
+    } finally {
+      isAiInitialising.value = false
+    }
   }
 }
 

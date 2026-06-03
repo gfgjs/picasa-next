@@ -64,50 +64,33 @@ pub struct ProviderInfo {
     pub gpu_name: String,
 }
 
-/// Detect the best available execution provider.
-/// 探测最优的执行提供者。
-pub fn detect_provider(probe_model_path: &std::path::Path) -> ProviderInfo {
-    if !probe_model_path.exists() {
-        warn!("Probe model not found at {:?}, falling back to CPU | 探针模型未找到，回退到 CPU", probe_model_path);
+pub fn detect_best_provider() -> ProviderInfo {
+    #[cfg(target_os = "windows")]
+    {
+        return ProviderInfo { provider: AiProvider::DirectML, gpu_name: "DirectML GPU".to_string() };
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        return ProviderInfo { provider: AiProvider::CoreML, gpu_name: "Apple Neural Engine".to_string() };
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        // Try CUDA? Or just CPU for now on Linux
         return ProviderInfo { provider: AiProvider::Cpu, gpu_name: String::new() };
     }
 
-    #[cfg(target_os = "windows")]
-    {
-        if try_ep_directml(probe_model_path) {
-            let gpu_name = detect_gpu_name_windows();
-            info!("AI provider selected: DirectML | AI 提供者选择：DirectML, GPU: {}", gpu_name);
-            return ProviderInfo { provider: AiProvider::DirectML, gpu_name };
-        }
-    }
-
-    if try_ep_cuda(probe_model_path) {
-        info!("AI provider selected: CUDA | AI 提供者选择：CUDA");
-        return ProviderInfo { provider: AiProvider::CUDA, gpu_name: "NVIDIA GPU".to_string() };
-    }
-
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    {
-        if try_ep_coreml(probe_model_path) {
-            info!("AI provider selected: CoreML | AI 提供者选择：CoreML");
-            return ProviderInfo { provider: AiProvider::CoreML, gpu_name: "Apple Silicon".to_string() };
-        }
-    }
-
-    if try_ep_openvino(probe_model_path) {
-        info!("AI provider selected: OpenVINO | AI 提供者选择：OpenVINO");
-        return ProviderInfo { provider: AiProvider::OpenVINO, gpu_name: "Intel GPU/CPU".to_string() };
-    }
-
-    info!("AI provider selected: CPU (fallback) | AI 提供者选择：CPU（回退）");
+    #[allow(unreachable_code)]
     ProviderInfo { provider: AiProvider::Cpu, gpu_name: String::new() }
 }
 
 /// Run a probe inference to check if the EP works.
 /// 运行探针推理以检查 EP 是否可用。
 fn run_probe(mut session: ort::session::Session) -> bool {
-    let flat: Vec<f32> = vec![0.0f32; 1 * 3 * 32 * 32];
-    ort::value::Tensor::from_array(([1i64, 3, 32, 32], flat))
+    // 改为匹配 CLIP image encoder 的输入尺寸：1x3x224x224
+    let flat: Vec<f32> = vec![0.0f32; 1 * 3 * 224 * 224];
+    ort::value::Tensor::from_array(([1i64, 3, 224, 224], flat))
         .and_then(|tensor| session.run(ort::inputs!["pixel_values" => tensor]))
         .is_ok()
 }

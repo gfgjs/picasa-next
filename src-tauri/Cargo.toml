@@ -67,8 +67,8 @@ crossbeam-channel = "0.5.15"
 
 # ── AI inference ───────────────────────────────────────────────────────────────
 # ONNX Runtime (load-dynamic: ONNX Runtime DLL loaded at runtime via ORT_DYLIB_PATH)
-# ONNX Runtime（load-dynamic：通过 ORT_DYLIB_PATH 在运行时动态加载 ONNX Runtime DLL）
-ort       = { version = "2.0.0-rc.12", features = ["load-dynamic", "directml"] }
+# ONNX Runtime（使用 download-binaries 自动下载并复制官方 DLL，避免使用 Windows System32 自带的旧版库导致死锁）
+ort       = { version = "2.0.0-rc.12", features = ["load-dynamic", "directml", "download-binaries", "copy-dylibs"] }
 ndarray   = "0.16"
 # HuggingFace tokenizers — BERT WordPiece for Chinese-CLIP text encoder
 # HuggingFace tokenizers — 用于 Chinese-CLIP 文本编码器的 BERT WordPiece

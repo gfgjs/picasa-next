@@ -59,11 +59,64 @@ pub async fn add_scan_root(
 /// Remove a scan root and all its data (CASCADE).
 /// 移除扫描根目录及其所有数据 (CASCADE)。
 #[tauri::command]
-pub async fn remove_scan_root(id: i64, state: State<'_, Arc<AppState>>) -> Result<()> {
-    info!("User action: Removing scan root ID: {} | 用户操作：正在移除扫描根目录 ID: {}", id, id);
+pub async fn remove_scan_root(
+    id: i64, 
+    clear_thumbnails: Option<bool>,
+    state: State<'_, Arc<AppState>>,
+    app: AppHandle,
+) -> Result<()> {
+    let clear = clear_thumbnails.unwrap_or(false);
+    info!("User action: Removing scan root ID: {} (clear_thumbnails={}) | 用户操作：正在移除扫描根目录 ID: {}", id, clear, id);
+    
     state.cancel_scan(id);
-    let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    q::delete_scan_root(&conn, id)?;
+
+    let cache_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| AppError::Io(e.to_string()))?
+        .join("cache")
+        .join("thumbnails");
+
+    let mut thumb_paths_to_delete = Vec::new();
+
+    if clear {
+        let pool = state.db_read_pool.get().map_err(AppError::from)?;
+        let sql = "
+            SELECT m.thumb_path 
+            FROM media_items m
+            JOIN directories d ON m.directory_id = d.id
+            WHERE d.root_id = ? AND m.thumb_path IS NOT NULL
+        ";
+        let mut stmt = pool.prepare(sql).map_err(|e| AppError::Db(e.to_string()))?;
+        let rows = stmt.query_map([id], |row| row.get::<_, String>(0)).map_err(|e| AppError::Db(e.to_string()))?;
+        for path in rows.flatten() {
+            thumb_paths_to_delete.push(path);
+        }
+    }
+
+    {
+        let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        q::delete_scan_root(&conn, id)?;
+    }
+    
+    if clear && !thumb_paths_to_delete.is_empty() {
+        tokio::spawn(async move {
+            info!("Removing {} thumbnails for root id={} | 正在为 root id={} 删除 {} 个缩略图", thumb_paths_to_delete.len(), id, id, thumb_paths_to_delete.len());
+            let mut deleted = 0;
+            for tp in thumb_paths_to_delete {
+                let full_path = cache_dir.join(tp);
+                if let Err(e) = std::fs::remove_file(&full_path) {
+                    if e.kind() != std::io::ErrorKind::NotFound {
+                        tracing::warn!("Failed to delete thumbnail {:?}: {}", full_path, e);
+                    }
+                } else {
+                    deleted += 1;
+                }
+            }
+            info!("Successfully deleted {} thumbnails | 成功删除 {} 个缩略图", deleted, deleted);
+        });
+    }
+
     info!("Scan root removed: id={id} | 已移除扫描根目录: id={id}");
     Ok(())
 }

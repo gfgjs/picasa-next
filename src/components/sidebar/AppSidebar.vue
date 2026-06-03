@@ -381,11 +381,23 @@ async function addRoot() {
 }
 
 async function removeRoot(id: number) {
-  if (!confirm(t('sidebar.confirmRemove'))) return
+  const root = scan.scanRoots.find(r => r.id === id);
+  const name = root?.alias ?? root?.path.split('/').pop() ?? '该文件夹';
+  
+  let clearThumbnails = true;
+  
+  // Custom dialog to confirm removal and whether to clear thumbnails
+  // 自定义对话框确认是否移除以及是否清除缩略图缓存
+  const confirmed = confirm(`确定要移除 "${name}" 吗？\n\n这会停止扫描并从数据库中删除相关记录。`);
+  if (!confirmed) return;
+
+  clearThumbnails = confirm(`是否同时清除该文件夹下已生成的缩略图缓存？\n\n如果选择“取消”，缩略图文件将保留在磁盘上，直到手动清理。`);
+
   try {
-    await scan.removeScanRoot(id)
+    await invoke('remove_scan_root', { id, clearThumbnails });
     media.loadStats()
     folderTree.loadRoots(scan.scanRoots)
+    ui.addToast('success', clearThumbnails ? '已移除文件夹并开始清理缩略图缓存' : '已移除文件夹');
   } catch (e) {
     ui.addToast('error', t('sidebar.removeFolderFailed') + ' ' + e)
   }

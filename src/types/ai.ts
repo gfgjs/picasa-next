@@ -25,6 +25,7 @@ export interface SemanticSearchResult {
   thumbStatus: number
   width: number
   height: number
+  directoryId: number | null
   /** Cosine similarity in [0, 1] | [0, 1] 范围内的余弦相似度 */
   similarity: number
 }

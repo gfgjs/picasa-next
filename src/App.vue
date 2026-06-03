@@ -58,9 +58,30 @@ const media = useMediaStore()
 const route = useRoute()
 
 function onSemanticItemClick(item: SemanticSearchResult) {
-  // Open the detail overlay for the clicked semantic search result.
-  // 为点击的语义搜索结果打开详情视图。
-  media.openDetail(item.id)
+  // 1. Close semantic search mode
+  // 1. 关闭语义搜索模式
+  ai.isSemanticMode = false
+  ui.isSearching = false
+  ui.searchQuery = ''
+
+  // 2. Open detail view and set active directory if available
+  // 2. 打开详情视图，并在可能的情况下设置活动目录
+  if (item.directoryId) {
+    ui.activeDirectoryId = item.directoryId
+    ui.activeSmartAlbum = null
+    
+    // Compute layout for the directory in the background so context is available
+    // 在后台计算目录的布局，以便提供上下文
+    media.computeLayout({
+      directoryId: item.directoryId,
+      containerWidth: window.innerWidth,
+      rowHeight: ui.gridRowHeight,
+    }).then(() => {
+      media.openDetail(item.id)
+    })
+  } else {
+    media.openDetail(item.id)
+  }
 }
 
 // Init theme

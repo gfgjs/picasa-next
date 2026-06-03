@@ -762,7 +762,7 @@ pub fn search_media(
 ) -> Result<Vec<SearchResult>> {
     let pattern = format!("%{query}%");
     let mut sql = String::from(
-        "SELECT id, file_name, media_type, thumb_path, thumbhash, thumb_status, width, height
+        "SELECT id, file_name, media_type, thumb_path, thumbhash, thumb_status, width, height, directory_id
          FROM media_items
          WHERE is_deleted=0 AND companion_of IS NULL AND file_name LIKE ?1",
     );
@@ -815,6 +815,7 @@ pub fn search_media(
             thumb_status: row.get(5)?,
             width:        row.get(6)?,
             height:       row.get(7)?,
+            directory_id: row.get(8)?,
         })
     })?;
     rows.map(|r| r.map_err(AppError::from)).collect()
@@ -1074,7 +1075,7 @@ pub fn get_search_results_by_ids(
                     WHEN m.thumb_path IS NULL THEN 3
                     ELSE m.thumb_status
                 END AS thumb_status,
-                m.width, m.height
+                m.width, m.height, m.directory_id
          FROM media_items m
          JOIN directories d ON m.directory_id = d.id
          JOIN scan_roots r ON d.root_id = r.id
@@ -1093,6 +1094,7 @@ pub fn get_search_results_by_ids(
             thumb_status: row.get(5)?,
             width:        row.get(6)?,
             height:       row.get(7)?,
+            directory_id: row.get(8)?,
         })
     })?;
     rows.map(|r| r.map_err(AppError::from)).collect()

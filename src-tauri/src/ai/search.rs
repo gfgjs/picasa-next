@@ -93,6 +93,7 @@ pub fn semantic_search(
                 thumb_status: item.thumb_status,
                 width:        item.width,
                 height:       item.height,
+                directory_id: item.directory_id,
                 similarity,
             }
         })

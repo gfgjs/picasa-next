@@ -30,6 +30,8 @@
             v-else-if="detail.mediaType === 'video'"
             :src="absPath"
             class="detail-viewer__video"
+            :class="{ 'is-dragging': state.isDragging.value }"
+            :style="{ transform: state.transform.value }"
             controls
             autoplay
           />
@@ -389,13 +391,16 @@ async function toggleLive() {
   pointer-events: none;
   transition: transform 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94);
 }
-.detail-viewer__img.is-dragging {
+.detail-viewer__img.is-dragging,
+.detail-viewer__video.is-dragging {
   transition: none;
 }
 .detail-viewer__video,
 .detail-viewer__audio {
   max-width: 90%;
   max-height: 90%;
+  transform-origin: center;
+  transition: transform 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94);
 }
 .detail-viewer__document {
   display: flex;

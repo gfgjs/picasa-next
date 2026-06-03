@@ -166,6 +166,7 @@ pub struct SearchResult {
     pub thumb_status: i64,
     pub width:        i64,
     pub height:       i64,
+    pub directory_id: Option<i64>,
 }
 
 // ── App stats ────────────────────────────────────────────────────────────────
@@ -279,6 +280,7 @@ pub struct SemanticSearchResult {
     pub thumb_status: i64,
     pub width:        i64,
     pub height:       i64,
+    pub directory_id: Option<i64>,
     /// Cosine similarity in [0, 1] range.
     /// [0, 1] 范围内的余弦相似度。
     pub similarity:   f32,

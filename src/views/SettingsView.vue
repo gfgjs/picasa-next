@@ -109,24 +109,23 @@
             <div class="settings-card__label">{{ $t('settings.thumbSize') || '缩略图大小' }}</div>
             <div class="settings-card__desc">{{ $t('settings.thumbSizeDesc') || '生成的缩略图的最大边长 (像素)' }}</div>
           </div>
-          <div class="setting-slider-group">
-            <input
-              type="range"
-              v-model.number="thumbSize"
-              min="4"
-              max="1024"
-              step="1"
-              class="input-range"
-              @change="saveThumbSize"
-            />
-            <input
-              type="number"
-              v-model.number="thumbSize"
-              min="4"
-              max="1024"
-              class="input-number"
-              @change="saveThumbSize"
-            />
+          <div class="setting-segmented-control">
+            <label class="segment-label" :class="{ active: thumbSize === 120 }">
+              <input type="radio" v-model.number="thumbSize" :value="120" @change="saveThumbSize" class="visually-hidden">
+              小 (120px)
+            </label>
+            <label class="segment-label" :class="{ active: thumbSize === 240 }">
+              <input type="radio" v-model.number="thumbSize" :value="240" @change="saveThumbSize" class="visually-hidden">
+              中 (240px)
+            </label>
+            <label class="segment-label" :class="{ active: thumbSize === 480 }">
+              <input type="radio" v-model.number="thumbSize" :value="480" @change="saveThumbSize" class="visually-hidden">
+              大 (480px)
+            </label>
+            <label class="segment-label" :class="{ active: thumbSize === 960 }">
+              <input type="radio" v-model.number="thumbSize" :value="960" @change="saveThumbSize" class="visually-hidden">
+              超清 (960px)
+            </label>
           </div>
         </div>
 
@@ -769,5 +768,45 @@ function closeSettings() {
   background: var(--color-error);
   color: #fff;
   border-color: var(--color-error);
+}
+
+/* ── Segmented Control ─────────────────────────────────────────────────── */
+.setting-segmented-control {
+  display: flex;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 2px;
+  gap: 2px;
+}
+.segment-label {
+  flex: 1;
+  text-align: center;
+  padding: 6px 12px;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  border-radius: calc(var(--radius-md) - 2px);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  user-select: none;
+}
+.segment-label:hover {
+  color: var(--color-text-primary);
+}
+.segment-label.active {
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  font-weight: 500;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
 }
 </style>

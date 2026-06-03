@@ -28,6 +28,21 @@ pub struct ThumbConfig {
     pub gpu_engine:      String,
 }
 
+pub fn snap_to_tier(size: u32) -> u32 {
+    let tiers = [120, 240, 480, 960];
+    let mut closest = tiers[0];
+    let mut min_diff = size.abs_diff(closest);
+
+    for &tier in &tiers[1..] {
+        let diff = size.abs_diff(tier);
+        if diff < min_diff {
+            min_diff = diff;
+            closest = tier;
+        }
+    }
+    closest
+}
+
 pub enum DecodeResult {
     Ready(ThumbResult),
     ToEncode {

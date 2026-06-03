@@ -20,5 +20,8 @@ export const DEFAULTS = {
   SCAN_PROGRESS_INTERVAL: 500,
 } as const
 
+export const THUMB_SIZE_TIERS = [120, 240, 480, 960] as const
+export type ThumbSizeTier = typeof THUMB_SIZE_TIERS[number]
+
 export const SEPARATOR_HEIGHT = 36  // px — fixed DateSeparator row height
 // px — 固定的 DateSeparator 行高

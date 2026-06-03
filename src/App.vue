@@ -60,15 +60,13 @@ const route = useRoute()
 function onSemanticItemClick(item: SemanticSearchResult) {
   // 1. Close semantic search mode
   // 1. 关闭语义搜索模式
-  ai.isSemanticMode = false
   ui.isSearching = false
   ui.searchQuery = ''
 
   // 2. Open detail view and set active directory if available
   // 2. 打开详情视图，并在可能的情况下设置活动目录
   if (item.directoryId) {
-    ui.activeDirectoryId = item.directoryId
-    ui.activeSmartAlbum = null
+    ui.setActiveDirectory(item.directoryId)
     
     // Compute layout for the directory in the background so context is available
     // 在后台计算目录的布局，以便提供上下文

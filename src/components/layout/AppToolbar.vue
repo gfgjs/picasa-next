@@ -115,6 +115,7 @@
         <ArrowUp v-else :size="16" />
       </button>
     </div>
+    </div>
   </div>
 </template>
 

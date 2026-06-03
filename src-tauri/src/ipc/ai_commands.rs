@@ -55,7 +55,24 @@ fn ensure_engine_initialised(state: &AppState) -> Result<()> {
         .map_err(|e| AppError::Io(format!("Cannot create models dir | 无法创建模型目录: {e}")))?;
 
     info!("Initialising AI engine | 正在初始化 AI 引擎...");
-    let pool = AiEnginePool::init(&models)?;
+    let conn = state.db_read_pool.get()?;
+    let image_model_name = get_config(&conn, "ai_image_model")
+        .unwrap_or(None)
+        // FP16 external-data format: 3.77 MB header + 172 MB weights loaded via memory-map.
+        // MUCH faster than the monolithic fp32 format (330 MB Protobuf blob takes 5+ min to parse).
+        // FP16 外部数据格式：3.77 MB 主文件 + 172 MB 权重通过内存映射加载，比单体 fp32 格式快数十倍。
+        .unwrap_or_else(|| "vit-b-16.img.fp16.onnx".to_string());
+    let text_model_name = get_config(&conn, "ai_text_model")
+        .unwrap_or(None)
+        // FP16 external-data format: 2.18 MB header + 194.7 MB weights.
+        // FP16 外部数据格式：2.18 MB 主文件 + 194.7 MB 权重。
+        .unwrap_or_else(|| "vit-b-16.txt.fp16.onnx".to_string());
+
+    let provider_override = get_config(&conn, "ai_provider_override")
+        .unwrap_or(None)
+        .unwrap_or_else(|| "auto".to_string());
+        
+    let pool = AiEnginePool::init(&models, &image_model_name, &text_model_name, &provider_override)?;
 
     // Persist detected provider to app_config
     // 将探测到的提供者持久化到 app_config
@@ -219,6 +236,70 @@ pub async fn stop_ai_analysis(
 ) -> std::result::Result<(), String> {
     info!("Stopping AI analysis pipeline | 停止 AI 分析流水线");
     state.cancel_ai_analysis();
+    Ok(())
+}
+
+/// List all AI models in the models directory.
+#[tauri::command]
+pub async fn list_ai_models(
+    state: State<'_, Arc<AppState>>,
+) -> std::result::Result<Vec<String>, String> {
+    let models = models_dir(&state);
+    let mut files = Vec::new();
+    if models.exists() && models.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(models) {
+            for entry in entries.flatten() {
+                if let Ok(file_type) = entry.file_type() {
+                    if file_type.is_file() {
+                        if let Some(ext) = entry.path().extension() {
+                            if ext == "onnx" {
+                                if let Some(name) = entry.file_name().to_str() {
+                                    files.push(name.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
+/// Import an AI model into the models directory.
+#[tauri::command]
+pub async fn import_ai_model(
+    source_path: String,
+    state: State<'_, Arc<AppState>>,
+) -> std::result::Result<(), String> {
+    let models = models_dir(&state);
+    if !models.exists() {
+        std::fs::create_dir_all(&models).map_err(|e| e.to_string())?;
+    }
+    
+    let source = std::path::Path::new(&source_path);
+    let file_name = source.file_name().ok_or("Invalid file name")?;
+    let dest = models.join(file_name);
+    
+    std::fs::copy(source, &dest).map_err(|e| format!("Failed to copy file: {}", e))?;
+    Ok(())
+}
+
+/// Reload the AI engine with new models
+#[tauri::command]
+pub async fn reload_ai_engine(
+    state: State<'_, Arc<AppState>>,
+) -> std::result::Result<(), String> {
+    info!("Reloading AI engine | 重新加载 AI 引擎");
+    state.cancel_ai_analysis();
+    
+    {
+        let mut guard = state.ai_engine.write().unwrap();
+        *guard = None; // Drop the current engine
+    }
+    
+    ensure_engine_initialised(&state).map_err(|e| e.to_string())?;
     Ok(())
 }
 

@@ -16,10 +16,16 @@ use tracing::{info, warn};
 use crate::ai::provider::{AiProvider, ProviderInfo};
 use crate::error::Result;
 
-/// Timeout for session loading — DirectML shader compilation can hang indefinitely
-/// on complex transformer models. We abort after this duration and fall back to CPU.
-/// DirectML shader 编译超时时间 — 复杂 Transformer 模型会导致无限期卡死，超时后回退到 CPU。
-const SESSION_LOAD_TIMEOUT: Duration = Duration::from_secs(60);
+/// Timeout for session loading.
+///
+/// CPU loading a 330 MB fp32 ViT-B/16 model with ORT graph optimization takes 2–5 minutes
+/// on first load (no caching). DirectML hangs are infinite and will still be caught.
+/// We use 10 minutes to be safe on slow machines.
+///
+/// 会话加载超时时间：330 MB fp32 ViT-B/16 模型在 CPU 上首次加载（ORT 图优化）需要 2–5 分钟。
+/// DirectML 卡死是无限期的，10 分钟内仍会被捕获。
+const SESSION_LOAD_TIMEOUT: Duration = Duration::from_secs(600);
+
 
 /// AI inference engine pool.
 /// AI 推理引擎池。
@@ -234,10 +240,19 @@ fn build_session(model_path: &PathBuf, provider: &AiProvider) -> ort::Result<Ses
             b.commit_from_file(model_path)
         }
         _ => {
-            // CPU — no special EP needed, use all cores | CPU — 无需特殊 EP，使用所有核心
+            // CPU path — use Level1 (Basic) optimization for faster session creation.
+            //
+            // Level3 (ORT_ENABLE_ALL) runs expensive graph fusion and layout passes on the full
+            // 330 MB fp32 ViT-B/16 graph, which can take 5–10 minutes on first load with no caching.
+            // Level1 (ORT_ENABLE_BASIC) = constant folding + dead node elimination only,
+            // creating the session in seconds with minimal inference performance impact for CPU fp32.
+            //
+            // CPU 路径 — 使用 Level1（Basic）图优化以加快 Session 创建速度。
+            // Level3 对 330 MB fp32 ViT-B/16 图执行完整的图融合和布局变换，首次加载可能耗时 5–10 分钟。
+            // Level1 仅执行常量折叠和死节点消除，Session 创建时间为秒级，对 CPU fp32 推理性能影响极小。
             let mut b = Session::builder()?
                 .with_intra_threads(4)?
-                .with_optimization_level(GraphOptimizationLevel::Level3)?
+                .with_optimization_level(GraphOptimizationLevel::Level1)?
                 ;
             b.commit_from_file(model_path)
         }

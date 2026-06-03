@@ -112,3 +112,14 @@ pub async fn get_layout_rows_by_y(
     crate::layout::cache::get_rows_by_y(&state.layout_cache, top_y, bottom_y, layout_version)
         .ok_or(AppError::LayoutNotReady)
 }
+
+/// Fetch all item IDs from the in-memory layout cache.
+/// 从内存布局缓存中获取所有项 ID。
+#[tauri::command]
+pub async fn get_layout_item_ids(
+    layout_version: Option<u64>,
+    state: State<'_, Arc<AppState>>,
+) -> Result<Vec<i64>> {
+    crate::layout::cache::get_all_item_ids(&state.layout_cache, layout_version)
+        .ok_or(AppError::LayoutNotReady)
+}

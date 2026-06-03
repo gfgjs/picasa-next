@@ -268,6 +268,7 @@ pub fn run() {
             ipc::layout_commands::compute_layout,
             ipc::layout_commands::get_layout_rows,
             ipc::layout_commands::get_layout_rows_by_y,
+            ipc::layout_commands::get_layout_item_ids,
             // media
             // media
             ipc::media_commands::get_media_detail,

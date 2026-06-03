@@ -145,3 +145,26 @@ pub fn get_adjacent_item(cache: &LayoutCache, current_id: i64, offset: isize) ->
     
     all_ids.get(target_idx).copied()
 }
+
+/// Get all item IDs from the cached layout
+/// 从缓存布局中获取所有项 ID
+pub fn get_all_item_ids(cache: &LayoutCache, expected_version: Option<u64>) -> Option<Vec<i64>> {
+    let guard = cache.read().unwrap();
+    let data = guard.as_ref()?;
+    
+    if let Some(ver) = expected_version {
+        if data.layout_version != ver {
+            return None;
+        }
+    }
+    
+    let mut all_ids = Vec::new();
+    for row in &data.rows {
+        if let LayoutRow::Normal { items, .. } = row {
+            for item in items {
+                all_ids.push(item.id);
+            }
+        }
+    }
+    Some(all_ids)
+}

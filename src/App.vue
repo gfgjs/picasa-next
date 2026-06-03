@@ -25,6 +25,9 @@
   <!-- 详情覆盖层（全局） -->
   <MediaDetailOverlay />
 
+  <!-- Selection bar -->
+  <SelectionBar />
+
   <!-- Toast notifications -->
   <!-- 吐司通知 -->
   <ToastContainer />
@@ -41,6 +44,7 @@ import AppShell           from './components/layout/AppShell.vue'
 import AppSidebar         from './components/sidebar/AppSidebar.vue'
 import AppToolbar         from './components/layout/AppToolbar.vue'
 import AppStatusBar       from './components/layout/AppStatusBar.vue'
+import SelectionBar       from './components/layout/SelectionBar.vue'
 import MediaDetailOverlay from './components/media/MediaDetailOverlay.vue'
 import SemanticSearchPanel from './components/media/SemanticSearchPanel.vue'
 import ToastContainer     from './components/common/ToastContainer.vue'

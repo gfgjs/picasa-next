@@ -58,6 +58,9 @@
             class="media-card"
             :style="{ width: item.w + 'px', height: item.h + 'px' }"
             @click="openDetail(item.id)"
+            @mousedown="onCardMouseDown($event, item.id)"
+            @mouseenter="onCardMouseEnter(item.id)"
+            @mouseup="onCardMouseUp"
           >
             <MediaThumb
               :id="item.id"
@@ -72,6 +75,9 @@
               :file-format="item.fileFormat"
               :file-size="item.fileSize"
               :cache-dir="cacheDir"
+              :is-selected="selection.selectedIds.has(item.id)"
+              :is-selection-mode="selection.isSelectionMode"
+              @select="onCheckboxClick(item.id)"
               @request-thumb="onRequestThumb"
               @cancel-thumb="onCancelThumb"
             />
@@ -108,6 +114,7 @@ import { useFilterStore } from '../../stores/filterStore'
 import { useJustifiedLayout }  from '../../composables/useJustifiedLayout'
 import { useVirtualScroll }    from '../../composables/useVirtualScroll'
 import { useRequestQueue }     from '../../composables/useRequestQueue'
+import { useSelectionStore }   from '../../stores/selectionStore'
 
 import MediaThumb from './MediaThumb.vue'
 import { ImageIcon } from '@lucide/vue'
@@ -123,6 +130,7 @@ const media  = useMediaStore()
 const ui     = useUiStore()
 const filter = useFilterStore()
 const queue  = useRequestQueue()
+const selection = useSelectionStore()
 const { t }  = useI18n()
 
 const emptyStateText = computed(() => {
@@ -181,6 +189,58 @@ function onGridScroll(e: Event) {
     }
   }, 150)
 }
+
+function openDetail(id: number) {
+  if (selection.isSelectionMode) {
+    selection.toggleSelection(id)
+    return
+  }
+  // Store scroll position before opening viewer
+  if (gridRef.value) {
+    scrollCache.set(String(ui.activeDirectoryId || ui.activeSmartAlbum), gridRef.value.scrollTop)
+  }
+  media.openDetail(id)
+}
+
+// ── Slide-to-select logic ────────────────────────────────────────────────
+let isDraggingSelection = false
+let dragSelectState = true // true = selecting, false = deselecting
+
+function onCheckboxClick(id: number) {
+  selection.toggleSelection(id)
+}
+
+function onCardMouseDown(e: MouseEvent, id: number) {
+  if (e.button !== 0) return // Only left click
+  if (selection.isSelectionMode) {
+    isDraggingSelection = true
+    dragSelectState = !selection.selectedIds.has(id)
+    selection.toggleSelection(id)
+  }
+}
+
+function onCardMouseEnter(id: number) {
+  if (isDraggingSelection) {
+    if (dragSelectState) {
+      selection.selectItem(id)
+    } else {
+      selection.deselectItem(id)
+    }
+  }
+}
+
+function onCardMouseUp() {
+  isDraggingSelection = false
+}
+
+// Global mouse up to catch drags outside
+onMounted(() => {
+  window.addEventListener('mouseup', onCardMouseUp)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('mouseup', onCardMouseUp)
+})
+// ─────────────────────────────────────────────────────────────────────────
 
 function scrollGridToTop() {
   if (!gridRef.value) return
@@ -276,9 +336,7 @@ onBeforeUnmount(() => {
 // ── Detail ─────────────────────────────────────────────────────────────────
 // ── 详情 ─────────────────────────────────────────────────────────────────
 
-function openDetail(id: number) {
-  media.openDetail(id)
-}
+
 
 // ── Listen to enrichment events ────────────────────────────────────────────
 // ── 监听增强事件 ────────────────────────────────────────────

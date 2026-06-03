@@ -15,9 +15,10 @@ export const IPC = {
 
   // ── Layout ────────────────────────────────────────────────────────────
   // ── 布局 ────────────────────────────────────────────────────────────
-  COMPUTE_LAYOUT:   'compute_layout',
-  GET_LAYOUT_ROWS:  'get_layout_rows',
+  COMPUTE_LAYOUT:       'compute_layout',
+  GET_LAYOUT_ROWS:      'get_layout_rows',
   GET_LAYOUT_ROWS_BY_Y: 'get_layout_rows_by_y',
+  GET_LAYOUT_ITEM_IDS:  'get_layout_item_ids',
 
   // ── Media ─────────────────────────────────────────────────────────────
   // ── 媒体 ─────────────────────────────────────────────────────────────

@@ -42,8 +42,9 @@ export function useJustifiedLayout(containerWidthRef: () => number) {
     }
     
     // Inject sort and group options from uiStore
-    filters.sortBy = ui.sortBy
-    filters.groupBy = ui.groupBy
+    const f = filters as any
+    f.sortBy = ui.sortBy
+    f.groupBy = ui.groupBy
 
     await media.computeLayout({
       directoryId,

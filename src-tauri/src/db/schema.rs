@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS app_config (
 -- 播种默认值（INSERT OR IGNORE = 安全重新运行）
 INSERT OR IGNORE INTO app_config (key, value) VALUES
     ('schema_version',    '1'),
-    ('thumb_size',        '300'),
+    ('thumb_size',        '240'),
     ('thumb_format',      'webp'),
     ('thumb_quality',     '80'),
     ('thumb_skip_max_kb', '200'),

@@ -116,11 +116,11 @@ pub fn run() {
             // ── 读取持久化配置 ─────────────────────────────────────
             let (thumb_size, thumb_skip_max_kb, thumb_strategy, gpu_engine, custom_cache_dir, log_level, custom_log_dir) = {
                 let pool = db_read_pool.get().expect("Pool error");
-                let size: u32 = get_config(&pool, "thumb_size")
+                let size: u32 = crate::thumbnail::generator::snap_to_tier(get_config(&pool, "thumb_size")
                     .ok()
                     .flatten()
                     .and_then(|v| v.parse().ok())
-                    .unwrap_or(300);
+                    .unwrap_or(240));
                 let skip: u64 = get_config(&pool, "thumb_skip_max_kb")
                     .ok()
                     .flatten()

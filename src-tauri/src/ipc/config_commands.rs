@@ -91,7 +91,7 @@ pub async fn set_app_config(key: String, value: String, state: State<'_, Arc<App
     } else if key == "thumb_size" {
         if let Ok(val) = value.parse::<u32>() {
             let mut config = state.thumb_config.write().unwrap();
-            config.size = val;
+            config.size = crate::thumbnail::generator::snap_to_tier(val);
         }
     } else if key == "thumb_cache_dir" {
         let mut config = state.thumb_config.write().unwrap();

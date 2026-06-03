@@ -512,9 +512,13 @@ pub fn get_thumb_by_item_ids(conn: &Connection, ids: &[i64]) -> Result<Vec<Thumb
     }
     let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{i}")).collect();
     let sql = format!(
-        "SELECT m.id, m.thumb_status, 
+        "SELECT m.id,
+                CASE
+                    WHEN m.thumb_path IS NULL THEN 3
+                    ELSE m.thumb_status
+                END,
                 CASE 
-                    WHEN m.thumb_status = 3 THEN 
+                    WHEN m.thumb_status = 3 OR m.thumb_path IS NULL THEN 
                         CASE WHEN d.rel_path = '' THEN r.path || '/' || m.file_name
                              ELSE r.path || '/' || d.rel_path || '/' || m.file_name
                         END
@@ -1038,13 +1042,17 @@ pub fn get_search_results_by_ids(
     let sql = format!(
         "SELECT m.id, m.file_name, m.media_type,
                 CASE
-                    WHEN m.thumb_status = 3 THEN
+                    WHEN m.thumb_status = 3 OR m.thumb_path IS NULL THEN
                         CASE WHEN d.rel_path = '' THEN r.path || '/' || m.file_name
                              ELSE r.path || '/' || d.rel_path || '/' || m.file_name
                         END
                     ELSE m.thumb_path
                 END AS thumb_path,
-                m.thumbhash, m.thumb_status
+                m.thumbhash,
+                CASE
+                    WHEN m.thumb_path IS NULL THEN 3
+                    ELSE m.thumb_status
+                END AS thumb_status
          FROM media_items m
          JOIN directories d ON m.directory_id = d.id
          JOIN scan_roots r ON d.root_id = r.id

@@ -73,6 +73,27 @@ pub async fn batch_request_thumbnails(
         }
     }
 
+    // Sync fast-path results into layout_cache so fetchRowsByY returns
+    // up-to-date thumb_status (avoids stale status=0 after prior generation).
+    // 将快速路径结果同步到 layout_cache，使 fetchRowsByY 返回
+    // 最新的 thumb_status（避免先前生成后仍返回陈旧的 status=0）。
+    if !fast_results.is_empty() {
+        let mut cache_guard = state.layout_cache.write().unwrap();
+        if let Some(layout) = cache_guard.as_mut() {
+            for row in layout.rows.iter_mut() {
+                if let crate::layout::justified::LayoutRow::Normal { items, .. } = row {
+                    for item in items.iter_mut() {
+                        if let Some(r) = fast_results.get(&item.id) {
+                            item.thumb_status = r.thumb_status;
+                            item.thumb_path = r.thumb_path.clone();
+                            item.thumbhash = r.thumbhash.clone();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     info!("batch_request_thumbnails: total={} needs_gen={} | 批量请求缩略图: 总计={} 需要生成={}", item_ids.len(), needs_gen.len(), item_ids.len(), needs_gen.len());
 
     if !needs_gen.is_empty() {
@@ -139,7 +160,7 @@ pub async fn batch_request_thumbnails(
                 if !results.is_empty() {
                     if let Ok(mut conn) = state_arc.db_writer.lock() {
                         if let Ok(tx) = conn.transaction() {
-                            for res in results {
+                            for res in &results {
                                 let _ = crate::db::queries::update_thumb_result(
                                     &tx, 
                                     res.item_id, 
@@ -149,6 +170,22 @@ pub async fn batch_request_thumbnails(
                                 );
                             }
                             let _ = tx.commit();
+                        }
+                    }
+                    // Sync results into layout_cache so fetchRowsByY returns fresh data
+                    // 同步结果到 layout_cache，使 fetchRowsByY 返回最新数据
+                    let mut cache_guard = state_arc.layout_cache.write().unwrap();
+                    if let Some(layout) = cache_guard.as_mut() {
+                        for row in layout.rows.iter_mut() {
+                            if let crate::layout::justified::LayoutRow::Normal { items, .. } = row {
+                                for item in items.iter_mut() {
+                                    if let Some(r) = results.iter().find(|res| res.item_id == item.id) {
+                                        item.thumb_status = r.thumb_status;
+                                        item.thumb_path = r.thumb_path.clone();
+                                        item.thumbhash = r.thumbhash.clone();
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -235,7 +272,7 @@ pub async fn batch_request_thumbnails(
             if !results.is_empty() {
                 if let Ok(mut conn) = state_arc.db_writer.lock() {
                     if let Ok(tx) = conn.transaction() {
-                        for res in results {
+                        for res in &results {
                             let _ = crate::db::queries::update_thumb_result(
                                 &tx, 
                                 res.item_id, 
@@ -245,6 +282,22 @@ pub async fn batch_request_thumbnails(
                             );
                         }
                         let _ = tx.commit();
+                    }
+                }
+                // Sync results into layout_cache so fetchRowsByY returns fresh data
+                // 同步结果到 layout_cache，使 fetchRowsByY 返回最新数据
+                let mut cache_guard = state_arc.layout_cache.write().unwrap();
+                if let Some(layout) = cache_guard.as_mut() {
+                    for row in layout.rows.iter_mut() {
+                        if let crate::layout::justified::LayoutRow::Normal { items, .. } = row {
+                            for item in items.iter_mut() {
+                                if let Some(r) = results.iter().find(|res| res.item_id == item.id) {
+                                    item.thumb_status = r.thumb_status;
+                                    item.thumb_path = r.thumb_path.clone();
+                                    item.thumbhash = r.thumbhash.clone();
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -275,7 +328,7 @@ pub async fn start_full_thumbnail_generation(
 ) -> Result<()> {
     {
         let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        conn.execute("UPDATE media_items SET thumb_status = 0 WHERE is_deleted = 0", [])
+        conn.execute("UPDATE media_items SET thumb_status = 0, thumb_path = NULL, thumbhash = NULL WHERE is_deleted = 0", [])
             .map_err(|e| AppError::Db(e.to_string()))?;
     }
 
@@ -309,6 +362,10 @@ pub async fn start_full_thumbnail_generation(
         });
 
         let config = state_arc.thumb_config.read().unwrap().clone();
+        info!(
+            "[FullThumbGen] START: total={} strategy={} gpu_engine={} size={} skip_max_bytes={} cache_dir={:?} pipeline={} | 全量缩略图生成开始",
+            total, config.strategy, config.gpu_engine, config.size, config.skip_max_bytes, config.cache_dir, USE_PIPELINE
+        );
         
         if !USE_PIPELINE {
             // 方案一：Rayon 直线并发 (Scheme 1)
@@ -421,6 +478,7 @@ pub async fn start_full_thumbnail_generation(
                     let pool = match state_dispatcher.db_read_pool.get() { Ok(p) => p, Err(_) => return };
                     crate::db::queries::get_all_pending_thumb_ids(&pool).unwrap_or_default()
                 };
+                info!("[FullThumbGen] Dispatcher: {} pending IDs fetched | 调度器: 获取到 {} 个待处理 ID", all_ids.len(), all_ids.len());
 
                 for chunk in all_ids.chunks(50) {
                     if cancel_dispatcher.is_cancelled() { break; }
@@ -435,10 +493,15 @@ pub async fn start_full_thumbnail_generation(
                                 if decode_tx.send((item, abs_path)).is_err() {
                                     return;
                                 }
+                            } else {
+                                error!("[FullThumbGen] path_info failed for id={}", id);
                             }
+                        } else {
+                            error!("[FullThumbGen] get_media_item failed for id={}", id);
                         }
                     }
                 }
+                info!("[FullThumbGen] Dispatcher: done sending items | 调度器: 发送完毕");
             });
 
             let config_decode = config.clone();
@@ -508,6 +571,16 @@ pub async fn start_full_thumbnail_generation(
                 });
 
                 if successful_results.len() >= 50 {
+                    // Log batch status breakdown
+                    // 记录批次状态分布
+                    let n_encoded = successful_results.iter().filter(|r| r.thumb_status == 1).count();
+                    let n_direct  = successful_results.iter().filter(|r| r.thumb_status == 3).count();
+                    let n_failed  = successful_results.iter().filter(|r| r.thumb_status == 2).count();
+                    info!(
+                        "[FullThumbGen] Batch flush: {} results (encoded={}, direct={}, failed={}) | 批次写入",
+                        successful_results.len(), n_encoded, n_direct, n_failed
+                    );
+
                     if let Ok(mut conn) = state_arc.db_writer.lock() {
                         if let Ok(tx) = conn.transaction() {
                             for r in &successful_results {
@@ -563,6 +636,10 @@ pub async fn start_full_thumbnail_generation(
         }
 
         let final_gen = generated_count.load(std::sync::atomic::Ordering::Relaxed);
+        info!(
+            "[FullThumbGen] FINISHED: generated={} total={} cancelled={} | 全量缩略图生成完成",
+            final_gen, total, cancel_token.is_cancelled()
+        );
         if cancel_token.is_cancelled() {
             let _ = on_progress.send(FullThumbProgressPayload {
                 generated: final_gen,
@@ -584,6 +661,13 @@ pub async fn start_full_thumbnail_generation(
         // 清除 token，防止 AI pipeline 永远让步（与 AI pipeline 的 cancel_ai_analysis() 模式一致）。
         *state_arc.thumb_gen_token.lock().unwrap() = None;
         tracing::info!("Thumbnail gen token cleared after completion | 全量缩略图 token 已清除");
+
+        // Invalidate layout cache so the next compute_layout reads fresh
+        // thumb_status / thumb_path from DB instead of serving stale data.
+        // 清空布局缓存，使下一次 compute_layout 从数据库读取最新的
+        // thumb_status / thumb_path，而非提供陈旧数据。
+        *state_arc.layout_cache.write().unwrap() = None;
+        tracing::info!("Layout cache invalidated after full thumb gen | 全量缩略图后已清空布局缓存");
 
         Ok(())
     });

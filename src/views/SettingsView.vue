@@ -141,7 +141,7 @@
             min="0"
             max="1000000"
             class="input-number"
-            @change="saveConfig('thumb_skip_max_kb', thumbSkipMaxKb.toString())"
+            @change="saveConfig('thumb_skip_max_kb', thumbSkipMaxKb.toString()); media.invalidateLayout()"
           />
         </div>
 
@@ -276,21 +276,21 @@
 
         <div class="settings-card__item">
           <div class="settings-card__info">
-            <div class="settings-card__label">{{ $t('sidebar.clearDb') || '清除数据库' }}</div>
-            <div class="settings-card__desc">删除所有已扫描的媒体数据和索引</div>
+            <div class="settings-card__label">{{ $t('settings.clearDb') }}</div>
+            <div class="settings-card__desc">{{ $t('settings.clearDbDesc') }}</div>
           </div>
           <button class="btn btn-danger" @click="clearDb">
-            <Database :size="14" /> {{ $t('sidebar.data') || '清除' }}
+            <Database :size="14" /> {{ $t('settings.clearDbBtn') }}
           </button>
         </div>
 
         <div class="settings-card__item">
           <div class="settings-card__info">
-            <div class="settings-card__label">{{ $t('sidebar.clearSettings') || '清除设置' }}</div>
-            <div class="settings-card__desc">重置所有应用设置为默认值</div>
+            <div class="settings-card__label">{{ $t('settings.clearSettings') }}</div>
+            <div class="settings-card__desc">{{ $t('settings.clearSettingsDesc') }}</div>
           </div>
           <button class="btn btn-danger" @click="clearSettings">
-            <Paintbrush :size="14" /> {{ $t('sidebar.settings') || '清除' }}
+            <Paintbrush :size="14" /> {{ $t('settings.clearSettingsBtn') }}
           </button>
         </div>
 
@@ -459,7 +459,8 @@ async function saveConfig(key: string, value: string) {
 async function saveThumbStrategy() {
   await saveConfig('thumb_strategy', thumbStrategy.value)
   ui.setThumbStrategy(thumbStrategy.value)
-  ui.addToast('success', '解码策略已修改，将在加载新图片时生效')
+  media.invalidateLayout()
+  ui.addToast('success', '解码策略已修改，直接显示的项将在回到画廊时重新生成缩略图')
 }
 
 async function saveGpuEngine() {

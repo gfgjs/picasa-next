@@ -115,6 +115,8 @@ import type { LayoutRow } from '../../types/layout'
 import { DEFAULTS, SEPARATOR_HEIGHT } from '../../constants/defaults'
 import { IPC, EVENTS } from '../../constants/ipc'
 
+import { scrollCache } from '../../utils/scrollCache'
+
 const GAP = DEFAULTS.GRID_GAP
 
 const media  = useMediaStore()
@@ -152,8 +154,6 @@ let scrollTimeout: ReturnType<typeof setTimeout> | null = null
 
 // ── Virtual scroll ─────────────────────────────────────────────────────────
 // ── 虚拟滚动 ─────────────────────────────────────────────────────────
-
-const scrollCache = new Map<string, number>()
 
 function getViewKey() {
   return ui.activeDirectoryId ? `dir-${ui.activeDirectoryId}` : `album-${ui.activeSmartAlbum}`
@@ -227,6 +227,13 @@ onMounted(async () => {
 
   // Initial layout compute — after width is known
   // 初始布局计算 — 在知道宽度之后
+
+  // Consume the dirty flag BEFORE compute so we don't trigger a redundant
+  // second recompute via the layoutDirty watcher (which doesn't fire on
+  // mount since Vue watch is not immediate by default).
+  // 在 compute 前消费 dirty 标志，避免通过 layoutDirty watcher
+  // 触发多余的二次重算（Vue watch 默认非 immediate，不会在挂载时触发）。
+  media.consumeLayoutDirty()
 
   await compute()
 
@@ -310,6 +317,21 @@ watch(
     await compute()
     // updateVisible will be called by the layoutVersion watch below
     // updateVisible 将被下方的 layoutVersion watch 调用
+  }
+)
+
+// When layout is marked dirty (e.g. after full thumbnail regeneration completes
+// while the grid is already mounted), recompute from DB.
+// 当布局被标记为脏时（例如全量缩略图生成完成且网格已挂载），从数据库重新计算。
+watch(
+  () => media.layoutDirty,
+  async (dirty) => {
+    if (!dirty) return
+    if (containerWidth.value < 100) return
+    media.consumeLayoutDirty()
+    await compute()
+    // updateVisible is handled by the layoutVersion watcher below
+    // updateVisible 由下方的 layoutVersion watcher 处理
   }
 )
 

@@ -11,7 +11,7 @@
 //!   5. Write to disk + DB update
 
 use std::path::Path;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn, trace};
 
 use crate::db::models::ThumbResult;
 use crate::engine::EngineArena;
@@ -58,20 +58,29 @@ pub fn decode_media_step(
     config: &ThumbConfig,
 ) -> Result<DecodeResult> {
     let item_id = item.id;
+    trace!(
+        "[ThumbGen] decode_media_step: id={} status={} format={} size={} media_type={} path={:?} | strategy={} skip_max_bytes={}",
+        item_id, item.thumb_status, item.file_format, item.file_size, item.media_type,
+        abs_path.file_name().unwrap_or_default(), config.strategy, config.skip_max_bytes
+    );
 
     // ── 1. Cache hit ──────────────────────────────────────────────────────
     if item.thumb_status == 1 {
         if let Some(ref tp) = item.thumb_path {
             let full = config.cache_dir.join("thumbnails").join(tp);
             if full.exists() {
-                debug!("Cache hit: item_id={item_id}");
+                debug!("[ThumbGen] CACHE_HIT: id={item_id} path={tp}");
                 return Ok(DecodeResult::Ready(ThumbResult {
                     item_id,
                     thumb_status: 1,
                     thumb_path: item.thumb_path.clone(),
                     thumbhash: item.thumbhash.clone(),
                 }));
+            } else {
+                debug!("[ThumbGen] CACHE_MISS: id={item_id} thumb_path={tp} but file does not exist on disk");
             }
+        } else {
+            debug!("[ThumbGen] CACHE_MISS: id={item_id} thumb_status=1 but thumb_path is NULL");
         }
     }
 
@@ -80,13 +89,20 @@ pub fn decode_media_step(
     let is_web_safe = web_safe_formats.contains(&item.file_format.to_lowercase().as_str());
 
     let mut is_direct = false;
+    let mut direct_reason = "";
     if config.strategy == "direct" && is_web_safe && item.media_type == "image" {
         is_direct = true;
+        direct_reason = "strategy=direct";
     } else if is_web_safe && item.file_size as u64 <= config.skip_max_bytes && item.media_type == "image" {
         is_direct = true;
+        direct_reason = "file_size<=skip_max_bytes";
     }
 
     if is_direct {
+        info!(
+            "[ThumbGen] DIRECT_DISPLAY: id={} reason={} format={} size={} skip_max_bytes={} | 跳过生成，直接使用源文件",
+            item_id, direct_reason, item.file_format, item.file_size, config.skip_max_bytes
+        );
         let mut hash = None;
         if config.strategy != "direct" && item.file_size <= 500 * 1024 {
             if let Some(engine) = arena.engine_for(&item.file_format) {
@@ -109,18 +125,24 @@ pub fn decode_media_step(
     match item.media_type.as_str() {
         "image" => {
             if config.strategy == "gpu" {
+                info!("[ThumbGen] GPU_DECODE: id={} format={} size={} | 使用 GPU 解码", item_id, item.file_format, item.file_size);
                 match try_gpu_decode(item, abs_path, config) {
-                    Ok(res) => Ok(res),
+                    Ok(res) => {
+                        info!("[ThumbGen] GPU_DECODE_OK: id={} | GPU 解码成功", item_id);
+                        Ok(res)
+                    }
                     Err(e) => {
-                        warn!("GPU decode failed for {:?}, falling back to CPU: {}", abs_path.file_name(), e);
+                        warn!("[ThumbGen] GPU_DECODE_FAIL: id={} err={}, falling back to CPU | GPU 解码失败，回退 CPU", item_id, e);
                         try_cpu_decode(item, abs_path, arena, config)
                     }
                 }
             } else {
+                info!("[ThumbGen] CPU_DECODE: id={} format={} size={} | 使用 CPU 解码", item_id, item.file_format, item.file_size);
                 try_cpu_decode(item, abs_path, arena, config)
             }
         }
         _ => {
+            debug!("[ThumbGen] UNSUPPORTED_TYPE: id={} media_type={} | 非图像类型，跳过", item_id, item.media_type);
             // Phase 2: video/audio/document
             Ok(DecodeResult::Ready(ThumbResult {
                 item_id,
@@ -193,6 +215,7 @@ pub fn encode_media_step(
     mut decoded: crate::engine::traits::DecodedImage,
     config: &ThumbConfig,
 ) -> Result<ThumbResult> {
+    let t0 = std::time::Instant::now();
     let rgba_img = resize_to_rgba(&mut decoded.pixels, decoded.width, decoded.height, config.size)?;
 
     let decoded_for_hash = crate::engine::traits::DecodedImage {
@@ -212,6 +235,10 @@ pub fn encode_media_step(
     std::fs::write(&disk_path, &webp).map_err(AppError::from)?;
 
     let db_path = thumb_db_path(config.size, cache_key);
+    info!(
+        "[ThumbGen] ENCODE_OK: id={} cache_key={} disk={:?} db_path={} size={}B elapsed={:.1}ms | 编码完成",
+        item_id, cache_key, disk_path, db_path, webp.len(), t0.elapsed().as_secs_f64() * 1000.0
+    );
 
     Ok(ThumbResult {
         item_id,

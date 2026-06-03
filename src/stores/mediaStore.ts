@@ -16,6 +16,7 @@ export const useMediaStore = defineStore('media', () => {
   const layoutSummary   = ref<LayoutSummary | null>(null)
   const rowCache        = ref<Map<number, LayoutRow>>(new Map())
   const isComputingLayout = ref(false)
+  const layoutDirty       = ref(false)
 
   // ── Detail view ─────────────────────────────────────────────────────────
   // ── 详情视图 ─────────────────────────────────────────────────────────
@@ -127,6 +128,22 @@ export const useMediaStore = defineStore('media', () => {
     stats.value = await invoke<AppStats>(IPC.GET_STATS)
   }
 
+  /** Mark the layout as stale — the next time the grid becomes visible it should recompute.
+   *  将布局标记为过时 — 下次网格可见时应重新计算。 */
+  function invalidateLayout() {
+    layoutDirty.value = true
+  }
+
+  /** Consume the dirty flag (returns true if it was dirty, then resets).
+   *  消费脏标志（如果为脏则返回 true，然后重置）。 */
+  function consumeLayoutDirty(): boolean {
+    if (layoutDirty.value) {
+      layoutDirty.value = false
+      return true
+    }
+    return false
+  }
+
   async function toggleFavorite(id: number): Promise<boolean> {
     return invoke<boolean>(IPC.TOGGLE_FAVORITE, { itemId: id })
   }
@@ -136,11 +153,11 @@ export const useMediaStore = defineStore('media', () => {
   }
 
   return {
-    layoutSummary, rowCache, isComputingLayout,
+    layoutSummary, rowCache, isComputingLayout, layoutDirty,
     detailItem, isDetailOpen,
     stats,
     totalItems, totalHeight, totalRows, layoutVersion,
     computeLayout, fetchRows, fetchRowsByY, openDetail, closeDetail, navigateDetail,
-    loadStats, toggleFavorite, setRating,
+    loadStats, toggleFavorite, setRating, invalidateLayout, consumeLayoutDirty,
   }
 })

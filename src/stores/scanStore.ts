@@ -8,6 +8,7 @@ import { invoke, Channel } from '@tauri-apps/api/core'
 import type { ScanRoot } from '../types/media'
 import type { ScanChannelPayload, ScanProgressPayload } from '../types/ipc'
 import { IPC } from '../constants/ipc'
+import { useMediaStore } from './mediaStore'
 
 interface ScanProgress {
   scanned:    number
@@ -144,6 +145,14 @@ export const useScanStore = defineStore('scan', () => {
         isRunning: msg.status === 'running',
         status: msg.status,
         currentItem: msg.currentItem
+      }
+      // When generation finishes (completed/cancelled), invalidate layout
+      // so the grid re-fetches fresh thumb_status/thumb_path from DB.
+      // 当生成完成（完成/取消）时，使布局失效，
+      // 以便网格从数据库重新获取最新的 thumb_status/thumb_path。
+      if (msg.status === 'completed' || msg.status === 'cancelled') {
+        const media = useMediaStore()
+        media.invalidateLayout()
       }
     }
 

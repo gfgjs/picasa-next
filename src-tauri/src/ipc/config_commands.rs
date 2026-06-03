@@ -75,10 +75,16 @@ pub async fn set_app_config(key: String, value: String, state: State<'_, Arc<App
         set_config(&conn, &key, &value)?;
     }
 
+    // Track whether a thumb-config key changed that requires re-evaluation
+    // of direct-display items (thumb_status=3).
+    // 跟踪是否有缩略图配置键的变更需要重新评估直接显示项（thumb_status=3）。
+    let mut needs_thumb_reset = false;
+
     if key == "thumb_skip_max_kb" {
         if let Ok(val) = value.parse::<u64>() {
             let mut config = state.thumb_config.write().unwrap();
             config.skip_max_bytes = val * 1024;
+            needs_thumb_reset = true;
         }
     } else if key == "thumb_size" {
         if let Ok(val) = value.parse::<u32>() {
@@ -92,9 +98,32 @@ pub async fn set_app_config(key: String, value: String, state: State<'_, Arc<App
     } else if key == "thumb_strategy" {
         let mut config = state.thumb_config.write().unwrap();
         config.strategy = value;
+        needs_thumb_reset = true;
     } else if key == "gpu_engine" {
         let mut config = state.thumb_config.write().unwrap();
         config.gpu_engine = value;
+    }
+
+    // When skip threshold or strategy changes, items that were previously
+    // marked as "direct display" (status=3) may now need real thumbnails.
+    // Reset them to pending (status=0) so on-demand generation picks them up.
+    // 当跳过阈值或策略变更时，之前标记为"直接显示"（status=3）的项
+    // 可能现在需要真正的缩略图。将它们重置为待处理（status=0），
+    // 以便按需生成机制重新处理它们。
+    if needs_thumb_reset {
+        let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        let affected = conn.execute(
+            "UPDATE media_items SET thumb_status = 0, thumb_path = NULL, thumbhash = NULL \
+             WHERE thumb_status = 3 AND is_deleted = 0",
+            [],
+        ).unwrap_or(0);
+        tracing::info!(
+            "[Config] thumb config changed (key={}), reset {} direct-display items to pending | 缩略图配置变更，重置 {} 个直接显示项为待处理",
+            key, affected, affected
+        );
+        // Invalidate layout cache so compute_layout reads fresh status from DB
+        // 清空布局缓存，使 compute_layout 从 DB 读取最新状态
+        *state.layout_cache.write().unwrap() = None;
     }
 
     Ok(())

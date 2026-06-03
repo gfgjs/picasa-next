@@ -24,7 +24,8 @@ impl ImageEngine for WicEngine {
     }
 
     fn decode(&self, file_path: &Path, resize: Option<ResizeHint>) -> Result<DecodedImage, AppError> {
-        let abs_path = file_path.to_string_lossy().to_string();
+        // Normalize path for Windows WIC API (it dislikes forward slashes in some cases)
+        let normalized_path_str = file_path.to_string_lossy().replace('/', "\\");
 
         unsafe {
             // Initialize COM. It might already be initialized by Tauri or another thread, so we ignore errors.
@@ -38,7 +39,7 @@ impl ImageEngine for WicEngine {
 
             // Create Decoder
             let decoder = factory.CreateDecoderFromFilename(
-                &HSTRING::from(&abs_path),
+                &HSTRING::from(&normalized_path_str),
                 None,
                 GENERIC_READ,
                 WICDecodeMetadataCacheOnDemand,

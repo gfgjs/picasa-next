@@ -2,8 +2,55 @@
 //! AI inference engine pool — wraps ort Sessions for CLIP models.
 //! AI 推理引擎池 — 封装用于 CLIP 模型的 ort Session。
 //!
-//! Sessions are lazily initialised on first use.
-//! Session 在首次使用时懒加载初始化。
+//! # 踩坑记录（2026-06-03）
+//!
+//! ## 坑1：ort crate 的 `load-dynamic` 与 `download-binaries` 互斥
+//! `load-dynamic` feature 会激活 `ort-sys/disable-linking`，
+//! 导致 build.rs 提前返回，`download-binaries` **完全不运行**。
+//! **后果**：即使在 Cargo.toml 同时写了两个 feature，DLL 也不会自动下载。
+//! **应对**：必须手动管理 DLL，并通过 ORT_DYLIB_PATH 指定路径。
+//!
+//! ## 坑2：ORT DLL 版本必须 ≥ 1.19（ONNX IR v10 要求）
+//! Chinese-CLIP ViT-B/16 模型用 PyTorch 2.11 导出，ONNX IR version = 10。
+//! ORT 1.17（旧版/WebView2 System32 自带版本）不支持 IR v10，
+//! 会在 CreateSession 时报 "model IR version is higher than supported" 错误，
+//! 或在某些路径下**直接无限卡死不报错**。
+//!
+//! ## 坑3：ORT 版本与 FP16 外部数据格式兼容性
+//! - ORT 1.21：无法加载 eisneim/cn-clip_vit-b-16 的 FP16 外部数据格式
+//!   （`.onnx` + `.extra_file`），在 `disabled` 和 `Level1` 图优化下均**无限卡死**。
+//!   Node.js ORT 1.26 在相同模型 421ms 内快速失败并报 `GetIndexFromName` 错误。
+//! - ORT 1.26：正常加载，Level1 优化下 ~200ms。
+//! **应对**：从 `onnxruntime-node@1.26.0` 的 `bin/napi-v6/win32/x64/` 中复制 DLL。
+//!
+//! ## 坑4：FP16 模型在 disabled 图优化下的类型错误
+//! `GraphOptimizationLevel::Disable` 下加载 FP16 模型会报：
+//! "Type (tensor(float)) of output arg (InsertedPrecisionFreeCast_...) does not match
+//! expected type (tensor(float16))"
+//! **原因**：FP16 模型内部有 ORT 插入的 PrecisionFreeCast 节点，这些节点依赖
+//! Level1+ 的 SimplifiedLayerNormFusion 优化才能正确处理类型。
+//! **应对**：必须使用 `Level1`（Basic）或更高级别，**不能用 Disable**。
+//!
+//! ## 坑5：单体 fp32 ONNX 格式（330MB）在 CPU 上极慢
+//! ORT 加载单体格式时必须一次性反序列化整个 Protobuf，
+//! 即使 `GraphOptimizationLevel::Disable`，330MB 文件也需要 >5 分钟。
+//! **应对**：使用外部数据格式（`.onnx` header + `.extra_file` 权重），
+//! ORT 通过内存映射按需读取权重，Session 创建只需解析小 header 文件。
+//!
+//! ## 坑6：CPU 路径不能用 Level3 图优化
+//! Level3（ORT_ENABLE_ALL）对 330MB ViT-B/16 图执行完整图融合和布局变换，
+//! 首次加载可能需要 5–10 分钟（无缓存）。
+//! **应对**：CPU 路径使用 Level1（Basic）= 常量折叠 + 死节点消除，
+//! Session 创建时间为秒级，推理性能影响极小。
+//!
+//! ## 坑7：新旧模型的张量 I/O 接口完全不同
+//! - 旧模型（cn-clip-vit-b16-*.onnx）:
+//!   图像: `pixel_values: f32[1,3,224,224]` → `image_features: f32[1,512]`（已L2归一化）
+//!   文本: `input_ids + attention_mask + token_type_ids: i64[1,52]` → `text_features`
+//! - 新模型（eisneim/cn-clip_vit-b-16）:
+//!   图像: `image: f32[1,3,224,224]` → `unnorm_image_features: f32[1,512]`（未归一化！）
+//!   文本: `text: i64[1,52]`（仅 token IDs）→ `unnorm_text_features: f32[1,512]`
+//! **应对**：推理后必须手动 L2 归一化；文本编码器不再需要 attention_mask/token_type_ids。
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -16,14 +63,11 @@ use tracing::{info, warn};
 use crate::ai::provider::{AiProvider, ProviderInfo};
 use crate::error::Result;
 
-/// Timeout for session loading.
+/// 会话加载超时时间。
 ///
-/// CPU loading a 330 MB fp32 ViT-B/16 model with ORT graph optimization takes 2–5 minutes
-/// on first load (no caching). DirectML hangs are infinite and will still be caught.
-/// We use 10 minutes to be safe on slow machines.
-///
-/// 会话加载超时时间：330 MB fp32 ViT-B/16 模型在 CPU 上首次加载（ORT 图优化）需要 2–5 分钟。
-/// DirectML 卡死是无限期的，10 分钟内仍会被捕获。
+/// FP16 外部数据格式（eisneim/cn-clip_vit-b-16）在 ORT 1.26 + CPU + Level1 下
+/// 加载仅需 ~200ms；设 600s 超时是为了应对极端情况（NAS/慢速 HDD）或
+/// DirectML shader 编译（DirectML 卡死是无限期的，600s 内会被捕获）。
 const SESSION_LOAD_TIMEOUT: Duration = Duration::from_secs(600);
 
 

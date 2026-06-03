@@ -45,20 +45,24 @@ pub fn run() {
 
             let db_path = app_data_dir.join("picasa_next.db");
 
-            // ── ORT DLL path resolution ──────────────────────────────────────
-            // WebView2 on Windows may load a stripped onnxruntime.dll from System32 into our process
-            // space BEFORE we load ours. Setting ORT_DYLIB_PATH forces an explicit side-by-side load.
+            // ── ORT DLL 路径解析 ──────────────────────────────────────────────
+            // 【踩坑1】WebView2 在 Windows 上可能在我们加载之前就把 System32 里的
+            //   onnxruntime.dll（通常是 ORT 1.17）加载进进程空间。
+            //   设置 ORT_DYLIB_PATH 强制 ort crate 从指定路径加载，绕过系统版本。
             //
-            // Priority order:
-            //   1. ORT_DYLIB_PATH already set in env (set by cargo build via download-binaries/copy-dylibs
-            //      pointing at the correctly versioned ORT DLL) → keep it, don't override.
-            //   2. onnxruntime.dll next to the executable (production/bundled build) → use it.
-            //   3. Neither → let ORT find the DLL itself (will warn in logs).
+            // 【踩坑2】`load-dynamic` 与 `download-binaries` 互斥：
+            //   load-dynamic 激活 ort-sys/disable-linking，build.rs 提前退出，
+            //   download-binaries 完全不运行。必须手动管理 DLL。
+            //
+            // 【踩坑3】ORT 版本要求：
+            //   - ONNX IR v10（PyTorch 2.11 导出）要求 ORT >= 1.19
+            //   - eisneim FP16 外部数据格式模型要求 ORT >= 1.26
+            //   - 使用 onnxruntime-node@1.26.0 自带的 DLL（bin/napi-v6/win32/x64/）
             //
             // 优先级：
-            //   1. 环境变量 ORT_DYLIB_PATH 已设置（由 cargo build 通过 download-binaries 指定）→ 保留，不覆盖
+            //   1. ORT_DYLIB_PATH 已设置（.cargo/config.toml 或环境变量）→ 保留，不覆盖
             //   2. 可执行文件旁边的 onnxruntime.dll（生产/打包版本）→ 使用
-            //   3. 都没有 → 让 ORT 自己查找（日志中会有警告）
+            //   3. 都没有 → ORT 自行搜索（可能加载到错误版本）
             if std::env::var("ORT_DYLIB_PATH").is_err() {
                 // Only set it ourselves if NOT already configured by the build system
                 // 只有在构建系统未配置时才自行设置
@@ -82,6 +86,7 @@ pub fn run() {
                 .with_name("PicasaNext")
                 .commit();
             info!("ORT initialization result: {:?}", ort_init_res);
+
 
             // ── Write connection + migrations ─────────────────────────────
             // ── 写入连接 + 迁移 ─────────────────────────────

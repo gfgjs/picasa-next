@@ -31,9 +31,29 @@ pub async fn add_scan_root(
     {
         let pool = state.db_read_pool.get().map_err(AppError::from)?;
         let roots = q::list_scan_roots(&pool)?;
-        if let Some(existing) = roots.into_iter().find(|r| r.path == norm) {
-            info!("Scan root already exists: id={} path={} | 扫描根目录已存在: id={} path={}", existing.id, norm, existing.id, norm);
-            return Ok(existing);
+        for existing in &roots {
+            if existing.path == norm {
+                info!("Scan root already exists: id={} path={} | 扫描根目录已存在: id={} path={}", existing.id, norm, existing.id, norm);
+                return Ok(existing.clone());
+            }
+
+            // Check overlap
+            // 检查重叠
+            let p_norm = std::path::Path::new(&norm);
+            let p_ext = std::path::Path::new(&existing.path);
+            
+            if p_norm.starts_with(p_ext) {
+                return Err(AppError::Engine(format!(
+                    "Cannot add folder: it is a subfolder of existing root '{}' | 无法添加文件夹：它是现有根目录 '{}' 的子目录", 
+                    existing.path, existing.path
+                )));
+            }
+            if p_ext.starts_with(p_norm) {
+                return Err(AppError::Engine(format!(
+                    "Cannot add folder: it contains existing root '{}' | 无法添加文件夹：它包含现有根目录 '{}'", 
+                    existing.path, existing.path
+                )));
+            }
         }
     }
 

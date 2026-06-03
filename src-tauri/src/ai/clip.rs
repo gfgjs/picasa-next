@@ -2,14 +2,18 @@
 //! Chinese-CLIP inference: image preprocessing and text tokenisation.
 //! Chinese-CLIP 推理：图像预处理与文本分词。
 //!
-//! Image encoder: RGB → resize 224×224 (bicubic centre-crop) → normalise → CHW tensor
-//!   → 512-d normalised vector
-//! 图像编码器：RGB → 缩放 224×224（双三次中心裁剪）→ 归一化 → CHW 张量 → 512-d 归一化向量
+//! Model: eisneim/cn-clip_vit-b-16 (FP16 external-data format, ORT 1.26+)
+//! 模型：eisneim/cn-clip_vit-b-16（FP16 外部数据格式，需要 ORT 1.26+）
 //!
-//! Text encoder:  BERT tokeniser (vocab.txt) → input_ids / attention_mask / token_type_ids
-//!   → 512-d normalised vector
-//! 文本编码器：BERT 分词器（vocab.txt）→ input_ids / attention_mask / token_type_ids
-//!   → 512-d 归一化向量
+//! Image encoder: RGB → resize 224×224 → normalise → CHW f32 tensor → "image" input
+//!   → "unnorm_image_features" [1,512] → L2 normalise → 512-d unit vector
+//! 图像编码器：RGB → 缩放 224×224 → 归一化 → CHW f32 张量 → "image" 输入
+//!   → "unnorm_image_features" [1,512] → L2 归一化 → 512-d 单位向量
+//!
+//! Text encoder:  BERT tokeniser (vocab.txt) → token_ids i64[1,52] → "text" input
+//!   → "unnorm_text_features" [1,512] → L2 normalise → 512-d unit vector
+//! 文本编码器：BERT 分词器（vocab.txt）→ token_ids i64[1,52] → "text" 输入
+//!   → "unnorm_text_features" [1,512] → L2 归一化 → 512-d 单位向量
 
 use std::path::Path;
 use std::sync::Arc;
@@ -79,12 +83,14 @@ pub fn encode_image(
         .map_err(|e| AppError::Ai(format!("Build image tensor failed | 构建图像张量失败: {e}")))?;
 
     let mut guard = session.lock().unwrap();
+    // New model input: "image" (was "pixel_values" in old model)
+    // 新模型输入名："image"（旧模型为 "pixel_values"）
     let outputs = guard
-        .run(ort::inputs!["pixel_values" => tensor])
+        .run(ort::inputs!["image" => tensor])
         .map_err(|e| AppError::Ai(format!("CLIP image inference failed | CLIP 图像推理失败: {e}")))?;
 
-    // The CLIP image encoder outputs a single tensor
-    // CLIP 图像编码器输出单个张量
+    // Output: "unnorm_image_features" [1, 512] — NOT L2-normalised by model, we normalise below
+    // 输出："unnorm_image_features" [1, 512] — 模型不做 L2 归一化，在此处手动归一化
     let raw = outputs[0]
         .try_extract_tensor::<f32>()
         .map_err(|e| AppError::Ai(format!("Extract image tensor failed | 提取图像张量失败: {e}")))?;
@@ -206,27 +212,25 @@ pub fn encode_text(
 ) -> Result<Vec<f32>> {
     debug!("Encoding text query | 正在编码文本查询: {:?}", text);
 
-    let (ids, mask, types) = tokenizer.encode(text)?;
+    // New model only needs token IDs — no attention_mask or token_type_ids
+    // 新模型只需要 token IDs，不需要 attention_mask 或 token_type_ids
+    let (ids, _mask, _types) = tokenizer.encode(text)?;
 
-    // Build [1, MAX_SEQ_LEN] i64 Tensors
+    // Build [1, MAX_SEQ_LEN] i64 Tensor
     // 构建 [1, MAX_SEQ_LEN] i64 Tensor
     let shape = [1i64, MAX_SEQ_LEN as i64];
-    let input_ids_tensor = Tensor::from_array((shape, ids))
-        .map_err(|e| AppError::Ai(e.to_string()))?;
-    let attention_mask_tensor = Tensor::from_array((shape, mask))
-        .map_err(|e| AppError::Ai(e.to_string()))?;
-    let token_type_ids_tensor = Tensor::from_array((shape, types))
+    let text_tensor = Tensor::from_array((shape, ids))
         .map_err(|e| AppError::Ai(e.to_string()))?;
 
     let mut guard = session.lock().unwrap();
+    // New model input: "text" = int64[1,52] token IDs only
+    // 新模型输入："text" = int64[1,52] 仅 token IDs
     let outputs = guard
-        .run(ort::inputs![
-            "input_ids"      => input_ids_tensor,
-            "attention_mask" => attention_mask_tensor,
-            "token_type_ids" => token_type_ids_tensor
-        ])
+        .run(ort::inputs!["text" => text_tensor])
         .map_err(|e| AppError::Ai(format!("CLIP text inference failed | CLIP 文本推理失败: {e}")))?;
 
+    // Output: "unnorm_text_features" [1, 512] — NOT L2-normalised, we normalise below
+    // 输出："unnorm_text_features" [1, 512] — 模型不做 L2 归一化
     let raw = outputs[0]
         .try_extract_tensor::<f32>()
         .map_err(|e| AppError::Ai(format!("Extract text tensor failed | 提取文本张量失败: {e}")))?;

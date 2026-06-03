@@ -3,6 +3,7 @@
   <!-- 单个语义搜索结果卡片 -->
   <button
     class="result-card"
+    :style="cardStyle"
     :title="`${item.fileName} · 相似度 ${similarityPercent}%`"
     @click="emit('click', item)"
   >
@@ -37,6 +38,9 @@ import { computed } from 'vue'
 import { ImageIcon } from '@lucide/vue'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import type { SemanticSearchResult } from '../../types/ai'
+import { useUiStore } from '../../stores/uiStore'
+
+const ui = useUiStore()
 
 const props = defineProps<{
   item: SemanticSearchResult
@@ -97,6 +101,16 @@ const badgeClass = computed(() => {
   if (pct >= 60) return 'badge--mid'
   return 'badge--low'
 })
+
+// Compute flex basis and grow for justified layout
+const cardStyle = computed(() => {
+  const { width = 1, height = 1 } = props.item
+  const ar = Math.max(0.5, Math.min(3, width / Math.max(1, height)))
+  return {
+    flexGrow: ar,
+    flexBasis: `${ar * ui.gridRowHeight}px`,
+  }
+})
 </script>
 
 <style scoped>
@@ -119,7 +133,8 @@ const badgeClass = computed(() => {
 
 .result-card__thumb-wrap {
   position: relative;
-  aspect-ratio: 1;
+  flex: 1;
+  min-height: 120px;
   border-radius: var(--radius-sm);
   overflow: hidden;
   background: var(--color-bg-overlay);

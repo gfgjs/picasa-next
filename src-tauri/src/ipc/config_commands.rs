@@ -48,6 +48,7 @@ pub struct StartupConfig {
     pub timeline_scroll_width: Option<String>,
     pub ui_font_size: Option<String>,
     pub enable_thumb_hover_scale: Option<String>,
+    pub grid_row_height: Option<String>,
 }
 
 #[tauri::command]
@@ -60,6 +61,7 @@ pub async fn get_startup_config(state: State<'_, Arc<AppState>>) -> Result<Start
             timeline_scroll_width:  get_config(&pool, "timeline_scroll_width")?,
             ui_font_size:           get_config(&pool, "ui_font_size")?,
             enable_thumb_hover_scale: get_config(&pool, "enable_thumb_hover_scale")?,
+            grid_row_height:        get_config(&pool, "grid_row_height")?,
         })
     })
     .await

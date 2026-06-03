@@ -76,6 +76,8 @@ fn map_layout_item(row: &Row<'_>) -> rusqlite::Result<LayoutItem> {
         thumb_status:  row.get(9)?,
         thumb_path:    row.get(10)?,
         thumbhash:     row.get(11)?,
+        file_name:     row.get(12)?,
+        dir_name:      row.get(13)?,
     })
 }
 
@@ -391,10 +393,11 @@ pub fn query_layout_items(
     filter: &MediaFilter,
 ) -> Result<Vec<LayoutItem>> {
     let mut sql = String::from(
-        "SELECT id, width, height, file_size, sort_datetime, file_format, media_type, is_live_photo,
-                duration_ms, thumb_status, thumb_path, thumbhash
-         FROM media_items
-         WHERE is_deleted=0 AND companion_of IS NULL",
+        "SELECT m.id, m.width, m.height, m.file_size, m.sort_datetime, m.file_format, m.media_type, m.is_live_photo,
+                m.duration_ms, m.thumb_status, m.thumb_path, m.thumbhash, m.file_name, d.name AS dir_name
+         FROM media_items m
+         LEFT JOIN directories d ON m.directory_id = d.id
+         WHERE m.is_deleted=0 AND m.companion_of IS NULL",
     );
 
     let mut param_idx = 0usize;
@@ -402,7 +405,7 @@ pub fn query_layout_items(
 
     if let Some(dir_id) = filter.directory_id {
         param_idx += 1;
-        sql.push_str(&format!(" AND directory_id IN (
+        sql.push_str(&format!(" AND m.directory_id IN (
             WITH RECURSIVE dir_tree(id) AS (
                 SELECT ?{param_idx}
                 UNION ALL
@@ -421,7 +424,7 @@ pub fn query_layout_items(
                 .enumerate()
                 .map(|(i, _)| format!("?{}", param_idx + i + 1))
                 .collect();
-            sql.push_str(&format!(" AND media_type IN ({})", placeholders.join(",")));
+            sql.push_str(&format!(" AND m.media_type IN ({})", placeholders.join(",")));
             for t in types {
                 extras.push(Box::new(t.clone()));
             }
@@ -430,29 +433,45 @@ pub fn query_layout_items(
     }
 
     if filter.favorited_only == Some(true) {
-        sql.push_str(" AND is_favorited=1");
+        sql.push_str(" AND m.is_favorited=1");
     }
 
     if let Some(min_r) = filter.min_rating {
         param_idx += 1;
-        sql.push_str(&format!(" AND rating >= ?{param_idx}"));
+        sql.push_str(&format!(" AND m.rating >= ?{param_idx}"));
         extras.push(Box::new(min_r));
     }
 
     if let Some(ref dr) = filter.date_range {
         param_idx += 1;
-        sql.push_str(&format!(" AND sort_datetime >= ?{param_idx}"));
+        sql.push_str(&format!(" AND m.sort_datetime >= ?{param_idx}"));
         extras.push(Box::new(dr.from));
         param_idx += 1;
-        sql.push_str(&format!(" AND sort_datetime <= ?{param_idx}"));
+        sql.push_str(&format!(" AND m.sort_datetime <= ?{param_idx}"));
         extras.push(Box::new(dr.to));
     }
 
     if filter.live_photo_only == Some(true) {
-        sql.push_str(" AND is_live_photo=1");
+        sql.push_str(" AND m.is_live_photo=1");
     }
 
-    sql.push_str(" ORDER BY sort_datetime DESC");
+    let sort_col = match filter.sort_by.as_deref() {
+        Some("file_name") => "m.file_name ASC",
+        Some("file_mtime") => "m.file_mtime DESC",
+        Some("file_size") => "m.file_size DESC",
+        _ => "m.sort_datetime DESC",
+    };
+
+    let group_col = match filter.group_by.as_deref() {
+        Some("folder") => "d.name ASC",
+        _ => "m.sort_datetime DESC",
+    };
+
+    if filter.group_by.as_deref() == Some("folder") {
+        sql.push_str(&format!(" ORDER BY {}, {}", group_col, sort_col));
+    } else {
+        sql.push_str(&format!(" ORDER BY {}", sort_col));
+    }
 
     let mut stmt = conn.prepare(&sql)?;
     let refs: Vec<&dyn rusqlite::ToSql> = extras.iter().map(|b| b.as_ref()).collect();
@@ -743,7 +762,7 @@ pub fn search_media(
 ) -> Result<Vec<SearchResult>> {
     let pattern = format!("%{query}%");
     let mut sql = String::from(
-        "SELECT id, file_name, media_type, thumb_path, thumbhash, thumb_status
+        "SELECT id, file_name, media_type, thumb_path, thumbhash, thumb_status, width, height
          FROM media_items
          WHERE is_deleted=0 AND companion_of IS NULL AND file_name LIKE ?1",
     );
@@ -794,6 +813,8 @@ pub fn search_media(
             thumb_path:   row.get(3)?,
             thumbhash:    row.get(4)?,
             thumb_status: row.get(5)?,
+            width:        row.get(6)?,
+            height:       row.get(7)?,
         })
     })?;
     rows.map(|r| r.map_err(AppError::from)).collect()
@@ -1052,7 +1073,8 @@ pub fn get_search_results_by_ids(
                 CASE
                     WHEN m.thumb_path IS NULL THEN 3
                     ELSE m.thumb_status
-                END AS thumb_status
+                END AS thumb_status,
+                m.width, m.height
          FROM media_items m
          JOIN directories d ON m.directory_id = d.id
          JOIN scan_roots r ON d.root_id = r.id
@@ -1069,6 +1091,8 @@ pub fn get_search_results_by_ids(
             thumb_path:   row.get(3)?,
             thumbhash:    row.get(4)?,
             thumb_status: row.get(5)?,
+            width:        row.get(6)?,
+            height:       row.get(7)?,
         })
     })?;
     rows.map(|r| r.map_err(AppError::from)).collect()

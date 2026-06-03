@@ -346,8 +346,8 @@ async function initAndStart() {
   color: var(--color-text-tertiary);
 }
 .semantic-panel__grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: var(--spacing-sm);
 }
 </style>

@@ -40,13 +40,16 @@ export function useJustifiedLayout(containerWidthRef: () => number) {
     if (ui.activeSmartAlbum === 'favorites') {
       filters.favoritedOnly = true
     }
-
+    
+    // Inject sort and group options from uiStore
+    filters.sortBy = ui.sortBy
+    filters.groupBy = ui.groupBy
 
     await media.computeLayout({
       directoryId,
       filters,
       containerWidth: cw,
-      rowHeight:      DEFAULTS.GRID_ROW_HEIGHT,
+      rowHeight:      ui.gridRowHeight,
       gap:            DEFAULTS.GRID_GAP,
     })
   }
@@ -72,6 +75,9 @@ export function useJustifiedLayout(containerWidthRef: () => number) {
       () => filter.minRating,
       () => ui.activeSmartAlbum,
       () => ui.activeDirectoryId,
+      () => ui.gridRowHeight,
+      () => ui.sortBy,
+      () => ui.groupBy,
     ],
     () => compute(),
     { deep: true }

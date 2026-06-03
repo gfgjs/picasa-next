@@ -23,6 +23,8 @@ export interface SemanticSearchResult {
   thumbPath: string | null
   thumbhash: number[] | null
   thumbStatus: number
+  width: number
+  height: number
   /** Cosine similarity in [0, 1] | [0, 1] 范围内的余弦相似度 */
   similarity: number
 }

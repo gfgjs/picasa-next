@@ -83,6 +83,7 @@ pub struct LayoutParams {
     pub container_width: f64,
     pub target_row_height: f64,
     pub gap: f64,
+    pub group_by: Option<String>,
 }
 
 const SEPARATOR_HEIGHT: f64 = 36.0;
@@ -106,7 +107,7 @@ pub fn compute_justified_layout(items: &[LayoutItem], params: &LayoutParams) -> 
     let mut pending_items: Vec<&LayoutItem> = Vec::new();
     let mut pending_ar_sum = 0.0f64; // sum of (w/h) aspect ratios
                                      // (w/h) 宽高比总和
-    let mut last_date_label: Option<String> = None;
+    let mut last_group_label: Option<String> = None;
 
     let emit_separator = |label: &str, y: &mut f64, rows: &mut Vec<LayoutRow>| {
         rows.push(LayoutRow::Separator {
@@ -232,12 +233,17 @@ pub fn compute_justified_layout(items: &[LayoutItem], params: &LayoutParams) -> 
     };
 
     for item in items {
-        // Date separator check
-        // 日期分隔符检查
-        let date_label = timestamp_to_date_label(item.sort_datetime);
-        let needs_separator = match &last_date_label {
+        // Separator check (Date or Folder)
+        // 分隔符检查（日期或文件夹）
+        let group_label = if params.group_by.as_deref() == Some("folder") {
+            item.dir_name.clone().unwrap_or_else(|| "Unknown Folder".to_string())
+        } else {
+            timestamp_to_date_label(item.sort_datetime)
+        };
+
+        let needs_separator = match &last_group_label {
             None    => true,
-            Some(prev) => *prev != date_label,
+            Some(prev) => *prev != group_label,
         };
 
         if needs_separator {
@@ -251,11 +257,11 @@ pub fn compute_justified_layout(items: &[LayoutItem], params: &LayoutParams) -> 
                 params.target_row_height,
                 &mut rows,
                 params,
-                true, // Treat rows before a separator as the "last row" of that day
-                      // 将分隔符之前的行视为当天的“最后一行”
+                true, // Treat rows before a separator as the "last row" of that group
+                      // 将分隔符之前的行视为该组的“最后一行”
             );
-            emit_separator(&date_label, &mut current_y, &mut rows);
-            last_date_label = Some(date_label);
+            emit_separator(&group_label, &mut current_y, &mut rows);
+            last_group_label = Some(group_label);
         }
 
         let ar = aspect_ratio(item);

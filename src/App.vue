@@ -90,6 +90,7 @@ onMounted(async () => {
       timelineScrollWidth: string | null
       uiFontSize: string | null
       enableThumbHoverScale: string | null
+      gridRowHeight: string | null
     }>('get_startup_config')
 
     if (cfg.language) {
@@ -116,6 +117,10 @@ onMounted(async () => {
 
     if (cfg.enableThumbHoverScale === 'false') {
       document.documentElement.classList.add('disable-hover-scale')
+    }
+
+    if (cfg.gridRowHeight) {
+      ui.gridRowHeight = parseInt(cfg.gridRowHeight, 10)
     }
   } catch (e) {
     console.error('Failed to load startup config:', e)

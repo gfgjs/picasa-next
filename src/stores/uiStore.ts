@@ -62,6 +62,15 @@ export const useUiStore = defineStore('ui', () => {
     invoke(IPC.SET_APP_CONFIG, { key: 'gpu_engine', value: engine }).catch(console.error)
   }
 
+  // ── Layout ─────────────────────────────────────────────────────────────
+  // ── 布局 ─────────────────────────────────────────────────────────────
+  const gridRowHeight = ref<number>(200)
+  
+  function setGridRowHeight(h: number) {
+    gridRowHeight.value = Math.max(60, Math.min(960, h))
+    invoke(IPC.SET_APP_CONFIG, { key: 'grid_row_height', value: String(gridRowHeight.value) }).catch(console.error)
+  }
+
   // ── Sidebar ────────────────────────────────────────────────────────────
   // ── 侧边栏 ────────────────────────────────────────────────────────────
   const sidebarWidth = ref(260)
@@ -96,6 +105,7 @@ export const useUiStore = defineStore('ui', () => {
   // ── 排序 ───────────────────────────────────────────────────────────────
   const sortBy    = ref<string>('sort_datetime')
   const sortOrder = ref<'asc' | 'desc'>('desc')
+  const groupBy   = ref<'date' | 'folder'>('date')
 
   // ── Toasts ─────────────────────────────────────────────────────────────
   // ── 提示框 ─────────────────────────────────────────────────────────────
@@ -161,6 +171,9 @@ export const useUiStore = defineStore('ui', () => {
     // 缩略图生成策略
     thumbStrategy, setThumbStrategy,
     gpuEngine, setGpuEngine,
+    // layout
+    // 布局
+    gridRowHeight, setGridRowHeight,
     // sidebar
     // 侧边栏
     sidebarWidth, sidebarCollapsed, setSidebarWidth, persistSidebarWidth,
@@ -169,7 +182,7 @@ export const useUiStore = defineStore('ui', () => {
     activeSmartAlbum, activeDirectoryId, setSmartAlbum, setActiveDirectory,
     // sort
     // 排序
-    sortBy, sortOrder,
+    sortBy, sortOrder, groupBy,
     // toasts
     // 提示框
     toasts, addToast, removeToast,

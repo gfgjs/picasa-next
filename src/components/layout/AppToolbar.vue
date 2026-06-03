@@ -79,7 +79,27 @@
 
     <!-- View sort -->
     <!-- 视图排序 -->
-    <div class="toolbar__sort">
+    <div class="toolbar__view-controls">
+      <!-- Grid row height slider -->
+      <div class="toolbar__slider-wrap" title="调整网格行高">
+        <label class="toolbar__slider-label"><ImageIcon :size="14" /></label>
+        <input 
+          type="range" 
+          v-model.number="ui.gridRowHeight" 
+          @change="onGridHeightChange"
+          min="60" 
+          max="960" 
+          step="10"
+          class="toolbar__slider" 
+        />
+        <label class="toolbar__slider-label"><ImageIcon :size="18" /></label>
+      </div>
+
+      <div class="toolbar__sort">
+      <select class="toolbar__select" v-model="ui.groupBy" @change="onSortChange">
+        <option value="date">按日期分组</option>
+        <option value="folder">按文件夹分组</option>
+      </select>
       <select class="toolbar__select" v-model="ui.sortBy" @change="onSortChange">
         <option value="sort_datetime">{{ $t('toolbar.sortByDate') }}</option>
         <option value="file_mtime">按修改时间</option>
@@ -167,6 +187,10 @@ function toggleSortOrder() {
 function onSortChange() {
   emit('sort-change')
 }
+
+function onGridHeightChange() {
+  ui.setGridRowHeight(ui.gridRowHeight)
+}
 </script>
 
 <style scoped>
@@ -243,6 +267,31 @@ function onSortChange() {
   outline: none;
 }
 .toolbar__search::placeholder { color: var(--color-text-tertiary); }
+
+.toolbar__view-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  margin-left: var(--spacing-sm);
+  padding-left: var(--spacing-sm);
+  border-left: 1px solid var(--color-border);
+}
+
+.toolbar__slider-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-tertiary);
+}
+.toolbar__slider-label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.toolbar__slider {
+  width: 80px;
+  accent-color: var(--color-accent);
+}
 
 .toolbar__sort {
   display: flex;

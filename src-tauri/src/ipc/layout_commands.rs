@@ -68,6 +68,7 @@ pub async fn compute_layout(
         container_width:  params.container_width.max(100.0),
         target_row_height: params.row_height.max(50.0),
         gap:               params.gap.max(0.0),
+        group_by:          filter.group_by.clone(),
     };
 
     let rows: Vec<LayoutRow> = tokio::task::spawn_blocking(move || {

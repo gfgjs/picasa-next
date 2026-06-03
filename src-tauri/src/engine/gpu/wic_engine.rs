@@ -8,7 +8,7 @@ use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
 use windows::Win32::Graphics::Imaging::*;
 use windows::Win32::Foundation::GENERIC_READ;
 
-use crate::engine::traits::{DecodedImage, ImageEngine};
+use crate::engine::traits::{DecodedImage, ImageEngine, ResizeHint};
 use crate::error::AppError;
 use crate::scanner::metadata::read_jpeg_orientation;
 
@@ -23,7 +23,7 @@ impl ImageEngine for WicEngine {
         &["jpg", "jpeg", "png", "bmp", "tif", "tiff", "heic", "heif", "avif"]
     }
 
-    fn decode(&self, file_path: &Path, target_size: Option<u32>) -> Result<DecodedImage, AppError> {
+    fn decode(&self, file_path: &Path, resize: Option<ResizeHint>) -> Result<DecodedImage, AppError> {
         let abs_path = file_path.to_string_lossy().to_string();
 
         unsafe {
@@ -58,34 +58,45 @@ impl ImageEngine for WicEngine {
             let converter = factory.CreateFormatConverter()
                 .map_err(|e| AppError::Engine(format!("WIC CreateFormatConverter failed: {}", e)))?;
 
-            let mut scaled_width = width;
-            let mut scaled_height = height;
-
-            let source: IWICBitmapSource = if let Some(target) = target_size {
-                if width > target || height > target {
+            // Calculate target dimensions based on ResizeHint
+            // 根据 ResizeHint 计算目标尺寸
+            let (mut scaled_width, mut scaled_height) = (width, height);
+            let needs_resize = match resize {
+                Some(ResizeHint::LongEdge(target)) if width > target || height > target => {
                     if width >= height {
-                        let r = target as f32 / width as f32;
                         scaled_width = target;
-                        scaled_height = (height as f32 * r).round() as u32;
+                        scaled_height = (height as f32 * target as f32 / width as f32).round() as u32;
                     } else {
-                        let r = target as f32 / height as f32;
                         scaled_height = target;
-                        scaled_width = (width as f32 * r).round() as u32;
+                        scaled_width = (width as f32 * target as f32 / height as f32).round() as u32;
                     }
-
-                    let scaler = factory.CreateBitmapScaler()
-                        .map_err(|e| AppError::Engine(format!("WIC CreateBitmapScaler failed: {}", e)))?;
-                    scaler.Initialize(
-                        &frame,
-                        scaled_width,
-                        scaled_height,
-                        WICBitmapInterpolationModeFant,
-                    ).map_err(|e| AppError::Engine(format!("WIC scaler initialization failed: {}", e)))?;
-
-                    scaler.cast().map_err(|e| AppError::Engine(format!("WIC cast failed: {}", e)))?
-                } else {
-                    frame.cast().map_err(|e| AppError::Engine(format!("WIC cast failed: {}", e)))?
+                    true
                 }
+                Some(ResizeHint::ShortEdge(target)) => {
+                    let short = width.min(height);
+                    if short != target {
+                        let scale = target as f32 / short as f32;
+                        scaled_width = (width as f32 * scale).round() as u32;
+                        scaled_height = (height as f32 * scale).round() as u32;
+                        true
+                    } else {
+                        false
+                    }
+                }
+                _ => false,
+            };
+
+            let source: IWICBitmapSource = if needs_resize {
+                let scaler = factory.CreateBitmapScaler()
+                    .map_err(|e| AppError::Engine(format!("WIC CreateBitmapScaler failed: {}", e)))?;
+                scaler.Initialize(
+                    &frame,
+                    scaled_width,
+                    scaled_height,
+                    WICBitmapInterpolationModeCubic,
+                ).map_err(|e| AppError::Engine(format!("WIC scaler initialization failed: {}", e)))?;
+
+                scaler.cast().map_err(|e| AppError::Engine(format!("WIC cast failed: {}", e)))?
             } else {
                 frame.cast().map_err(|e| AppError::Engine(format!("WIC cast failed: {}", e)))?
             };
@@ -147,3 +158,4 @@ impl ImageEngine for WicEngine {
         }
     }
 }
+

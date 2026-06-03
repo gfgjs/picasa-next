@@ -144,7 +144,7 @@ fn try_gpu_decode(
         return Err(AppError::UnsupportedFormat(item.file_format.clone()));
     }
 
-    let decoded = gpu_engine.decode(abs_path, Some(config.size))?;
+    let decoded = gpu_engine.decode(abs_path, Some(crate::engine::traits::ResizeHint::LongEdge(config.size)))?;
     Ok(DecodeResult::ToEncode {
         item_id: item.id,
         cache_key: item.cache_key,

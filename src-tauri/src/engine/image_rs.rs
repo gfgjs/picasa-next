@@ -8,7 +8,7 @@
 use std::path::Path;
 use image::ImageReader;
 
-use crate::engine::traits::{DecodedImage, ImageEngine};
+use crate::engine::traits::{DecodedImage, ImageEngine, ResizeHint};
 use crate::error::AppError;
 use crate::scanner::metadata::read_jpeg_orientation;
 
@@ -23,7 +23,7 @@ impl ImageEngine for ImageRsEngine {
         &["jpg", "jpeg", "png", "webp", "bmp", "gif", "tif", "tiff"]
     }
 
-    fn decode(&self, file_path: &Path, _target_size: Option<u32>) -> Result<DecodedImage, AppError> {
+    fn decode(&self, file_path: &Path, resize: Option<ResizeHint>) -> Result<DecodedImage, AppError> {
         let img = ImageReader::open(file_path)
             .map_err(|e| AppError::Engine(e.to_string()))?
             .with_guessed_format()
@@ -41,6 +41,39 @@ impl ImageEngine for ImageRsEngine {
 
         let img = if matches!(ext.as_str(), "jpg" | "jpeg") {
             apply_exif_orientation(img, file_path)
+        } else {
+            img
+        };
+
+        // Apply resize if requested
+        // 如果有缩放请求则进行缩放
+        let img = if let Some(hint) = resize {
+            let (w, h) = (img.width(), img.height());
+            match hint {
+                ResizeHint::LongEdge(target) => {
+                    if w > target || h > target {
+                        let (nw, nh) = if w >= h {
+                            (target, (h as f32 * target as f32 / w as f32).round() as u32)
+                        } else {
+                            ((w as f32 * target as f32 / h as f32).round() as u32, target)
+                        };
+                        img.resize_exact(nw.max(1), nh.max(1), image::imageops::FilterType::CatmullRom)
+                    } else {
+                        img
+                    }
+                }
+                ResizeHint::ShortEdge(target) => {
+                    let short = w.min(h);
+                    if short != target {
+                        let scale = target as f32 / short as f32;
+                        let nw = (w as f32 * scale).round() as u32;
+                        let nh = (h as f32 * scale).round() as u32;
+                        img.resize_exact(nw.max(1), nh.max(1), image::imageops::FilterType::CatmullRom)
+                    } else {
+                        img
+                    }
+                }
+            }
         } else {
             img
         };

@@ -6,6 +6,20 @@
 use std::path::Path;
 use crate::error::AppError;
 
+/// Resize strategy hint for `ImageEngine::decode()`.
+/// `ImageEngine::decode()` 的缩放策略提示。
+#[derive(Debug, Clone, Copy)]
+pub enum ResizeHint {
+    /// Scale so the **long** edge matches `target`, preserving aspect ratio (thumbnails).
+    /// 按**长边**适配到 `target`，保持纵横比（缩略图用）。
+    /// Example: 6000×4000 + LongEdge(300) → 300×200
+    LongEdge(u32),
+    /// Scale so the **short** edge matches `target`, preserving aspect ratio (CLIP preprocessing).
+    /// 按**短边**适配到 `target`，保持纵横比（CLIP 预处理用）。
+    /// Example: 6000×4000 + ShortEdge(224) → 336×224
+    ShortEdge(u32),
+}
+
 /// A decoded image ready for processing (thumbnail generation, ThumbHash, etc.).
 /// 准备处理（缩略图生成、ThumbHash 等）的解码图像。
 pub struct DecodedImage {
@@ -27,9 +41,11 @@ pub trait ImageEngine: Send + Sync {
         self.supported_formats().contains(&format)
     }
 
-    /// Fully decode the image at `file_path` into RGBA pixels.
-    /// 将 `file_path` 处的图像完全解码为 RGBA 像素。
-    fn decode(&self, file_path: &Path, target_size: Option<u32>) -> Result<DecodedImage, AppError>;
+    /// Fully decode the image at `file_path` into RGBA pixels,
+    /// optionally resizing according to the given `ResizeHint`.
+    /// 将 `file_path` 处的图像完全解码为 RGBA 像素，
+    /// 可选地根据给定的 `ResizeHint` 进行缩放。
+    fn decode(&self, file_path: &Path, resize: Option<ResizeHint>) -> Result<DecodedImage, AppError>;
 
     /// Attempt to extract an embedded thumbnail (e.g. EXIF JPEG thumbnail).
     /// 尝试提取嵌入的缩略图（例如 EXIF JPEG 缩略图）。
@@ -39,3 +55,4 @@ pub trait ImageEngine: Send + Sync {
         Ok(None)
     }
 }
+

@@ -953,14 +953,28 @@ pub fn batch_update_ai_status(conn: &Connection, item_ids: &[i64], status: i64) 
 
 /// Get items with `ai_status=0` (pending) ordered by most recent, up to `limit`.
 /// 获取 `ai_status=0`（待处理）的项，按最近顺序，最多 `limit` 条。
+///
+/// Returns `(id, abs_path, file_format)` with the absolute path resolved
+/// via JOIN on directories + scan_roots, so the AI pipeline can decode
+/// from source files directly (using GPU-accelerated engines like WIC).
+///
+/// 返回 `(id, abs_path, file_format)`，绝对路径通过 JOIN directories + scan_roots 解析，
+/// 使 AI 流水线可以直接从源文件解码（使用 WIC 等 GPU 加速引擎）。
 pub fn get_pending_ai_items(
     conn: &Connection,
     limit: i64,
-) -> Result<Vec<(i64, Option<String>, i64)>> {  // (id, thumb_path, thumb_status)
+) -> Result<Vec<(i64, String, String)>> {  // (id, abs_path, file_format)
     let mut stmt = conn.prepare(
-        "SELECT id, thumb_path, thumb_status FROM media_items
-         WHERE ai_status=0 AND is_deleted=0 AND media_type='image'
-         ORDER BY created_at DESC
+        "SELECT m.id,
+                CASE WHEN d.rel_path = '' THEN r.path || '/' || m.file_name
+                     ELSE r.path || '/' || d.rel_path || '/' || m.file_name
+                END,
+                m.file_format
+         FROM media_items m
+         JOIN directories d ON m.directory_id = d.id
+         JOIN scan_roots r ON d.root_id = r.id
+         WHERE m.ai_status=0 AND m.is_deleted=0 AND m.media_type='image'
+         ORDER BY m.created_at DESC
          LIMIT ?1",
     )?;
     let rows = stmt.query_map(params![limit], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;

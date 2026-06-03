@@ -24,12 +24,14 @@ use crossbeam_channel::{bounded, Receiver, Sender};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-use crate::ai::clip::{encode_image_bytes, embedding_to_bytes, MODEL_NAME};
+use crate::ai::clip::{encode_image_from_decoded, embedding_to_bytes, MODEL_NAME};
 use crate::db::queries::{
     batch_upsert_ai_embeddings, batch_update_ai_status, count_pending_ai_items,
     get_pending_ai_items,
 };
 use crate::db::models::AiStatus;
+use crate::engine::gpu::get_gpu_engine;
+use crate::engine::traits::ResizeHint;
 use crate::state::AppState;
 
 /// Batch size for reading from DB and writing embeddings.
@@ -43,8 +45,9 @@ const CHANNEL_CAPACITY: usize = 256;
 /// Task item sent from producer to consumers.
 /// 从生产者发送到消费者的任务项。
 struct AiTask {
-    item_id:    i64,
-    thumb_path: Option<PathBuf>,
+    item_id:     i64,
+    source_path: PathBuf,
+    file_format: String,
 }
 
 /// Embedding result sent from consumers to writer.
@@ -142,8 +145,9 @@ fn run_pipeline_blocking(
         // ── 消费者线程（rayon 线程池）────────────────────────────────────────
         let session_clone = Arc::clone(&clip_session);
         let result_tx_clone = result_tx.clone();
+        let state_consumer = Arc::clone(state);
         s.spawn(move |_| {
-            consume_tasks(task_rx, result_tx_clone, session_clone, token);
+            consume_tasks(task_rx, result_tx_clone, session_clone, &state_consumer, token);
         });
 
         // ── Writer thread ─────────────────────────────────────────────────────
@@ -203,28 +207,11 @@ fn produce_tasks(
         }
         drop(write_conn);
 
-        for (item_id, db_thumb_path, thumb_status) in batch {
+        for (item_id, abs_path, file_format) in batch {
             if token.is_cancelled() { break; }
 
-            // Only process if thumbnail is ready (1) or direct display (3)
-            if thumb_status != 1 && thumb_status != 3 {
-                continue;
-            }
-
-            let thumb_path = if let Some(path) = db_thumb_path {
-                if path.starts_with('/') || path.chars().nth(1) == Some(':') {
-                    // Absolute path (is_direct=true)
-                    Some(std::path::PathBuf::from(path))
-                } else {
-                    // Relative path (e.g. "300/a3/a3...webp" or just "{id}.webp")
-                    let thumb_config = state.thumb_config.read().unwrap();
-                    Some(thumb_config.cache_dir.join("thumbnails").join(path))
-                }
-            } else {
-                None
-            };
-
-            if task_tx.send(AiTask { item_id, thumb_path }).is_err() {
+            let source_path = PathBuf::from(abs_path);
+            if task_tx.send(AiTask { item_id, source_path, file_format }).is_err() {
                 break;
             }
         }
@@ -239,6 +226,7 @@ fn consume_tasks(
     task_rx: Receiver<AiTask>,
     result_tx: Sender<AiResult>,
     session: Arc<std::sync::Mutex<ort::session::Session>>,
+    state: &Arc<AppState>,
     token: &CancellationToken,
 ) {
     // Use rayon parallel iterator for the consumer tasks
@@ -249,9 +237,10 @@ fn consume_tasks(
 
             let session = Arc::clone(&session);
             let result_tx = result_tx.clone();
+            let state = Arc::clone(state);
 
             s.spawn(move |_| {
-                let embedding_result = process_task(&task, &session);
+                let embedding_result = process_task(&task, &session, &state);
                 match embedding_result {
                     Ok(embedding) => {
                         let _ = result_tx.send(AiResult { item_id: task.item_id, embedding: Some(embedding) });
@@ -273,18 +262,46 @@ fn consume_tasks(
     info!("AI consumers finished | AI 消费者已完成");
 }
 
-/// Process a single AI task: read thumbnail, encode with CLIP.
-/// 处理单个 AI 任务：读取缩略图，使用 CLIP 编码。
-fn process_task(task: &AiTask, session: &Arc<std::sync::Mutex<ort::session::Session>>) -> crate::error::Result<Vec<u8>> {
-    let thumb_path = task.thumb_path.as_ref()
-        .ok_or_else(|| crate::error::AppError::Engine(
-            format!("No thumbnail for item {} | 项 {} 没有缩略图", task.item_id, task.item_id)
-        ))?;
+/// Process a single AI task: decode source image via ImageEngine (GPU-accelerated),
+/// then run CLIP inference.
+/// 处理单个 AI 任务：通过 ImageEngine（GPU 加速）解码源图像，然后运行 CLIP 推理。
+fn process_task(
+    task: &AiTask,
+    session: &Arc<std::sync::Mutex<ort::session::Session>>,
+    state: &AppState,
+) -> crate::error::Result<Vec<u8>> {
+    let gpu_engine_name = state.thumb_config.read().unwrap().gpu_engine.clone();
+    let resize_hint = Some(ResizeHint::ShortEdge(224));
 
-    let bytes = std::fs::read(thumb_path)
-        .map_err(|e| crate::error::AppError::Io(e.to_string()))?;
+    // Try GPU engine first for hardware-accelerated decode + resize,
+    // fall back to CPU engine (image-rs) if GPU is unavailable or fails.
+    // 先尝试 GPU 引擎进行硬件加速解码 + 缩放，
+    // 如果 GPU 不可用或失败则回退到 CPU 引擎 (image-rs)。
+    let decoded = match get_gpu_engine(&gpu_engine_name) {
+        Some(gpu) if gpu.can_handle(&task.file_format) => {
+            match gpu.decode(&task.source_path, resize_hint) {
+                Ok(d) => d,
+                Err(e) => {
+                    debug!(
+                        "GPU decode failed for item {}, falling back to CPU | 项 {} GPU 解码失败，回退 CPU: {}",
+                        task.item_id, task.item_id, e
+                    );
+                    state.engine_arena
+                        .engine_for(&task.file_format)
+                        .ok_or_else(|| crate::error::AppError::UnsupportedFormat(task.file_format.clone()))?
+                        .decode(&task.source_path, resize_hint)?
+                }
+            }
+        }
+        _ => {
+            state.engine_arena
+                .engine_for(&task.file_format)
+                .ok_or_else(|| crate::error::AppError::UnsupportedFormat(task.file_format.clone()))?
+                .decode(&task.source_path, resize_hint)?
+        }
+    };
 
-    let embedding_f32 = encode_image_bytes(session, &bytes)?;
+    let embedding_f32 = encode_image_from_decoded(session, &decoded)?;
     Ok(embedding_to_bytes(&embedding_f32))
 }
 

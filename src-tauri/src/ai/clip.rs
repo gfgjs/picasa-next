@@ -124,6 +124,7 @@ use ort::value::Tensor;
 use std::sync::Mutex;
 use tracing::debug;
 
+use crate::engine::traits::DecodedImage;
 use crate::error::{AppError, Result};
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -172,9 +173,33 @@ pub fn encode_image(
     img: &DynamicImage,
 ) -> Result<Vec<f32>> {
     let array = preprocess_image(img);
+    run_image_inference(session, array)
+}
 
-    // Convert ndarray to ort Tensor
-    // 将 ndarray 转换为 ort Tensor
+/// Encode a pre-decoded image (RGBA u8 pixels) into a 512-d unit vector.
+/// 将预解码的图像（RGBA u8 像素）编码为 512-d 单位向量。
+///
+/// The image should already be resized to `short_edge=224` by the `ImageEngine`.
+/// This function only performs lightweight CenterCrop + Normalize + CHW conversion
+/// on the small (~336×224) image before running CLIP inference.
+///
+/// 图像应已由 `ImageEngine` 缩放至 `short_edge=224`。
+/// 本函数仅在小图（约 336×224）上执行轻量的 CenterCrop + 归一化 + CHW 转换，
+/// 然后运行 CLIP 推理。
+pub fn encode_image_from_decoded(
+    session: &Arc<Mutex<Session>>,
+    decoded: &DecodedImage,
+) -> Result<Vec<f32>> {
+    let array = preprocess_decoded(decoded);
+    run_image_inference(session, array)
+}
+
+/// Run CLIP image encoder inference on a preprocessed [1,3,224,224] f32 tensor.
+/// 在预处理后的 [1,3,224,224] f32 张量上运行 CLIP 图像编码器推理。
+fn run_image_inference(
+    session: &Arc<Mutex<Session>>,
+    array: Array4<f32>,
+) -> Result<Vec<f32>> {
     let shape: [i64; 4] = [1, 3, IMG_SIZE as i64, IMG_SIZE as i64];
     let (flat_data, _offset) = array.into_raw_vec_and_offset();
     let tensor = Tensor::from_array((shape, flat_data))
@@ -185,7 +210,7 @@ pub fn encode_image(
         .run(ort::inputs!["pixel_values" => tensor])
         .map_err(|e| AppError::Ai(format!("CLIP image inference failed | CLIP 图像推理失败: {e}")))?;
 
-    // Output: "image_features" [1, 512]
+    // Output: "unnorm_image_features" [1, 512] — model does not L2-normalise, we do it here
     // 输出："unnorm_image_features" [1, 512] — 模型不做 L2 归一化，在此处手动归一化
     let raw = outputs[0]
         .try_extract_tensor::<f32>()
@@ -245,6 +270,41 @@ fn preprocess_image(img: &DynamicImage) -> Array4<f32> {
             let px = cropped.get_pixel(x as u32, y as u32);
             for c in 0..3usize {
                 let val = px[c] as f32 / 255.0;
+                tensor[[0, c, y, x]] = (val - MEAN[c]) / STD[c];
+            }
+        }
+    }
+
+    tensor
+}
+
+/// Lightweight preprocessing for a pre-resized `DecodedImage` (RGBA u8 pixels).
+/// 对预缩放的 `DecodedImage`（RGBA u8 像素）进行轻量预处理。
+///
+/// The image is expected to have `short_edge = 224` (e.g. 336×224 or 224×224).
+/// Performs: CenterCrop(224×224) → RGBA→RGB → /255 → CLIP Normalize → HWC→CHW.
+///
+/// 图像预期 `短边 = 224`（如 336×224 或 224×224）。
+/// 执行：CenterCrop(224×224) → RGBA→RGB → /255 → CLIP 归一化 → HWC→CHW。
+fn preprocess_decoded(decoded: &DecodedImage) -> Array4<f32> {
+    let (w, h) = (decoded.width as usize, decoded.height as usize);
+    let crop_size = IMG_SIZE as usize;
+
+    // CenterCrop: compute offsets (saturating to 0 for images exactly 224)
+    // CenterCrop：计算偏移量（对于恰好 224 的图像饱和到 0）
+    let cx = w.saturating_sub(crop_size) / 2;
+    let cy = h.saturating_sub(crop_size) / 2;
+
+    let mut tensor = Array4::<f32>::zeros((1, 3, crop_size, crop_size));
+
+    for y in 0..crop_size {
+        for x in 0..crop_size {
+            let src_x = cx + x;
+            let src_y = cy + y;
+            // RGBA stride: 4 bytes per pixel
+            let idx = (src_y * w + src_x) * 4;
+            for c in 0..3usize {
+                let val = decoded.pixels[idx + c] as f32 / 255.0;
                 tensor[[0, c, y, x]] = (val - MEAN[c]) / STD[c];
             }
         }

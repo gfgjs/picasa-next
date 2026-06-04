@@ -68,6 +68,12 @@
           <Check v-if="isSelected" :size="12" />
         </div>
       </div>
+
+      <!-- Favorited badge: always visible when favorited -->
+      <!-- 已收藏心形徽章：收藏时常驻显示 -->
+      <div v-if="isFavorited" class="media-thumb__fav-badge">
+        <Heart :size="12" fill="currentColor" :stroke-width="0" />
+      </div>
     </div>
   </div>
 </template>
@@ -431,5 +437,22 @@ onBeforeUnmount(() => {
   40%  { transform: scale(1.5); }
   70%  { transform: scale(0.9); }
   100% { transform: scale(1.2); }
+}
+
+/* 已收藏徽章：左下角常驻心形 / Favorited badge: persistent heart in bottom-left */
+.media-thumb__fav-badge {
+  position: absolute;
+  bottom: 4px;
+  left: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(4px);
+  color: hsl(350 85% 65%);
+  pointer-events: none;
 }
 </style>

@@ -98,28 +98,6 @@
       <button class="fab-btn" @click="scrollGridToBottom" :title="$t('empty.scrollToBottom')">
         ↓
       </button>
-    </div>
-    <!-- Batch selection bar: shows when items are selected -->
-    <!-- 批量选择栏：有项目被选中时显示 -->
-    <Transition name="batch-bar">
-      <div v-if="selection.isSelectionMode" class="batch-bar">
-        <span class="batch-bar__count">已选 {{ selection.selectionCount }} 张</span>
-        <div class="batch-bar__actions">
-          <button class="batch-bar__btn" @click="selection.favoriteSelected(true)" title="收藏选中项目">
-            ♥ 收藏
-          </button>
-          <button class="batch-bar__btn" @click="selection.favoriteSelected(false)" title="取消收藏">
-            ♡ 取消收藏
-          </button>
-          <button class="batch-bar__btn batch-bar__btn--danger" @click="selection.deleteSelected()" title="删除选中项目">
-            🗑 删除
-          </button>
-          <button class="batch-bar__btn batch-bar__btn--ghost" @click="selection.clearSelection()" title="取消选择">
-            ✕ 取消
-          </button>
-        </div>
-      </div>
-    </Transition>
   </div>
 </template>
 
@@ -214,6 +192,10 @@ function onGridScroll(e: Event) {
 }
 
 function openDetail(id: number) {
+  // 如果这次 click 是由拖拽结束触发的，忽略它
+  // If this click was triggered by releasing a drag, ignore it
+  if (dragActivated) return
+
   if (selection.isSelectionMode) {
     selection.toggleSelection(id)
     return
@@ -225,61 +207,101 @@ function openDetail(id: number) {
   media.openDetail(id)
 }
 
-// ── Slide-to-select logic ────────────────────────────────────────────────
+// ── 划动选择逻辑 / Slide-to-select logic ───────────────────────────
+//
+// 交互设计：
+//   点击 = 打开大图（选择模式下 = toggle）
+//   按住并少量移动（>5px）= 进入划动选择模式
+//   划动模式下划过一张就选一张
+//
+// UX design:
+//   click = open detail (or toggle if already in selection mode)
+//   hold + move > 5px = enter drag-select mode
+//   while drag-selecting: every card entered gets toggled
+
+const DRAG_THRESHOLD = 5 // px
 let isDraggingSelection = false
 let dragStartId: number | null = null
+let dragStartX = 0
+let dragStartY = 0
 let dragSelectState = true // true = selecting, false = deselecting
+let dragActivated = false  // true once drag threshold exceeded
 
 function onCheckboxClick(id: number) {
   selection.toggleSelection(id)
 }
 
 function onCardMouseDown(e: MouseEvent, id: number) {
-  if (e.button !== 0) return // Only left click
+  if (e.button !== 0) return // 仅左键 / Left button only
 
   if (e.ctrlKey || e.metaKey || e.shiftKey) {
+    // 修饰键 + 点击直接 toggle / Modifier + click toggles immediately
     selection.toggleSelection(id)
     return
   }
 
-  // 立即决定拖拽方向（选中 or 取消）并选中起始卡片 /
-  // Immediately determine drag direction and toggle the starting card.
-  dragSelectState = !selection.selectedIds.has(id)
-  if (dragSelectState) selection.selectItem(id)
-  else selection.deselectItem(id)
-
+  // 记录起始点，不立即选中——等待拖拽閘判断
+  // Record start position; don't select yet — wait for drag-threshold check
+  dragStartId = id
+  dragStartX = e.clientX
+  dragStartY = e.clientY
   isDraggingSelection = true
-  dragStartId = null  // 起始卡片已处理，无需在 mouseenter 重复处理 / starting card done, no re-process needed
+  dragActivated = false
+  dragSelectState = !selection.selectedIds.has(id)
 }
 
 function onCardMouseEnter(e: MouseEvent, id: number) {
-  // e.buttons bitmask: 1 = Left button held. Stop dragging if released.
-  // e.buttons 位模板：1 = 左键按下。如果已松开则停止拖拽。
+  // 左键未按下则停止 / Stop if left button released
   if ((e.buttons & 1) === 0) {
-    isDraggingSelection = false
+    _resetDrag()
     return
   }
 
-  if (!isDraggingSelection) return
+  if (!isDraggingSelection || !dragActivated) return
+  if (id === dragStartId) return // 回到起始卡片不重复处理 / skip re-entering start card
 
-  // 划过任意一张卡片即可触发 / Any card entered while dragging gets toggled.
+  // 划过任意一张卡片即选中 / Toggle every card entered while dragging
   if (dragSelectState) selection.selectItem(id)
   else selection.deselectItem(id)
 }
 
+function onGlobalMouseMove(e: MouseEvent) {
+  if (!isDraggingSelection || dragActivated) return
+  if ((e.buttons & 1) === 0) { _resetDrag(); return }
+
+  const dx = e.clientX - dragStartX
+  const dy = e.clientY - dragStartY
+  if (Math.sqrt(dx * dx + dy * dy) > DRAG_THRESHOLD) {
+    // 超过閘值，激活拖拽模式并选中起始卡片
+    // Threshold exceeded — activate drag mode and select starting card
+    dragActivated = true
+    if (dragStartId !== null) {
+      if (dragSelectState) selection.selectItem(dragStartId)
+      else selection.deselectItem(dragStartId)
+    }
+  }
+}
+
 function onCardMouseUp() {
+  _resetDrag()
+}
+
+function _resetDrag() {
   isDraggingSelection = false
+  dragActivated = false
   dragStartId = null
 }
 
-// Global mouse up to catch drags outside
+// 全局监听，捕捉卡片外的 mouseup/mousemove / Global listeners for out-of-card events
 onMounted(() => {
   window.addEventListener('mouseup', onCardMouseUp)
+  window.addEventListener('mousemove', onGlobalMouseMove)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('mouseup', onCardMouseUp)
+  window.removeEventListener('mousemove', onGlobalMouseMove)
 })
-// ─────────────────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────
 
 function scrollGridToTop() {
   if (!gridRef.value) return
@@ -391,6 +413,8 @@ async function handleFavorite(id: number) {
       }
     }
   }
+  // 立即刷新全局统计（侧边栏收藏计数）/ Refresh global stats (sidebar favorites count)
+  await media.loadStats()
   // 收藏视图中切换后需移除该项，触发重新布局 / remove item from favorites view
   if (ui.activeSmartAlbum === 'favorites') {
     await compute()
@@ -621,45 +645,5 @@ watch(
 .fab-btn:active {
   transform: scale(0.95);
 }
-
-/* ── 批量操作栏 / Batch operations bar ──────────────────────────────────── */
-.batch-bar {
-  position: absolute;
-  bottom: 60px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 20;
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-md);
-  padding: 10px 20px;
-  background: color-mix(in srgb, var(--color-bg-surface) 92%, transparent);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid var(--color-border);
-  border-radius: 99px;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.2);
-  white-space: nowrap;
-}
-.batch-bar-enter-active, .batch-bar-leave-active { transition: opacity 0.2s ease, transform 0.2s ease; }
-.batch-bar-enter-from, .batch-bar-leave-to { opacity: 0; transform: translateX(-50%) translateY(12px); }
-.batch-bar__count { font-size: var(--font-size-sm); font-weight: 600; color: var(--color-text-primary); }
-.batch-bar__actions { display: flex; align-items: center; gap: 4px; }
-.batch-bar__btn {
-  font-size: var(--font-size-xs);
-  font-weight: 500;
-  padding: 5px 12px;
-  border-radius: 99px;
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-elevated);
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-  white-space: nowrap;
-}
-.batch-bar__btn:hover { background: var(--color-accent); border-color: var(--color-accent); color: #fff; }
-.batch-bar__btn--danger:hover { background: hsl(0 70% 50%); border-color: hsl(0 70% 50%); }
-.batch-bar__btn--ghost { background: transparent; border-color: transparent; }
-.batch-bar__btn--ghost:hover { background: var(--color-bg-hover); border-color: var(--color-border); color: var(--color-text-primary); }
 
 </style>

@@ -652,6 +652,23 @@ pub fn toggle_favorite(conn: &Connection, item_id: i64) -> Result<bool> {
     Ok(new_val != 0)
 }
 
+/// Batch set is_favorited for multiple items in one transaction.
+/// 在单个事务中批量设置多个 item 的收藏状态。
+pub fn batch_set_favorite(conn: &Connection, item_ids: &[i64], value: bool) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    {
+        let mut stmt = tx.prepare_cached(
+            "UPDATE media_items SET is_favorited=?1, updated_at=strftime('%s','now') WHERE id=?2",
+        )?;
+        let flag = value as i64;
+        for &id in item_ids {
+            stmt.execute(params![flag, id])?;
+        }
+    }
+    tx.commit()?;
+    Ok(())
+}
+
 pub fn set_rating(conn: &Connection, item_id: i64, rating: i64) -> Result<()> {
     conn.execute(
         "UPDATE media_items SET rating=?1, updated_at=strftime('%s','now') WHERE id=?2",

@@ -24,6 +24,7 @@ export const IPC = {
   GET_MEDIA_DETAIL:          'get_media_detail',
   GET_COMPANION_VIDEO_URL:   'get_companion_video_url',
   TOGGLE_FAVORITE:           'toggle_favorite',
+  BATCH_TOGGLE_FAVORITE:     'batch_toggle_favorite',
   SET_RATING:                'set_rating',
   SOFT_DELETE_ITEMS:         'soft_delete_items',
   RESTORE_ITEMS:             'restore_items',

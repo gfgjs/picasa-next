@@ -4,7 +4,11 @@
   <div
     class="media-thumb"
     :style="thumbStyle"
-    :class="{ loaded: isLoaded, 'media-thumb--placeholder': !isLoaded }"
+    :class="{
+      loaded: isLoaded,
+      'media-thumb--placeholder': !isLoaded,
+      'media-thumb--selection-mode': isSelectionMode,
+    }"
   >
     <!-- Placeholder solid color + file format text -->
     <!-- 纯色占位符 + 文件格式文本 -->
@@ -401,6 +405,11 @@ onBeforeUnmount(() => {
   opacity: 0;
   pointer-events: auto;
   transition: opacity var(--transition-fast);
+}
+/* 选择模式下 checkbox 常显 | Always show checkbox in selection mode */
+.media-thumb:has(.checkbox.checked) .media-thumb__checkbox,
+.media-thumb--selection-mode .media-thumb__checkbox {
+  opacity: 1;
 }
 .checkbox {
   width: 20px;

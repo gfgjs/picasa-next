@@ -106,6 +106,19 @@ pub async fn toggle_favorite(item_id: i64, state: State<'_, Arc<AppState>>) -> R
     q::toggle_favorite(&conn, item_id)
 }
 
+/// Batch set the favorite flag for multiple items.
+/// 批量设置多个媒体项的收藏状态。
+#[tauri::command]
+pub async fn batch_toggle_favorite(
+    item_ids: Vec<i64>,
+    value: bool,
+    state: State<'_, Arc<AppState>>,
+) -> Result<()> {
+    if item_ids.is_empty() { return Ok(()); }
+    let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    q::batch_set_favorite(&conn, &item_ids, value)
+}
+
 /// Set the rating for a media item (0-5).
 /// 设置媒体项的评分（0-5）。
 #[tauri::command]

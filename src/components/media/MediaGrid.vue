@@ -5,6 +5,7 @@
       class="media-grid"
       :class="{ 'is-scrolling': isScrolling }"
       @scroll.passive="onGridScroll"
+      @mouseup="onGridMouseUp"
     >
     <!-- Empty state -->
     <!-- 空状态 -->
@@ -56,8 +57,12 @@
             v-for="item in (row as any).items"
             :key="item.id"
             class="media-card"
+            :class="{ 'media-card--selected': sel.isSelected(item.id) }"
             :style="{ width: item.w + 'px', height: item.h + 'px' }"
-            @click="openDetail(item.id)"
+            @click.exact="onCardClick($event, item.id)"
+            @click.shift.exact.prevent="onCardShiftClick(item.id)"
+            @mousedown.left="onCardMouseDown(item.id)"
+            @mouseenter="onCardMouseEnter(item.id)"
           >
             <MediaThumb
               :id="item.id"
@@ -71,7 +76,11 @@
               :thumbhash="item.thumbhash"
               :file-format="item.fileFormat"
               :file-size="item.fileSize"
+              :is-favorited="item.isFavorited"
+              :is-selected="sel.isSelected(item.id)"
+              :is-selection-mode="sel.isSelectionMode.value"
               :cache-dir="cacheDir"
+              @select="sel.toggleSelect"
               @request-thumb="onRequestThumb"
               @cancel-thumb="onCancelThumb"
               @favorite="handleFavorite"
@@ -92,6 +101,27 @@
         ↓
       </button>
     </div>
+
+  <!-- 批量操作浮层栏 | Batch action bar -->
+  <Transition name="batch-bar">
+    <div v-if="sel.isSelectionMode.value" class="batch-bar">
+      <span class="batch-bar__count">已选 {{ sel.selectedCount.value }} 项</span>
+      <div class="batch-bar__actions">
+        <button class="batch-btn" @click="onBatchFavorite" title="批量收藏">
+          <Heart :size="16" fill="currentColor" /> 收藏
+        </button>
+        <button class="batch-btn" @click="onBatchUnfavorite" title="取消收藏">
+          <Heart :size="16" /> 取消收藏
+        </button>
+        <button class="batch-btn batch-btn--danger" @click="onBatchDelete" title="移入回收站">
+          <Trash2 :size="16" /> 删除
+        </button>
+        <button class="batch-btn batch-btn--cancel" @click="sel.clearSelection()" title="退出选择">
+          <X :size="16" /> 取消
+        </button>
+      </div>
+    </div>
+  </Transition>
   </div>
 </template>
 
@@ -109,9 +139,10 @@ import { useFilterStore } from '../../stores/filterStore'
 import { useJustifiedLayout }  from '../../composables/useJustifiedLayout'
 import { useVirtualScroll }    from '../../composables/useVirtualScroll'
 import { useRequestQueue }     from '../../composables/useRequestQueue'
+import { useSelection }        from '../../composables/useSelection'
 
 import MediaThumb from './MediaThumb.vue'
-import { ImageIcon } from '@lucide/vue'
+import { ImageIcon, Heart, Trash2, X } from '@lucide/vue'
 import type { LayoutRow } from '../../types/layout'
 import { DEFAULTS, SEPARATOR_HEIGHT } from '../../constants/defaults'
 import { IPC, EVENTS } from '../../constants/ipc'
@@ -119,6 +150,8 @@ import { IPC, EVENTS } from '../../constants/ipc'
 import { scrollCache } from '../../utils/scrollCache'
 
 const GAP = DEFAULTS.GRID_GAP
+
+const sel = useSelection()
 
 const media  = useMediaStore()
 const ui     = useUiStore()
@@ -275,8 +308,113 @@ onBeforeUnmount(() => {
   resizeObserver?.disconnect()
 })
 
+// ESC 退出选择模式 | ESC exits selection mode
+function onKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape' && sel.isSelectionMode.value) {
+    sel.clearSelection()
+  }
+}
+onMounted(()       => document.addEventListener('keydown', onKeydown))
+onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
+
 // ── Detail ─────────────────────────────────────────────────────────────────
 // ── 详情 ─────────────────────────────────────────────────────────────────
+
+// ── 选择模式交互 | Selection mode interaction ─────────────────────────────
+
+/**
+ * 普通点击：选择模式下 toggleSelect，否则打开详情
+ * Normal click: in selection mode → toggleSelect, else → openDetail
+ */
+function onCardClick(e: MouseEvent, id: number) {
+  if (sel.isSelectionMode.value) {
+    sel.toggleSelect(id)
+  } else {
+    media.openDetail(id)
+  }
+}
+
+/**
+ * Shift+点击：范围选 | Shift+click: range select
+ */
+function onCardShiftClick(id: number) {
+  sel.selectRange(flatIds.value, id)
+}
+
+/** 鼠标按下：开始拖框选 | Mousedown: start rubber-band selection */
+function onCardMouseDown(id: number) {
+  if (!sel.isSelectionMode.value) return  // 非选择模式不拖选，只允许 Ctrl/Shift 开启
+  sel.onDragStart(id)
+}
+
+/** 鼠标经过：更新拖框选范围 | Mouseenter: extend rubber-band selection */
+function onCardMouseEnter(id: number) {
+  sel.onDragOver(id, flatIds.value)
+}
+
+/** 鼠标抬起（在网格上）：结束拖框选 | Mouseup on grid: end rubber-band */
+function onGridMouseUp() {
+  if (sel.isDragging.value) sel.onDragEnd()
+}
+
+/**
+ * Ctrl+点击：进入/切换选择 | Ctrl+click (handled via @select from checkbox)
+ * 直接在 card 上监听 contextmenu 长按 → 进入选择模式
+ */
+function onCardContextMenu(_id: number) {
+  // 右键或长按进入选择模式由 checkbox @click.stop 处理，此处留空
+}
+
+// 扁平化当前所有可见 item id（用于 range 选择）
+// Flatten all visible item ids in display order (for range selection)
+const flatIds = computed<number[]>(() => {
+  const ids: number[] = []
+  for (const row of visibleRows.value) {
+    if ((row as any).items) {
+      for (const item of (row as any).items) {
+        ids.push(item.id)
+      }
+    }
+  }
+  return ids
+})
+
+// ── 批量操作 | Batch operations ───────────────────────────────────────────
+
+async function onBatchFavorite() {
+  await sel.batchFavorite()
+  // 刷新可见行的 isFavorited 状态 | Refresh isFavorited in visible rows
+  for (const row of visibleRows.value) {
+    if ((row as any).items) {
+      for (const item of (row as any).items) {
+        if (sel.isSelected(item.id)) item.isFavorited = true
+      }
+    }
+  }
+  ui.addToast('success', `已收藏 ${sel.selectedCount.value} 项`)
+  sel.clearSelection()
+}
+
+async function onBatchUnfavorite() {
+  await sel.batchUnfavorite()
+  for (const row of visibleRows.value) {
+    if ((row as any).items) {
+      for (const item of (row as any).items) {
+        if (sel.isSelected(item.id)) item.isFavorited = false
+      }
+    }
+  }
+  ui.addToast('success', `已取消收藏 ${sel.selectedCount.value} 项`)
+  sel.clearSelection()
+}
+
+async function onBatchDelete() {
+  const count = sel.selectedCount.value
+  await sel.batchSoftDelete()
+  sel.clearSelection()
+  await compute()  // 从布局中移除已删除项 | Remove deleted items from layout
+  ui.addToast('success', `已移入回收站 ${count} 项`)
+}
 
 function openDetail(id: number) {
   media.openDetail(id)
@@ -495,5 +633,86 @@ watch(
 .fab-btn:active {
   transform: scale(0.95);
 }
+
+/* ── 已选中卡片高亮 | Selected card highlight ── */
+.media-card--selected {
+  outline: 2.5px solid var(--color-accent);
+  outline-offset: -2px;
+  border-radius: 4px;
+  z-index: 5;
+}
+.media-card--selected::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(var(--color-accent-rgb, 99, 102, 241), 0.15);
+  border-radius: 4px;
+  pointer-events: none;
+}
+
+/* ── 批量操作栏 | Batch action bar ── */
+.batch-bar {
+  position: absolute;
+  bottom: 28px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: 40px;
+  padding: 8px 20px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  z-index: 120;
+  white-space: nowrap;
+}
+.batch-bar__count {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  padding-right: 8px;
+  border-right: 1px solid var(--color-border);
+}
+.batch-bar__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.batch-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 14px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-surface);
+  color: var(--color-text-primary);
+  transition: background 0.15s, transform 0.1s;
+}
+.batch-btn:hover {
+  background: var(--color-bg-hover);
+  transform: scale(1.04);
+}
+.batch-btn:active { transform: scale(0.97); }
+.batch-btn--danger {
+  color: var(--color-error);
+  border-color: color-mix(in srgb, var(--color-error) 40%, transparent);
+}
+.batch-btn--danger:hover { background: color-mix(in srgb, var(--color-error) 12%, transparent); }
+.batch-btn--cancel {
+  color: var(--color-text-secondary);
+}
+
+/* ── Batch bar 过渡动画 | Batch bar transition ── */
+.batch-bar-enter-from,
+.batch-bar-leave-to  { opacity: 0; transform: translateX(-50%) translateY(20px); }
+.batch-bar-enter-active,
+.batch-bar-leave-active { transition: opacity 0.22s ease, transform 0.22s cubic-bezier(0.34, 1.18, 0.64, 1); }
 
 </style>

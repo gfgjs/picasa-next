@@ -275,6 +275,7 @@ pub fn run() {
             ipc::media_commands::get_adjacent_media,
             ipc::media_commands::get_companion_video_url,
             ipc::media_commands::toggle_favorite,
+            ipc::media_commands::batch_toggle_favorite,
             ipc::media_commands::set_rating,
             ipc::media_commands::soft_delete_items,
             ipc::media_commands::restore_items,

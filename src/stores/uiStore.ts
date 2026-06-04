@@ -97,6 +97,24 @@ export const useUiStore = defineStore('ui', () => {
   const sortBy    = ref<string>('sort_datetime')
   const sortOrder = ref<'asc' | 'desc'>('desc')
 
+  // ── Grid row height ─────────────────────────────────────────────────────
+  // ── 网格行高 ─────────────────────────────────────────────────────────────
+  const gridRowHeight = ref<number>(200)
+
+  function setGridRowHeight(h: number) {
+    gridRowHeight.value = Math.max(60, Math.min(960, h))
+  }
+
+  // ── Folder group sort ───────────────────────────────────────────────────
+  // ── 文件夹分组内排序 ─────────────────────────────────────────────────────
+  const folderSortBy = ref<'sort_datetime' | 'file_name'>('sort_datetime')
+  const folderSortOrder = ref<'asc' | 'desc'>('desc')
+
+  function setFolderSort(by: 'sort_datetime' | 'file_name', order?: 'asc' | 'desc') {
+    folderSortBy.value = by
+    if (order) folderSortOrder.value = order
+  }
+
   // ── Toasts ─────────────────────────────────────────────────────────────
   // ── 提示框 ─────────────────────────────────────────────────────────────
   const toasts = ref<ToastMessage[]>([])
@@ -167,9 +185,15 @@ export const useUiStore = defineStore('ui', () => {
     // view
     // 视图
     activeSmartAlbum, activeDirectoryId, setSmartAlbum, setActiveDirectory,
+    // grid
+    // 网格行高
+    gridRowHeight, setGridRowHeight,
     // sort
     // 排序
     sortBy, sortOrder,
+    // folder sort
+    // 文件夹分组内排序
+    folderSortBy, folderSortOrder, setFolderSort,
     // toasts
     // 提示框
     toasts, addToast, removeToast,

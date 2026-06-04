@@ -41,12 +41,18 @@ export function useJustifiedLayout(containerWidthRef: () => number) {
       filters.favoritedOnly = true
     }
 
+    // 文件夹视图：注入排序参数 | Folder view: inject sort params
+    if (ui.activeDirectoryId !== null) {
+      filters.sortBy    = ui.folderSortBy
+      filters.sortOrder = ui.folderSortOrder
+    }
 
     await media.computeLayout({
       directoryId,
       filters,
       containerWidth: cw,
-      rowHeight:      DEFAULTS.GRID_ROW_HEIGHT,
+      // 使用响应式行高，范围 60-960px | Use reactive row height (60-960px)
+      rowHeight:      ui.gridRowHeight,
       gap:            DEFAULTS.GRID_GAP,
     })
   }
@@ -72,6 +78,11 @@ export function useJustifiedLayout(containerWidthRef: () => number) {
       () => filter.minRating,
       () => ui.activeSmartAlbum,
       () => ui.activeDirectoryId,
+      // 行高变化时重新计算布局 | Re-compute when row height changes
+      () => ui.gridRowHeight,
+      // 文件夹内排序变化 | Folder sort changes
+      () => ui.folderSortBy,
+      () => ui.folderSortOrder,
     ],
     () => compute(),
     { deep: true }

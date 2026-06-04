@@ -452,7 +452,16 @@ pub fn query_layout_items(
         sql.push_str(" AND is_live_photo=1");
     }
 
-    sql.push_str(" ORDER BY sort_datetime DESC");
+    // 排序列白名单校验（防 SQL 注入）| Whitelist-validated sort column (SQL injection prevention)
+    let sort_col = match filter.sort_by.as_deref().unwrap_or("sort_datetime") {
+        "file_name" => "file_name",
+        _           => "sort_datetime",
+    };
+    let sort_dir = match filter.sort_order.as_deref().unwrap_or("desc") {
+        "asc" => "ASC",
+        _     => "DESC",
+    };
+    sql.push_str(&format!(" ORDER BY {sort_col} {sort_dir}"));
 
     let mut stmt = conn.prepare(&sql)?;
     let refs: Vec<&dyn rusqlite::ToSql> = extras.iter().map(|b| b.as_ref()).collect();

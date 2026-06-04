@@ -192,6 +192,10 @@ pub struct MediaFilter {
     pub min_rating:       Option<i64>,
     pub date_range:       Option<DateRange>,
     pub directory_id:     Option<i64>,
+    /// 排序字段: "sort_datetime" | "file_name" | 按哪列排序 | Sort column
+    pub sort_by:          Option<String>,
+    /// 排序方向: "asc" | "desc" | Sort direction
+    pub sort_order:       Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -77,6 +77,31 @@
       <span v-if="ai.isSearching" class="toolbar__search-spinner" />
     </div>
 
+    <!-- Row height slider | 网格行高滑块 -->
+    <div class="toolbar__row-height" :title="`网格行高: ${ui.gridRowHeight}px`">
+      <LayoutPanelTop :size="16" class="toolbar__row-height-icon" />
+      <input
+        type="range"
+        class="toolbar__row-height-slider"
+        :value="ui.gridRowHeight"
+        min="60"
+        max="960"
+        step="20"
+        @input="onRowHeightInput"
+      />
+    </div>
+
+    <!-- Folder sort toggle (only when viewing a directory) | 文件夹内排序切换针对文件夹视图 -->
+    <button
+      v-if="ui.activeDirectoryId !== null"
+      class="btn-icon"
+      :title="ui.folderSortBy === 'sort_datetime' ? '切换为按文件名排序' : '切换为按时间排序'"
+      @click="toggleFolderSort"
+    >
+      <Clock v-if="ui.folderSortBy === 'sort_datetime'" :size="16" />
+      <CaseSensitive v-else :size="16" />
+    </button>
+
     <!-- View sort -->
     <!-- 视图排序 -->
     <div class="toolbar__sort">
@@ -100,7 +125,7 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { ImageIcon, Video, Sparkles, X, Maximize2, Minimize2, Search, ArrowDown, ArrowUp } from '@lucide/vue'
+import { ImageIcon, Video, Sparkles, X, Maximize2, Minimize2, Search, ArrowDown, ArrowUp, LayoutPanelTop, Clock, CaseSensitive } from '@lucide/vue'
 import { useUiStore } from '../../stores/uiStore'
 import { useFilterStore } from '../../stores/filterStore'
 import { useMediaStore } from '../../stores/mediaStore'
@@ -165,6 +190,26 @@ function toggleSortOrder() {
 }
 
 function onSortChange() {
+  emit('sort-change')
+}
+
+// 行高滑块防抖 | Debounced row height slider
+let rowHeightTimer: ReturnType<typeof setTimeout> | null = null
+function onRowHeightInput(e: Event) {
+  const val = Number((e.target as HTMLInputElement).value)
+  if (rowHeightTimer) clearTimeout(rowHeightTimer)
+  rowHeightTimer = setTimeout(() => {
+    ui.setGridRowHeight(val)
+  }, 200)
+}
+
+// 切换文件夹内排序方式 | Toggle folder sort mode
+function toggleFolderSort() {
+  if (ui.folderSortBy === 'sort_datetime') {
+    ui.setFolderSort('file_name', 'asc')
+  } else {
+    ui.setFolderSort('sort_datetime', 'desc')
+  }
   emit('sort-change')
 }
 </script>
@@ -307,5 +352,22 @@ function onSortChange() {
 }
 @keyframes toolbar-spin {
   to { transform: rotate(360deg); }
+}
+
+/* ── 行高滑块 | Row height slider ── */
+.toolbar__row-height {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.toolbar__row-height-icon {
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
+}
+.toolbar__row-height-slider {
+  width: 80px;
+  accent-color: var(--color-accent);
+  cursor: pointer;
 }
 </style>

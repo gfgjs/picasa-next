@@ -313,7 +313,16 @@ function formatCount(n: number | undefined | null): string {
 // ── 文件夹树 ────────────────────────────────────────────────────────────
 
 function onNodeClick(node: any) {
-  ui.setActiveDirectory(node.id)
+  if (ui.groupBy === 'folder') {
+    ui.pendingScrollLabel = node.name
+    if (ui.activeSmartAlbum !== 'all' || ui.activeDirectoryId !== null) {
+      ui.setSmartAlbum('all')
+      ui.setActiveDirectory(null)
+    }
+  } else {
+    ui.setActiveDirectory(node.id)
+  }
+  
   if (route.path !== '/') {
     router.push('/')
   }

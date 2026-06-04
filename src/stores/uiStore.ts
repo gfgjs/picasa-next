@@ -160,6 +160,10 @@ export const useUiStore = defineStore('ui', () => {
   // ── 加载状态 ─────────────────────────────────────────────────────
   const isLayoutLoading = ref(false)
 
+  // ── Scroll Target ──────────────────────────────────────────────────────
+  // ── 滚动目标 ────────────────────────────────────────────────────────
+  const pendingScrollLabel = ref<string | null>(null)
+
   // ── Fullscreen ─────────────────────────────────────────────────────────
   // ── 全屏 ─────────────────────────────────────────────────────────
   const isFullscreen = ref(false)
@@ -226,6 +230,8 @@ export const useUiStore = defineStore('ui', () => {
     // loading
     // 加载
     isLayoutLoading,
+    // scroll target
+    pendingScrollLabel,
     // fullscreen
     // 全屏
     isFullscreen, initFullscreen, toggleFullscreen,

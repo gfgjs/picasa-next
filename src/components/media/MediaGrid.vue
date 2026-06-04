@@ -380,6 +380,40 @@ watch(
     updateVisible(true)
   }
 )
+
+// ── Pending scroll (e.g. from sidebar folder click) ────────────────────────
+async function scrollToLabel(label: string) {
+  try {
+    const y = await invoke<number | null>(IPC.GET_SEPARATOR_Y_BY_LABEL, { label })
+    if (y !== null && gridRef.value) {
+      const targetY = Math.max(0, y)
+      gridRef.value.scrollTo({ top: targetY, behavior: 'smooth' })
+      scrollCache.set(getViewKey(), targetY)
+    }
+  } catch (e) {
+    console.error('Failed to get separator y:', e)
+  } finally {
+    ui.pendingScrollLabel = null
+  }
+}
+
+watch(() => ui.pendingScrollLabel, async (label) => {
+  if (!label) return
+  if (media.isComputingLayout) {
+    const unwatch = watch(() => media.isComputingLayout, async (isComp) => {
+      if (!isComp) {
+        unwatch()
+        // Wait briefly so layoutVersion watcher can apply its default scroll
+        setTimeout(async () => {
+          await scrollToLabel(label)
+        }, 50)
+      }
+    })
+  } else {
+    await scrollToLabel(label)
+  }
+})
+
 </script>
 
 <style scoped>

@@ -115,3 +115,13 @@ pub async fn get_layout_rows_by_y(
     crate::layout::cache::get_rows_by_y(&state.layout_cache, top_y, bottom_y, layout_version)
         .ok_or(AppError::LayoutNotReady)
 }
+
+/// Find the Y coordinate of a separator row by matching its label.
+/// 通过匹配标签查找分隔符行的 Y 坐标。
+#[tauri::command]
+pub async fn get_separator_y_by_label(
+    label: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<Option<f64>> {
+    Ok(crate::layout::cache::get_separator_y_by_label(&state.layout_cache, &label))
+}

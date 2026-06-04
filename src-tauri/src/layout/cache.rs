@@ -145,3 +145,19 @@ pub fn get_adjacent_item(cache: &LayoutCache, current_id: i64, offset: isize) ->
     
     all_ids.get(target_idx).copied()
 }
+
+/// Find the Y coordinate of a separator row by matching its label
+/// 通过匹配标签查找分隔符行的 Y 坐标
+pub fn get_separator_y_by_label(cache: &LayoutCache, label_substring: &str) -> Option<f64> {
+    let guard = cache.read().unwrap();
+    let data = guard.as_ref()?;
+    
+    for row in &data.rows {
+        if let LayoutRow::Separator { y, separator_label, .. } = row {
+            if separator_label.contains(label_substring) {
+                return Some(*y);
+            }
+        }
+    }
+    None
+}

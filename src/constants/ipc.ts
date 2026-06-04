@@ -18,6 +18,7 @@ export const IPC = {
   COMPUTE_LAYOUT:   'compute_layout',
   GET_LAYOUT_ROWS:  'get_layout_rows',
   GET_LAYOUT_ROWS_BY_Y: 'get_layout_rows_by_y',
+  GET_SEPARATOR_Y_BY_LABEL: 'get_separator_y_by_label',
 
   // ── Media ─────────────────────────────────────────────────────────────
   // ── 媒体 ─────────────────────────────────────────────────────────────

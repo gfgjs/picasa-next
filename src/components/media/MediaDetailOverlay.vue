@@ -126,9 +126,27 @@
                 <span class="info-label">{{ $t('detail.dimensions') }}</span>
                 <span class="info-value" v-if="detail.width">{{ detail.width }} × {{ detail.height }}</span>
               </div>
+              <!-- 视频时長 | Video duration -->
+              <div v-if="detail.durationMs" class="info-row">
+                <span class="info-label">时長</span>
+                <span class="info-value">{{ formatDuration(detail.durationMs) }}</span>
+              </div>
               <div class="info-row">
                 <span class="info-label">{{ $t('detail.format') }}</span>
                 <span class="info-value">{{ detail.fileFormat.toUpperCase() }}</span>
+              </div>
+              <!-- 完整路径 + 复制 | Full path + copy button -->
+              <div class="info-row info-row--path">
+                <span class="info-label">路径</span>
+                <span class="info-value info-value--path" :title="detail.absPath">{{ detail.absPath }}</span>
+                <button
+                  class="btn-icon btn-icon--xs"
+                  :title="copyPathTooltip"
+                  @click="copyPath"
+                >
+                  <Check v-if="pathCopied" :size="13" />
+                  <Copy v-else :size="13" />
+                </button>
               </div>
             </div>
 
@@ -138,7 +156,8 @@
               <div class="info-section__title">{{ $t('detail.exif') }}</div>
               <div v-if="detail.imageMeta.exifDatetime" class="info-row">
                 <span class="info-label">{{ $t('detail.datetime') }}</span>
-                <span class="info-value">{{ formatDateTime(detail.imageMeta.exifDatetime) }}</span>
+                <!-- 本地时间格式 | Local time format -->
+                <span class="info-value">{{ formatDateTimeLocal(detail.imageMeta.exifDatetime) }}</span>
               </div>
               <div v-if="detail.imageMeta.exifMake" class="info-row">
                 <span class="info-label">{{ $t('detail.camera') }}</span>
@@ -198,7 +217,7 @@ import { useMediaDetail } from '../../composables/useMediaDetail'
 import { formatFileSize, formatDateTime, formatFocalLength, formatAperture, formatGps } from '../../utils/format'
 import {
   X, ZoomIn, ZoomOut, Maximize, MoveHorizontal, MoveVertical,
-  Heart, FolderOpen, Info, Star, FileText
+  Heart, FolderOpen, Info, Star, FileText, Copy, Check
 } from '@lucide/vue'
 import { IPC } from '../../constants/ipc'
 
@@ -348,6 +367,35 @@ async function toggleLive() {
       ui.addToast('error', t('detail.livePhotoError'))
     }
   }
+}
+
+// 格式化视频时长 (ms → HH:MM:SS) | Format video duration
+function formatDuration(ms: number): string {
+  const totalSec = Math.floor(ms / 1000)
+  const h = Math.floor(totalSec / 3600)
+  const m = Math.floor((totalSec % 3600) / 60)
+  const s = totalSec % 60
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+  return `${m}:${String(s).padStart(2, '0')}`
+}
+
+// 本地时区日期格式化 | Local timezone date format
+function formatDateTimeLocal(ts: number): string {
+  return new Date(ts * 1000).toLocaleString('zh-CN', {
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false,
+  })
+}
+
+// 复制路径到剪贴板 | Copy abs path to clipboard
+const pathCopied = ref(false)
+const copyPathTooltip = computed(() => pathCopied.value ? '已复制' : '复制路径')
+async function copyPath() {
+  if (!detail.value) return
+  await navigator.clipboard.writeText(detail.value.absPath)
+  pathCopied.value = true
+  setTimeout(() => { pathCopied.value = false }, 2000)
 }
 </script>
 
@@ -556,4 +604,29 @@ async function toggleLive() {
 .slide-leave-to  { transform: translateX(100%); }
 .slide-enter-active,
 .slide-leave-active { transition: transform var(--transition-normal); }
+
+/* ── 路径行 | Path row ── */
+.info-row--path {
+  align-items: flex-start;
+  flex-wrap: nowrap;
+}
+.info-value--path {
+  flex: 1;
+  font-size: 11px;
+  word-break: break-all;
+  line-height: 1.4;
+  max-height: 3.8em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+.btn-icon--xs {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
 </style>

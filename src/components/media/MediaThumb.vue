@@ -280,6 +280,7 @@ onBeforeUnmount(() => {
   background: var(--color-bg-elevated);
   /* cursor and flex-shrink live on the parent .media-card */
   /* cursor 和 flex-shrink 存在于父组件 .media-card 上 */
+  transition: transform 0.25s cubic-bezier(0.34, 1.18, 0.64, 1), border-radius 0.25s ease;
 }
 .media-thumb:hover .media-thumb__fav,
 .media-thumb:hover .media-thumb__checkbox {
@@ -319,6 +320,7 @@ onBeforeUnmount(() => {
   position: absolute;
   inset: 0;
   pointer-events: none;
+  z-index: 10;
 }
 
 .badge {
@@ -439,30 +441,39 @@ onBeforeUnmount(() => {
 
 /* ── Selection visual states | 选择视觉状态 ─────────────────────── */
 
-/* Selected overlay — semi-transparent blue mask */
-/* 选中遮罩 — 半透明蓝色蒙版 */
+.media-thumb--selected {
+  transform: scale(0.85);
+  border-radius: var(--radius-lg);
+}
+
+/* Selected overlay — subtle dimming mask */
+/* 选中遮罩 — 轻微变暗蒙版 */
 .media-thumb--selected::after {
   content: '';
   position: absolute;
   inset: 0;
-  background: rgba(66, 133, 244, 0.3);
+  background: color-mix(in srgb, var(--color-bg-surface) 20%, transparent);
   pointer-events: none;
   z-index: 2;
-  border-radius: 2px;
-  transition: background 100ms ease;
+  border-radius: inherit;
+  transition: all 150ms ease;
 }
 
-/* Selected border */
-/* 选中边框 */
-.media-thumb--selected {
-  outline: 2px solid rgba(66, 133, 244, 0.8);
-  outline-offset: -2px;
+.media-thumb--drag-hover {
+  transform: scale(0.92);
+  border-radius: var(--radius-md);
 }
 
-/* Drag hover — deepened overlay for real-time feedback */
-/* 拖拽悬停 — 加深遮罩提供实时反馈 */
+/* Drag hover overlay */
 .media-thumb--drag-hover::after {
-  background: rgba(66, 133, 244, 0.5);
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--color-bg-surface) 35%, transparent);
+  pointer-events: none;
+  z-index: 2;
+  border-radius: inherit;
+  transition: all 150ms ease;
 }
 
 /* In selection mode: always show checkbox (not just on hover) */

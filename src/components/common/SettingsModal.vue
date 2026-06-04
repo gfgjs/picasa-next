@@ -16,6 +16,18 @@
 
       <div class="setting-item">
         <div class="setting-info">
+          <div class="setting-label">{{ $t('settings.theme') }}</div>
+          <div class="setting-desc">{{ $t('settings.themeDesc') }}</div>
+        </div>
+        <select v-model="ui.theme" @change="ui.setTheme(ui.theme)" class="setting-input" style="width: 100px;">
+          <option value="system">{{ $t('settings.themeSystem') }}</option>
+          <option value="light">{{ $t('settings.themeLight') }}</option>
+          <option value="dark">{{ $t('settings.themeDark') }}</option>
+        </select>
+      </div>
+
+      <div class="setting-item">
+        <div class="setting-info">
           <div class="setting-label">{{ $t('settings.thumbSkipMaxKb') }}</div>
           <div class="setting-desc">{{ $t('settings.thumbSkipDesc') }}</div>
         </div>

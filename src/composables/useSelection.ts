@@ -17,6 +17,7 @@ const dragStartId = ref<number | null>(null)
 const lastHoveredId = ref<number | null>(null)
 const hasDragMoved = ref(false)
 const lastClickedId = ref<number | null>(null)
+const dragStartContainer = ref<HTMLElement | null>(null)
 
 // Tracking for drag sequence to allow reverse-selection and cross-row ranges
 const initialSelection = ref(new Set<number>())
@@ -81,6 +82,21 @@ export function useSelection() {
     lastClickedId.value = null
   }
 
+  function invertSelection(allIds: number[]) {
+    const newSet = new Set<number>()
+    for (const id of allIds) {
+      if (!selectedIds.value.has(id)) {
+        newSet.add(id)
+      }
+    }
+    selectedIds.value = newSet
+    if (newSet.size === 0) {
+      isSelectionMode.value = false
+    } else {
+      isSelectionMode.value = true
+    }
+  }
+
   function isSelected(id: number): boolean {
     return selectedIds.value.has(id)
   }
@@ -96,6 +112,9 @@ export function useSelection() {
     dragStartId.value = id
     hasDragMoved.value = false
     lastHoveredId.value = id
+
+    const target = event.target as HTMLElement | null
+    dragStartContainer.value = target?.closest('.media-grid, .semantic-panel__grid') as HTMLElement | null
 
     // Determine drag mode: if starting on a selected item, deselect; otherwise select
     // 确定拖拽模式：如果从已选中项开始，则反选；否则选中
@@ -158,7 +177,8 @@ export function useSelection() {
   }
 
   function applyDragRange(startId: number, endId: number) {
-    const cards = document.querySelectorAll('.media-card[data-item-id]')
+    const container = dragStartContainer.value || document
+    const cards = container.querySelectorAll('[data-item-id]')
     const visibleIds: number[] = []
     for (let i = 0; i < cards.length; i++) {
       const id = parseInt((cards[i] as HTMLElement).dataset.itemId || '', 10)
@@ -212,6 +232,7 @@ export function useSelection() {
     dragStartId.value = null
     lastHoveredId.value = null
     dragMode.value = null
+    dragStartContainer.value = null
   }
 
   // ── Keyboard handling | 键盘处理 ──
@@ -244,6 +265,7 @@ export function useSelection() {
     selectRange,
     selectAll,
     clearSelection,
+    invertSelection,
     isSelected,
 
     onPointerDown,

@@ -16,6 +16,23 @@ export const useUiStore = defineStore('ui', () => {
   const theme = ref<Theme>('system')
   const language = ref<string>('zh-CN')
 
+  const systemIsDark = ref(window.matchMedia('(prefers-color-scheme: dark)').matches)
+
+  // Listen for OS theme changes globally
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+    systemIsDark.value = e.matches
+    if (theme.value === 'system') {
+      applyTheme('system')
+    }
+  })
+
+  const isDark = computed(() => {
+    if (theme.value === 'system') {
+      return systemIsDark.value
+    }
+    return theme.value === 'dark'
+  })
+
   function applyLanguage(lang: string) {
     language.value = lang
     document.documentElement.setAttribute('lang', lang)
@@ -31,9 +48,13 @@ export const useUiStore = defineStore('ui', () => {
 
   function applyTheme(t: Theme) {
     const resolved = t === 'system'
-      ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+      ? (systemIsDark.value ? 'dark' : 'light')
       : t
     document.documentElement.setAttribute('data-theme', resolved)
+    
+    // Synchronize native window titlebar theme using our custom Rust IPC command
+    // 强制同步原生窗口标题栏主题，绕过 Tauri 可能存在的无响应 BUG
+    invoke('set_window_theme', { theme: t, resolved }).catch(() => {})
   }
 
   function setTheme(t: Theme) {
@@ -43,8 +64,7 @@ export const useUiStore = defineStore('ui', () => {
   }
 
   function cycleTheme() {
-    const next: Record<Theme, Theme> = { dark: 'light', light: 'system', system: 'dark' }
-    setTheme(next[theme.value])
+    setTheme(isDark.value ? 'light' : 'dark')
   }
 
   // ── Thumbnail Strategy ───────────────────────────────────────────────────
@@ -199,7 +219,7 @@ export const useUiStore = defineStore('ui', () => {
   return {
     // theme & language
     // 主题与语言
-    theme, setTheme, cycleTheme, applyTheme,
+    theme, isDark, setTheme, cycleTheme, applyTheme,
     language, applyLanguage, setLanguage,
     // thumbnail strategy
     // 缩略图生成策略

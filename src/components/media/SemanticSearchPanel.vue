@@ -108,21 +108,37 @@
             :key="item.id"
             :item="item"
             :cache-dir="cacheDir"
-            @click="emit('item-click', item)"
+            :is-selected="selection.isSelected(item.id)"
+            :is-selection-mode="selection.isSelectionMode.value"
+            @click="(i, e) => handleCardClick(i, e)"
+            @select="(i) => selection.toggleSelect(i.id)"
+            @pointerdown="selection.onPointerDown(item.id, $event)"
           />
         </div>
       </div>
 
+      <!-- Selection toolbar -->
+      <SelectionToolbar
+        @batch-favorite="batchFavorite"
+        @batch-delete="batchDelete"
+        @select-all="selection.selectAll(getAllVisibleItemIds())"
+        @invert-selection="selection.invertSelection(getAllVisibleItemIds())"
+      />
     </div>
   </Transition>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { Sparkles, Zap, Square, RefreshCw, AlertCircle, Search } from '@lucide/vue'
 import { appDataDir, join } from '@tauri-apps/api/path'
+import { invoke } from '@tauri-apps/api/core'
+import { useI18n } from 'vue-i18n'
 import { useAiStore } from '../../stores/aiStore'
+import { useUiStore } from '../../stores/uiStore'
+import { useSelection } from '../../composables/useSelection'
 import SemanticResultCard from './SemanticResultCard.vue'
+import SelectionToolbar from './SelectionToolbar.vue'
 import type { SemanticSearchResult } from '../../types/ai'
 
 const emit = defineEmits<{
@@ -130,6 +146,9 @@ const emit = defineEmits<{
 }>()
 
 const ai = useAiStore()
+const ui = useUiStore()
+const { t } = useI18n()
+const selection = useSelection()
 const isInitialising = ref(false)
 
 // Resolve cache directory (same logic as MediaGrid.vue)
@@ -152,6 +171,63 @@ async function initAndStart() {
   } finally {
     isInitialising.value = false
   }
+}
+
+// ── Detail & Selection ───────────────────────────────────────────────────
+
+function getAllVisibleItemIds(): number[] {
+  return ai.semanticResults.map(item => item.id)
+}
+
+function handleCardClick(item: SemanticSearchResult, event: MouseEvent) {
+  if (selection.wasDrag()) return
+
+  if (event.ctrlKey || event.metaKey) {
+    selection.toggleSelect(item.id)
+    return
+  }
+
+  if (selection.isSelectionMode.value && event.shiftKey) {
+    selection.selectRange(selection.lastClickedId.value, item.id, getAllVisibleItemIds())
+    return
+  }
+
+  emit('item-click', item)
+}
+
+function onKeyDown(e: KeyboardEvent) {
+  selection.onKeyDown(e, getAllVisibleItemIds)
+}
+
+onMounted(() => document.addEventListener('keydown', onKeyDown))
+onBeforeUnmount(() => document.removeEventListener('keydown', onKeyDown))
+
+// ── Batch Actions ────────────────────────────────────────────────────────
+
+async function batchFavorite() {
+  const ids = Array.from(selection.selectedIds.value)
+  if (ids.length === 0) return
+  await invoke('batch_toggle_favorite', { itemIds: ids, value: true })
+  
+  // Optional: Update ui store / show toast
+  if (typeof (ui as any).showToast === 'function') {
+    ;(ui as any).showToast(t('selection.favorited', { count: ids.length }))
+  }
+  selection.clearSelection()
+}
+
+async function batchDelete() {
+  const ids = Array.from(selection.selectedIds.value)
+  if (ids.length === 0) return
+  await invoke('soft_delete_items', { itemIds: ids })
+  
+  // Update local results view
+  ai.semanticResults = ai.semanticResults.filter(item => !selection.isSelected(item.id))
+  
+  if (typeof (ui as any).showToast === 'function') {
+    ;(ui as any).showToast(t('selection.deleted', { count: ids.length }))
+  }
+  selection.clearSelection()
 }
 </script>
 

@@ -191,9 +191,8 @@
     <div class="sidebar__footer">
       <button class="btn-icon" :title="$t('sidebar.settings')" @click="ui.isSettingsOpen = true"><Settings :size="18" /></button>
       <button class="btn-icon" :title="$t('sidebar.toggleTheme')" @click="ui.cycleTheme()">
-        <Sun v-if="ui.theme === 'dark'" :size="18" />
-        <Moon v-else-if="ui.theme === 'light'" :size="18" />
-        <Monitor v-else :size="18" />
+        <Sun v-if="ui.isDark" :size="18" />
+        <Moon v-else :size="18" />
       </button>
     </div>
 

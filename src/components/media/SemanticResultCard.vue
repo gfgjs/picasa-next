@@ -3,8 +3,14 @@
   <!-- 单个语义搜索结果卡片 -->
   <button
     class="result-card"
+    :class="{
+      'result-card--selected': isSelected,
+      'result-card--selection-mode': isSelectionMode
+    }"
+    :data-item-id="item.id"
     :title="`${item.fileName} · 相似度 ${similarityPercent}%`"
-    @click="emit('click', item)"
+    @click="emit('click', item, $event)"
+    @pointerdown="emit('pointerdown', $event)"
   >
     <!-- Thumbnail -->
     <div class="result-card__thumb-wrap">
@@ -25,6 +31,21 @@
       <div class="result-card__badge" :class="badgeClass">
         {{ similarityPercent }}%
       </div>
+
+      <!-- Selection Overlay -->
+      <!-- 选择遮罩 -->
+      <div v-if="isSelected" class="result-card__overlay"></div>
+
+      <!-- Selection Indicator (CheckCircle) -->
+      <!-- 选择指示器 (勾选圆圈) -->
+      <div
+        class="result-card__select-btn"
+        :class="{ 'is-selected': isSelected }"
+        @click.stop="emit('select', item, $event)"
+      >
+        <div class="select-icon-bg"></div>
+        <CheckCircle2 :size="20" class="select-icon" />
+      </div>
     </div>
 
     <!-- File name -->
@@ -33,8 +54,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
-import { ImageIcon } from '@lucide/vue'
+import { ref, computed } from 'vue'
+import { ImageIcon, CheckCircle2 } from '@lucide/vue'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import type { SemanticSearchResult } from '../../types/ai'
 
@@ -43,8 +64,14 @@ const props = defineProps<{
   /** Absolute path to app cache dir (e.g. C:/Users/.../AppData/.../cache) */
   /** 应用缓存目录的绝对路径 */
   cacheDir?: string
+  isSelected?: boolean
+  isSelectionMode?: boolean
 }>()
-const emit = defineEmits<{ (e: 'click', item: SemanticSearchResult): void }>()
+const emit = defineEmits<{
+  (e: 'click', item: SemanticSearchResult, event: MouseEvent): void
+  (e: 'select', item: SemanticSearchResult, event: MouseEvent): void
+  (e: 'pointerdown', event: PointerEvent): void
+}>()
 
 /**
  * Resolve thumb_path to a displayable URL, mirroring MediaThumb.vue's logic:
@@ -116,6 +143,13 @@ const badgeClass = computed(() => {
   background: var(--color-bg-surface);
   border-color: var(--color-border);
 }
+.result-card--selection-mode:hover {
+  background: transparent;
+  border-color: transparent;
+}
+.result-card--selected {
+  background: transparent;
+}
 
 .result-card__thumb-wrap {
   position: relative;
@@ -123,6 +157,11 @@ const badgeClass = computed(() => {
   border-radius: var(--radius-sm);
   overflow: hidden;
   background: var(--color-bg-overlay);
+  transition: transform 0.25s cubic-bezier(0.34, 1.18, 0.64, 1), border-radius 0.25s ease;
+}
+.result-card--selected .result-card__thumb-wrap {
+  transform: scale(0.85);
+  border-radius: var(--radius-lg);
 }
 .result-card__thumb {
   width: 100%;
@@ -132,6 +171,9 @@ const badgeClass = computed(() => {
 }
 .result-card:hover .result-card__thumb {
   transform: scale(1.04);
+}
+.result-card--selection-mode:hover .result-card__thumb {
+  transform: none;
 }
 .result-card__thumb-placeholder {
   width: 100%;
@@ -172,5 +214,73 @@ const badgeClass = computed(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   line-height: 1.3;
+}
+
+/* Selection UI */
+/* 选择 UI */
+.result-card__overlay {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--color-bg-surface) 20%, transparent);
+  z-index: 5;
+  pointer-events: none;
+  border-radius: inherit;
+}
+
+.result-card__select-btn {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s, transform 0.2s;
+  pointer-events: auto; /* Capture clicks directly */
+}
+
+/* Show the checkbox when hovered (even not in selection mode) or when in selection mode */
+.result-card:hover .result-card__select-btn,
+.result-card--selection-mode .result-card__select-btn {
+  opacity: 1;
+}
+
+.select-icon {
+  color: rgba(255, 255, 255, 0.8);
+  position: relative;
+  z-index: 2;
+  transition: color 0.2s;
+}
+
+/* Background circle to ensure contrast */
+.select-icon-bg {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 16px;
+  height: 16px;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 50%;
+  z-index: 1;
+  transition: background 0.2s;
+}
+
+.result-card__select-btn:hover .select-icon {
+  color: #fff;
+}
+
+.result-card__select-btn.is-selected .select-icon {
+  color: var(--color-accent);
+  fill: #fff;
+}
+
+.result-card__select-btn.is-selected .select-icon-bg {
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.2);
 }
 </style>

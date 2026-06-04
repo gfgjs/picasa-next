@@ -43,7 +43,7 @@ xxhash-rust = { version = "0.8", features = ["xxh3"] }
 image              = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "bmp", "gif", "tiff"] }
 fast_image_resize  = "4"
 thumbhash          = "0.1"
-windows            = { version = "0.58", features = ["Win32_Graphics_Imaging", "Win32_Graphics_Direct2D", "Win32_Graphics_Direct3D11", "Win32_Foundation", "Win32_System_Com"] }
+windows            = { version = "0.58", features = ["Win32_Graphics_Imaging", "Win32_Graphics_Direct2D", "Win32_Graphics_Direct3D11", "Win32_Foundation", "Win32_System_Com", "Win32_Graphics_Dwm"] }
 
 # ── EXIF / XMP ───────────────────────────────────────────────────────────────
 kamadak-exif = "0.5"

@@ -12,6 +12,24 @@
 
         <div class="settings-card__item">
           <div class="settings-card__info">
+            <div class="settings-card__label">{{ $t('settings.theme') }}</div>
+            <div class="settings-card__desc">{{ $t('settings.themeDesc') }}</div>
+          </div>
+          <div class="select-wrap">
+            <select
+              v-model="ui.theme"
+              @change="ui.setTheme(ui.theme)"
+              class="select"
+            >
+              <option value="system">{{ $t('settings.themeSystem') }}</option>
+              <option value="light">{{ $t('settings.themeLight') }}</option>
+              <option value="dark">{{ $t('settings.themeDark') }}</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="settings-card__item">
+          <div class="settings-card__info">
             <div class="settings-card__label">{{ $t('settings.language') }}</div>
             <div class="settings-card__desc">{{ $t('settings.languageDesc') }}</div>
           </div>

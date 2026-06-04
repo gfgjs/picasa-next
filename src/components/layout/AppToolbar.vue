@@ -58,7 +58,7 @@
         :title="ai.isSemanticMode ? '切换到普通搜索' : '切换到 AI 语义搜索'"
         @click="toggleSearchMode"
       >
-        <Sparkles :size="13" />
+        <span class="mode-text">AI</span>
       </button>
 
       <Search :size="14" class="toolbar__search-icon" />
@@ -367,7 +367,7 @@ function onSortWithinGroupChange(e: Event) {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
+  width: 24px;
   height: 22px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--color-border);
@@ -377,6 +377,11 @@ function onSortWithinGroupChange(e: Event) {
   flex-shrink: 0;
   transition: all var(--transition-fast);
   padding: 0;
+}
+.toolbar__search-mode-btn .mode-text {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
 }
 .toolbar__search-mode-btn:hover {
   border-color: var(--color-accent);

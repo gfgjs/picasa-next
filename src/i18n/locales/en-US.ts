@@ -87,6 +87,11 @@ export default {
   settings: {
     title: 'Settings',
     general: 'General',
+    theme: 'Theme',
+    themeDesc: 'Choose the interface theme for the application.',
+    themeSystem: 'System',
+    themeLight: 'Light',
+    themeDark: 'Dark',
     language: 'Language',
     languageDesc: 'Choose the interface language for the application.',
     thumbSkipMaxKb: 'Small File Direct Display Threshold (KB)',

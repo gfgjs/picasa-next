@@ -87,6 +87,11 @@ export default {
   settings: {
     title: '设置',
     general: '通用',
+    theme: '外观主题',
+    themeDesc: '选择应用的主题颜色。',
+    themeSystem: '跟随系统',
+    themeLight: '浅色',
+    themeDark: '深色',
     language: '语言',
     languageDesc: '选择应用的界面语言。',
     thumbSkipMaxKb: '小文件直显阈值 (KB)',

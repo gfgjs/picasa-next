@@ -81,6 +81,7 @@
               @request-thumb="onRequestThumb"
               @cancel-thumb="onCancelThumb"
               @favorite="handleFavorite"
+              @select="selection.toggleSelect(item.id)"
             />
           </div>
         </template>
@@ -89,29 +90,12 @@
   </div>
 
   <!-- Selection toolbar | 选择工具栏 -->
-  <Transition name="slide-down">
-    <div v-if="selection.isSelectionMode.value" class="selection-toolbar">
-      <div class="selection-toolbar__left">
-        <span class="selection-count">
-          {{ $t('selection.selected', { count: selection.selectedCount.value }) }}
-        </span>
-      </div>
-      <div class="selection-toolbar__actions">
-        <button class="selection-action" @click="batchFavorite" :title="$t('selection.favorite')">
-          <Heart :size="16" />
-          <span>{{ $t('selection.favorite') }}</span>
-        </button>
-        <button class="selection-action selection-action--danger" @click="batchDelete" :title="$t('selection.delete')">
-          <Trash2 :size="16" />
-          <span>{{ $t('selection.delete') }}</span>
-        </button>
-        <button class="selection-action" @click="selection.clearSelection()" :title="$t('selection.cancel')">
-          <X :size="16" />
-          <span>{{ $t('selection.cancel') }}</span>
-        </button>
-      </div>
-    </div>
-  </Transition>
+  <SelectionToolbar 
+    @batch-favorite="batchFavorite" 
+    @batch-delete="batchDelete" 
+    @select-all="selection.selectAll(getAllVisibleItemIds())"
+    @invert-selection="selection.invertSelection(getAllVisibleItemIds())"
+  />
 
   <!-- Floating Scroll Buttons -->
   <!-- 悬浮滚动按钮 -->
@@ -142,6 +126,7 @@ import { useVirtualScroll }    from '../../composables/useVirtualScroll'
 import { useRequestQueue }     from '../../composables/useRequestQueue'
 
 import MediaThumb from './MediaThumb.vue'
+import SelectionToolbar from './SelectionToolbar.vue'
 import { ImageIcon, Heart, Trash2, X } from '@lucide/vue'
 import { useSelection } from '../../composables/useSelection'
 import type { LayoutRow } from '../../types/layout'
@@ -352,21 +337,15 @@ function handleCardClick(id: number, event: MouseEvent) {
     return
   }
 
-  if (selection.isSelectionMode.value) {
-    if (event.shiftKey) {
-      // Shift+Click: range select
-      // Shift+单击：范围选中
-      selection.selectRange(selection.lastClickedId.value, id, getAllVisibleItemIds())
-    } else {
-      // Normal click in selection mode: toggle this item
-      // 选择模式下普通单击：切换此项
-      selection.toggleSelect(id)
-    }
+  if (selection.isSelectionMode.value && event.shiftKey) {
+    // Shift+Click: range select
+    // Shift+单击：范围选中
+    selection.selectRange(selection.lastClickedId.value, id, getAllVisibleItemIds())
     return
   }
 
-  // Normal mode: open detail
-  // 普通模式：打开详情
+  // Normal mode OR normal click in selection mode: open detail
+  // 普通模式 或 选择模式下的普通单击：打开详情
   media.openDetail(id)
 }
 
@@ -611,7 +590,8 @@ watch(() => ui.pendingScrollLabel, async (label) => {
 .media-card:hover {
   transform: scale(1.06);
   z-index: 10;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 8px 28px color-mix(in srgb, var(--color-text-primary) 15%, transparent),
+              0 2px 8px color-mix(in srgb, var(--color-text-primary) 5%, transparent);
 
   /* On hover-in, apply z-index immediately (no delay) */
   /* 鼠标悬停时，立即应用 z-index（无延迟） */
@@ -658,56 +638,6 @@ watch(() => ui.pendingScrollLabel, async (label) => {
   transform: scale(0.95);
 }
 
-/* ── Selection toolbar | 选择工具栏 ─────────────────────── */
-.selection-toolbar {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 50;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 16px;
-  background: rgba(66, 133, 244, 0.95);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  color: #fff;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.selection-count {
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.selection-toolbar__actions {
-  display: flex;
-  gap: 8px;
-}
-
-.selection-action {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 6px 12px;
-  border-radius: var(--radius-md);
-  background: rgba(255, 255, 255, 0.15);
-  color: #fff;
-  border: none;
-  font-size: 13px;
-  cursor: pointer;
-  transition: background var(--transition-fast);
-}
-
-.selection-action:hover {
-  background: rgba(255, 255, 255, 0.25);
-}
-
-.selection-action--danger:hover {
-  background: rgba(231, 76, 60, 0.8);
-}
-
 /* Selection mode: suppress hover scale to avoid visual conflict with selection overlay */
 /* 选择模式：抑制悬停缩放以避免与选择遮罩的视觉冲突 */
 .media-card--selection-mode:hover {
@@ -715,16 +645,6 @@ watch(() => ui.pendingScrollLabel, async (label) => {
   box-shadow: none;
 }
 
-/* Slide-down transition for toolbar */
-/* 工具栏的下滑过渡 */
-.slide-down-enter-active,
-.slide-down-leave-active {
-  transition: all 0.2s ease;
-}
-.slide-down-enter-from,
-.slide-down-leave-to {
-  transform: translateY(-100%);
-  opacity: 0;
-}
+/* Slide-down transition for toolbar is handled in SelectionToolbar.vue */
 
 </style>

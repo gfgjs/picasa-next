@@ -307,6 +307,7 @@ pub fn run() {
             ipc::system_commands::open_directory,
             ipc::system_commands::move_to_trash,
             ipc::system_commands::close_splashscreen,
+            ipc::system_commands::set_window_theme,
             // AI
             // AI
             ipc::ai_commands::detect_ai_provider,

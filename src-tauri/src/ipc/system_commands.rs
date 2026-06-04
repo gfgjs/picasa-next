@@ -130,4 +130,46 @@ pub async fn close_splashscreen(
     }
     Ok(())
 }
+#[tauri::command]
+pub async fn set_window_theme(
+    app: tauri::AppHandle,
+    theme: String,
+    resolved: String,
+) -> std::result::Result<(), String> {
+    if let Some(main_win) = app.get_webview_window("main") {
+        let t = match theme.as_str() {
+            "dark" => Some(tauri::Theme::Dark),
+            "light" => Some(tauri::Theme::Light),
+            _ => None,
+        };
+        // Set Tauri's theme first
+        // 先设置 Tauri 的主题
+        let _ = main_win.set_theme(t.clone());
 
+        // Explicitly set DWM title bar theme on Windows
+        // 在 Windows 上显式设置 DWM 标题栏主题
+        #[cfg(target_os = "windows")]
+        {
+            if let Ok(hwnd) = main_win.hwnd() {
+                use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE};
+                use windows::Win32::Foundation::HWND;
+
+                let is_dark = match resolved.as_str() {
+                    "dark" => true,
+                    _ => false,
+                };
+
+                let dark_mode: i32 = if is_dark { 1 } else { 0 };
+                unsafe {
+                    let _ = DwmSetWindowAttribute(
+                        HWND(hwnd.0 as _),
+                        DWMWA_USE_IMMERSIVE_DARK_MODE,
+                        &dark_mode as *const i32 as *const _,
+                        std::mem::size_of::<i32>() as u32,
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}

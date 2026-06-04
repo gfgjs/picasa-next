@@ -196,6 +196,7 @@ pub struct MediaFilter {
     pub min_rating:       Option<i64>,
     pub date_range:       Option<DateRange>,
     pub directory_id:     Option<i64>,
+    pub search_query:     Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

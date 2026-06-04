@@ -16,13 +16,7 @@ export function useTheme() {
     ui.theme = t
     ui.applyTheme(t)
 
-    // Watch system preference changes
-    // 监听系统偏好设置变化
-    if (t === 'system') {
-      window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
-        if (ui.theme === 'system') ui.applyTheme('system')
-      })
-    }
+    // Watch system preference changes is now handled globally inside uiStore.ts
   }
 
   onMounted(init)

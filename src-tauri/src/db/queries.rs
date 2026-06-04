@@ -461,6 +461,14 @@ pub fn query_layout_items(
         sql.push_str(" AND m.is_live_photo=1");
     }
 
+    if let Some(ref q) = filter.search_query {
+        if !q.trim().is_empty() {
+            param_idx += 1;
+            sql.push_str(&format!(" AND m.file_name LIKE ?{param_idx}"));
+            extras.push(Box::new(format!("%{}%", q.trim())));
+        }
+    }
+
     let order_dir = match sort_order {
         Some("asc") => "ASC",
         _ => "DESC",

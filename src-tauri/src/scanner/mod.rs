@@ -3,6 +3,7 @@ pub mod enricher;
 pub mod fast_scan;
 pub mod live_photo;
 pub mod metadata;
+pub mod video_meta;
 pub mod walker;
 // pub mod watcher; // Phase 3
 // pub mod watcher; // 阶段 3

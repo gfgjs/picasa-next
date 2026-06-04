@@ -608,6 +608,24 @@ pub fn update_live_photo_flags(
     Ok(())
 }
 
+/// Update width, height and duration_ms for a video item extracted by mp4parse.
+/// 更新由 mp4parse 提取的视频项的宽度、高度和时长。
+pub fn update_video_meta(
+    conn: &Connection,
+    item_id: i64,
+    width: i64,
+    height: i64,
+    duration_ms: i64,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE media_items SET width=?1, height=?2, duration_ms=?3,
+                 updated_at=strftime('%s','now')
+         WHERE id=?4",
+        params![width, height, duration_ms, item_id],
+    )?;
+    Ok(())
+}
+
 pub fn set_companion_of(conn: &Connection, companion_id: i64, main_id: i64) -> Result<()> {
     conn.execute(
         "UPDATE media_items SET companion_of=?1, updated_at=strftime('%s','now') WHERE id=?2",

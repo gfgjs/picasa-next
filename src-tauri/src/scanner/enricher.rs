@@ -18,13 +18,14 @@ use tracing::{debug, error, info, warn};
 use crate::db::models::ImageMeta;
 use crate::db::queries::{
     get_item_path_info, update_live_photo_flags, update_sort_datetime,
-    upsert_image_meta,
+    upsert_image_meta, update_video_meta,
 };
 use crate::error::{AppError, Result};
 use crate::scanner::live_photo::pair_live_photos;
 use crate::scanner::metadata::{
     detect_motion_photo_xmp, parse_exif_meta,
 };
+use crate::scanner::video_meta::extract_video_meta;
 use crate::utils::path::resolve_media_path;
 
 use serde::{Deserialize, Serialize};
@@ -223,6 +224,55 @@ pub fn run_enrichment(
         let conn = writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
         if let Err(e) = pair_live_photos(&conn, root_id) {
             error!("Live Photo pairing error: {e}");
+        }
+    }
+
+    // ── Phase 2b: Video metadata enrichment (MP4/MOV) ────────────────────────────
+    // ── 阶段2b：视频元数据丰富 (MP4/MOV) ────────────────────────────
+    if !cancel.is_cancelled() {
+        // 查询安将丰富的视频项（宽度为 0，说明尚未提取）| Query video items needing enrichment (width=0)
+        let video_ids: Vec<i64> = {
+            let conn = writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
+            let mut stmt = conn.prepare(
+                "SELECT m.id FROM media_items m
+                 JOIN directories d ON d.id = m.directory_id
+                 WHERE d.root_id=?1 AND m.is_deleted=0
+                   AND m.media_type='video' AND m.width=0
+                 ORDER BY m.created_at DESC",
+            )?;
+            let x: Vec<i64> = stmt.query_map(rusqlite::params![root_id], |row| row.get(0))?
+                .filter_map(|r| r.ok())
+                .collect();
+            x
+        };
+
+        info!("Video enrichment: {} MP4/MOV items to process for root_id={root_id} | 视频元数据丰富: root_id={root_id} 共 {} 项待处理",
+              video_ids.len(), video_ids.len());
+
+        // 串行处理（mp4parse 和文件 I/O 对 rayon 线程池不友好）| Process serially (mp4parse + file I/O unfriendly to rayon)
+        for video_id in video_ids {
+            if cancel.is_cancelled() {
+                break;
+            }
+            let abs_path = {
+                let conn = writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
+                get_item_path_info(&conn, video_id)
+                    .ok()
+                    .map(|(root_p, rel_p, name)| resolve_media_path(&root_p, &rel_p, &name))
+            };
+
+            if let Some(path) = abs_path {
+                let path = std::path::Path::new(&path);
+                if let Some(vmeta) = extract_video_meta(path) {
+                    let conn = writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
+                    if let Err(e) = update_video_meta(&conn, video_id, vmeta.width, vmeta.height, vmeta.duration_ms) {
+                        warn!("[VideoMeta] Failed to update id={video_id}: {e} | 视频元数据更新失败");
+                    } else {
+                        tracing::debug!("[VideoMeta] id={video_id} w={} h={} dur={}ms | 提取成功",
+                                       vmeta.width, vmeta.height, vmeta.duration_ms);
+                    }
+                }
+            }
         }
     }
 

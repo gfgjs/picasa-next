@@ -211,7 +211,9 @@ onMounted(async () => {
   // Read container width immediately
   // 立即读取容器宽度
   if (gridRef.value) {
-    containerWidth.value = gridRef.value.clientWidth
+    // clientWidth includes padding, but we need the inner content box for layout.
+    // clientWidth 包含 padding，但布局计算需要的是内部内容区域宽度。
+    containerWidth.value = gridRef.value.clientWidth - 24
   } else {
     console.warn('[MediaGrid] onMounted: gridRef is null!')
   }

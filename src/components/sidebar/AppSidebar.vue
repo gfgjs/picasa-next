@@ -189,7 +189,7 @@
     <!-- Settings / footer -->
     <!-- 设置 / 页脚 -->
     <div class="sidebar__footer">
-      <router-link to="/settings" class="btn-icon" :title="$t('sidebar.settings')" style="text-decoration: none;"><Settings :size="18" /></router-link>
+      <button class="btn-icon" :title="$t('sidebar.settings')" @click="ui.isSettingsOpen = true"><Settings :size="18" /></button>
       <button class="btn-icon" :title="$t('sidebar.toggleTheme')" @click="ui.cycleTheme()">
         <Sun v-if="ui.theme === 'dark'" :size="18" />
         <Moon v-else-if="ui.theme === 'light'" :size="18" />

@@ -152,6 +152,9 @@ export const useUiStore = defineStore('ui', () => {
     }
   }
 
+  // ── Settings ───────────────────────────────────────────────────────────
+  const isSettingsOpen = ref(false)
+
   return {
     // theme & language
     // 主题与语言
@@ -182,5 +185,7 @@ export const useUiStore = defineStore('ui', () => {
     // fullscreen
     // 全屏
     isFullscreen, initFullscreen, toggleFullscreen,
+    // settings
+    isSettingsOpen,
   }
 })

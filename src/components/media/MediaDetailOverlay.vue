@@ -25,6 +25,7 @@
             :class="{ 'is-dragging': state.isDragging.value }"
             :style="{ transform: state.transform.value }"
             draggable="false"
+            @load="updateZoomRatio"
           />
           <video
             v-else-if="detail.mediaType === 'video'"
@@ -65,7 +66,7 @@
             <button class="btn-icon" @click="close" :title="$t('detail.close')"><X :size="18" /></button>
             <button class="btn-icon" @click="state.zoomOut()" :title="$t('detail.zoomOut')"><ZoomOut :size="18" /></button>
             <span class="zoom-percentage" :class="{ 'zoom-highlight': isZoomChanged }">
-              {{ Math.round(state.scale.value * 100) }}%
+              {{ Math.round(state.scale.value * zoomRatio * 100) }}%
             </span>
             <button class="btn-icon" @click="state.zoomIn()" :title="$t('detail.zoomIn')"><ZoomIn :size="18" /></button>
             <button class="btn-icon" @click="handleToggleZoom" :title="zoomModeTitle">
@@ -254,7 +255,19 @@ watch(() => media.detailItem, () => {
   state.resetZoom()
   state.isPlayingLive.value = false
   state.liveVideoSrc.value  = null
+  zoomRatio.value = 1.0
 })
+
+const zoomRatio = ref(1.0)
+function updateZoomRatio() {
+  if (!viewerRef.value || !imgRef.value) return
+  const iw = imgRef.value.naturalWidth || 1
+  const ih = imgRef.value.naturalHeight || 1
+  const cw = viewerRef.value.clientWidth || 1
+  const ch = viewerRef.value.clientHeight || 1
+  const base_w = Math.min(iw, cw, ch * (iw / ih))
+  zoomRatio.value = base_w / iw
+}
 
 const isZoomChanged = ref(false)
 let zoomHighlightTimer: ReturnType<typeof setTimeout> | null = null
@@ -263,6 +276,7 @@ watch(() => state.scale.value, () => {
   isZoomChanged.value = true
   if (zoomHighlightTimer) clearTimeout(zoomHighlightTimer)
   zoomHighlightTimer = setTimeout(() => { isZoomChanged.value = false }, 2000)
+  updateZoomRatio()
 })
 
 // ── Keyboard shortcuts ─────────────────────────────────────────────────────
@@ -319,9 +333,13 @@ function onImageClick(e: MouseEvent) {
   }
 }
 
-onMounted(()        => document.addEventListener('keydown', onKeydown))
-onBeforeUnmount(()  => {
+onMounted(() => {
+  document.addEventListener('keydown', onKeydown)
+  window.addEventListener('resize', updateZoomRatio)
+})
+onBeforeUnmount(() => {
   document.removeEventListener('keydown', onKeydown)
+  window.removeEventListener('resize', updateZoomRatio)
   state.cleanup()
 })
 

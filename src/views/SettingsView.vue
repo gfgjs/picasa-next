@@ -346,7 +346,6 @@
 
 <script setup lang="ts">
 import { ref, onMounted, computed, onUnmounted } from 'vue'
-import { useRouter } from 'vue-router'
 import { invoke } from '@tauri-apps/api/core'
 import { useUiStore } from '../stores/uiStore'
 import { useScanStore } from '../stores/scanStore'
@@ -361,7 +360,6 @@ const ui = useUiStore()
 const scan = useScanStore()
 const media = useMediaStore()
 const ai = useAiStore()
-const router = useRouter()
 const { t } = useI18n()
 
 const thumbSkipMaxKb = ref(200)
@@ -454,7 +452,7 @@ onUnmounted(() => {
 })
 
 function onKeyDown(e: KeyboardEvent) {
-  if (e.key === 'Escape') router.push('/')
+  if (e.key === 'Escape') ui.isSettingsOpen = false
 }
 
 async function saveConfig(key: string, value: string) {
@@ -619,16 +617,17 @@ function clearBrowserCache() {
 }
 
 function closeSettings() {
-  router.push('/')
+  ui.isSettingsOpen = false
 }
 </script>
 
 <style scoped>
 .settings-view {
-  flex: 1;
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
   display: flex;
   flex-direction: column;
-  height: 100%;
   background: var(--color-bg-primary);
   overflow-y: auto;
 }

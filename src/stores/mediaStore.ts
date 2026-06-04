@@ -145,7 +145,11 @@ export const useMediaStore = defineStore('media', () => {
   }
 
   async function toggleFavorite(id: number): Promise<boolean> {
-    return invoke<boolean>(IPC.TOGGLE_FAVORITE, { itemId: id })
+    const newVal = await invoke<boolean>(IPC.TOGGLE_FAVORITE, { itemId: id })
+    if (stats.value) {
+      stats.value.totalFavorited += newVal ? 1 : -1
+    }
+    return newVal
   }
 
   async function setRating(id: number, rating: number) {

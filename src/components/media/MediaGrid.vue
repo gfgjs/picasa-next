@@ -470,6 +470,24 @@ watch(
     updateVisible(true)
   }
 )
+
+// 5.1: When detail overlay closes, restore grid scroll position
+// 5.1: 详情覆盖层关闭时，恢复网格滚动位置
+watch(
+  () => media.isDetailOpen,
+  (open) => {
+    if (!open && gridRef.value) {
+      // Defer by one frame so the overlay animation doesn't steal focus
+      // 延迟一帧，避免覆盖层动画干扰焦点
+      requestAnimationFrame(() => {
+        if (gridRef.value) {
+          const saved = scrollCache.get(getViewKey()) || 0
+          gridRef.value.scrollTop = saved
+        }
+      })
+    }
+  }
+)
 </script>
 
 <style scoped>

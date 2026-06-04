@@ -173,5 +173,14 @@ export default {
     computing: '正在计算布局...',
     scrollToTop: '回到顶部',
     scrollToBottom: '滚到底部'
+  },
+  selection: {
+    selected: '已选择 {count} 项',
+    favorite: '收藏',
+    unfavorite: '取消收藏',
+    delete: '删除',
+    cancel: '取消选择',
+    favorited: '已收藏 {count} 项',
+    deleted: '已删除 {count} 项',
   }
 }

@@ -4,7 +4,13 @@
   <div
     class="media-thumb"
     :style="thumbStyle"
-    :class="{ loaded: isLoaded, 'media-thumb--placeholder': !isLoaded }"
+    :class="{
+      loaded: isLoaded,
+      'media-thumb--placeholder': !isLoaded,
+      'media-thumb--selected': isSelected,
+      'media-thumb--selection-mode': isSelectionMode,
+      'media-thumb--drag-hover': isDragHover,
+    }"
   >
     <!-- Placeholder solid color + file format text -->
     <!-- 纯色占位符 + 文件格式文本 -->
@@ -94,6 +100,7 @@ interface Props {
   isFavorited?:    boolean
   isSelected?:     boolean
   isSelectionMode?: boolean
+  isDragHover?:    boolean
   cacheDir:        string
 }
 
@@ -105,6 +112,7 @@ const props = withDefaults(defineProps<Props>(), {
   isFavorited:     false,
   isSelected:      false,
   isSelectionMode: false,
+  isDragHover:     false,
 })
 
 const emit = defineEmits<{
@@ -427,5 +435,45 @@ onBeforeUnmount(() => {
   40%  { transform: scale(1.5); }
   70%  { transform: scale(0.9); }
   100% { transform: scale(1.2); }
+}
+
+/* ── Selection visual states | 选择视觉状态 ─────────────────────── */
+
+/* Selected overlay — semi-transparent blue mask */
+/* 选中遮罩 — 半透明蓝色蒙版 */
+.media-thumb--selected::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(66, 133, 244, 0.3);
+  pointer-events: none;
+  z-index: 2;
+  border-radius: 2px;
+  transition: background 100ms ease;
+}
+
+/* Selected border */
+/* 选中边框 */
+.media-thumb--selected {
+  outline: 2px solid rgba(66, 133, 244, 0.8);
+  outline-offset: -2px;
+}
+
+/* Drag hover — deepened overlay for real-time feedback */
+/* 拖拽悬停 — 加深遮罩提供实时反馈 */
+.media-thumb--drag-hover::after {
+  background: rgba(66, 133, 244, 0.5);
+}
+
+/* In selection mode: always show checkbox (not just on hover) */
+/* 选择模式：始终显示 checkbox（不仅是 hover 时） */
+.media-thumb--selection-mode .media-thumb__checkbox {
+  opacity: 1;
+}
+
+/* In selection mode: always show favorite button too */
+/* 选择模式：也始终显示收藏按钮 */
+.media-thumb--selection-mode .media-thumb__fav {
+  opacity: 1;
 }
 </style>

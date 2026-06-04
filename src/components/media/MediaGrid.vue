@@ -56,8 +56,11 @@
             v-for="item in (row as any).items"
             :key="item.id"
             class="media-card"
+            :data-item-id="item.id"
+            :class="{ 'media-card--selection-mode': selection.isSelectionMode.value }"
             :style="{ width: item.w + 'px', height: item.h + 'px' }"
-            @click="openDetail(item.id)"
+            @click="handleCardClick(item.id, $event)"
+            @pointerdown="selection.onPointerDown(item.id, $event)"
           >
             <MediaThumb
               :id="item.id"
@@ -72,6 +75,8 @@
               :file-format="item.fileFormat"
               :file-size="item.fileSize"
               :is-favorited="item.isFavorited"
+              :is-selected="selection.isSelected(item.id)"
+              :is-selection-mode="selection.isSelectionMode.value"
               :cache-dir="cacheDir"
               @request-thumb="onRequestThumb"
               @cancel-thumb="onCancelThumb"
@@ -82,6 +87,31 @@
       </div>
     </div>
   </div>
+
+  <!-- Selection toolbar | 选择工具栏 -->
+  <Transition name="slide-down">
+    <div v-if="selection.isSelectionMode.value" class="selection-toolbar">
+      <div class="selection-toolbar__left">
+        <span class="selection-count">
+          {{ $t('selection.selected', { count: selection.selectedCount.value }) }}
+        </span>
+      </div>
+      <div class="selection-toolbar__actions">
+        <button class="selection-action" @click="batchFavorite" :title="$t('selection.favorite')">
+          <Heart :size="16" />
+          <span>{{ $t('selection.favorite') }}</span>
+        </button>
+        <button class="selection-action selection-action--danger" @click="batchDelete" :title="$t('selection.delete')">
+          <Trash2 :size="16" />
+          <span>{{ $t('selection.delete') }}</span>
+        </button>
+        <button class="selection-action" @click="selection.clearSelection()" :title="$t('selection.cancel')">
+          <X :size="16" />
+          <span>{{ $t('selection.cancel') }}</span>
+        </button>
+      </div>
+    </div>
+  </Transition>
 
   <!-- Floating Scroll Buttons -->
   <!-- 悬浮滚动按钮 -->
@@ -112,7 +142,8 @@ import { useVirtualScroll }    from '../../composables/useVirtualScroll'
 import { useRequestQueue }     from '../../composables/useRequestQueue'
 
 import MediaThumb from './MediaThumb.vue'
-import { ImageIcon } from '@lucide/vue'
+import { ImageIcon, Heart, Trash2, X } from '@lucide/vue'
+import { useSelection } from '../../composables/useSelection'
 import type { LayoutRow } from '../../types/layout'
 import { DEFAULTS, SEPARATOR_HEIGHT } from '../../constants/defaults'
 import { IPC, EVENTS } from '../../constants/ipc'
@@ -126,6 +157,9 @@ const ui     = useUiStore()
 const filter = useFilterStore()
 const queue  = useRequestQueue()
 const { t }  = useI18n()
+
+const selection = useSelection()
+const dragHoverId = ref<number | null>(null)
 
 const emptyStateText = computed(() => {
   if (ui.isSearching) {
@@ -306,9 +340,93 @@ onBeforeUnmount(() => {
 // ── Detail ─────────────────────────────────────────────────────────────────
 // ── 详情 ─────────────────────────────────────────────────────────────────
 
-function openDetail(id: number) {
+function handleCardClick(id: number, event: MouseEvent) {
+  // If drag just ended, don't treat as click
+  // 如果拖拽刚结束，不视为单击
+  if (selection.wasDrag()) return
+
+  if (event.ctrlKey || event.metaKey) {
+    // Ctrl/Cmd+Click: toggle selection
+    // Ctrl/Cmd+单击：切换选中
+    selection.toggleSelect(id)
+    return
+  }
+
+  if (selection.isSelectionMode.value) {
+    if (event.shiftKey) {
+      // Shift+Click: range select
+      // Shift+单击：范围选中
+      selection.selectRange(selection.lastClickedId.value, id, getAllVisibleItemIds())
+    } else {
+      // Normal click in selection mode: toggle this item
+      // 选择模式下普通单击：切换此项
+      selection.toggleSelect(id)
+    }
+    return
+  }
+
+  // Normal mode: open detail
+  // 普通模式：打开详情
   media.openDetail(id)
 }
+
+/**
+ * Get all item IDs from currently visible rows, in display order.
+ * 获取当前可见行中所有项目 ID，按显示顺序排列。
+ */
+function getAllVisibleItemIds(): number[] {
+  const ids: number[] = []
+  for (const row of visibleRows.value) {
+    if ((row as any).items) {
+      for (const item of (row as any).items) {
+        ids.push(item.id)
+      }
+    }
+  }
+  return ids
+}
+
+// ── Batch operations | 批量操作 ──
+
+async function batchFavorite() {
+  const ids = Array.from(selection.selectedIds.value)
+  if (ids.length === 0) return
+  await invoke('batch_toggle_favorite', { itemIds: ids, value: true })
+  // Update visible items | 更新可见项
+  for (const row of visibleRows.value) {
+    if ((row as any).items) {
+      for (const item of (row as any).items) {
+        if (selection.isSelected(item.id)) {
+          item.isFavorited = true
+        }
+      }
+    }
+  }
+  // Optional: check if showToast exists before calling
+  if (typeof (ui as any).showToast === 'function') {
+    ;(ui as any).showToast(t('selection.favorited', { count: ids.length }))
+  }
+  selection.clearSelection()
+}
+
+async function batchDelete() {
+  const ids = Array.from(selection.selectedIds.value)
+  if (ids.length === 0) return
+  await invoke('soft_delete_items', { itemIds: ids })
+  selection.clearSelection()
+  // Recompute layout to remove deleted items | 重新计算布局以移除已删除项
+  await compute()
+  updateVisible()
+  if (typeof (ui as any).showToast === 'function') {
+    ;(ui as any).showToast(t('selection.deleted', { count: ids.length }))
+  }
+}
+
+function onKeyDown(e: KeyboardEvent) {
+  selection.onKeyDown(e, getAllVisibleItemIds)
+}
+onMounted(() => document.addEventListener('keydown', onKeyDown))
+onBeforeUnmount(() => document.removeEventListener('keydown', onKeyDown))
 
 // ── Listen to enrichment events ────────────────────────────────────────────
 // ── 监听增强事件 ────────────────────────────────────────────
@@ -538,6 +656,73 @@ watch(() => ui.pendingScrollLabel, async (label) => {
 
 .fab-btn:active {
   transform: scale(0.95);
+}
+
+/* ── Selection toolbar | 选择工具栏 ─────────────────────── */
+.selection-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  background: rgba(66, 133, 244, 0.95);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: #fff;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.selection-count {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.selection-toolbar__actions {
+  display: flex;
+  gap: 8px;
+}
+
+.selection-action {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+  border: none;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.selection-action:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.selection-action--danger:hover {
+  background: rgba(231, 76, 60, 0.8);
+}
+
+/* Selection mode: suppress hover scale to avoid visual conflict with selection overlay */
+/* 选择模式：抑制悬停缩放以避免与选择遮罩的视觉冲突 */
+.media-card--selection-mode:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+/* Slide-down transition for toolbar */
+/* 工具栏的下滑过渡 */
+.slide-down-enter-active,
+.slide-down-leave-active {
+  transition: all 0.2s ease;
+}
+.slide-down-enter-from,
+.slide-down-leave-to {
+  transform: translateY(-100%);
+  opacity: 0;
 }
 
 </style>

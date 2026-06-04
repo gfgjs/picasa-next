@@ -106,6 +106,54 @@ pub async fn toggle_favorite(item_id: i64, state: State<'_, Arc<AppState>>) -> R
     q::toggle_favorite(&conn, item_id)
 }
 
+/// Batch set favorite status for multiple items.
+/// 批量设置多个项目的收藏状态。
+#[tauri::command]
+pub async fn batch_toggle_favorite(
+    state: State<'_, Arc<AppState>>,
+    item_ids: Vec<i64>,
+    value: bool,
+) -> Result<u64> {
+    if item_ids.is_empty() {
+        return Ok(0);
+    }
+
+    let writer = state.db_writer.lock()
+        .map_err(|e| AppError::Db(format!("Lock error: {} | 锁错误: {}", e, e)))?;
+
+    // Use a single UPDATE with IN clause for efficiency
+    // 使用单个 UPDATE + IN 子句以提高效率
+    let placeholders: String = item_ids.iter()
+        .enumerate()
+        .map(|(i, _)| format!("?{}", i + 2))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let sql = format!(
+        "UPDATE media_items SET is_favorited = ?1 WHERE id IN ({}) AND is_deleted = 0",
+        placeholders
+    );
+
+    let mut params: Vec<rusqlite::types::Value> = vec![
+        rusqlite::types::Value::Integer(if value { 1 } else { 0 }),
+    ];
+    for id in &item_ids {
+        params.push(rusqlite::types::Value::Integer(*id));
+    }
+
+    let affected = writer.execute(
+        &sql,
+        rusqlite::params_from_iter(params.iter()),
+    )? as u64;
+
+    tracing::info!(
+        "Batch favorite: set {}/{} items to {} | 批量收藏：设置 {}/{} 项为 {}",
+        affected, item_ids.len(), value, affected, item_ids.len(), value
+    );
+
+    Ok(affected)
+}
+
 /// Set the rating for a media item (0-5).
 /// 设置媒体项的评分（0-5）。
 #[tauri::command]

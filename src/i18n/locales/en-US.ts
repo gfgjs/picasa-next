@@ -173,5 +173,14 @@ export default {
     computing: 'Computing layout...',
     scrollToTop: 'Scroll to Top',
     scrollToBottom: 'Scroll to Bottom'
+  },
+  selection: {
+    selected: '{count} selected',
+    favorite: 'Favorite',
+    unfavorite: 'Unfavorite',
+    delete: 'Delete',
+    cancel: 'Cancel',
+    favorited: '{count} items favorited',
+    deleted: '{count} items deleted',
   }
 }

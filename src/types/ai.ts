@@ -20,6 +20,8 @@ export interface SemanticSearchResult {
   id: number
   fileName: string
   mediaType: string
+  width: number
+  height: number
   thumbPath: string | null
   thumbhash: number[] | null
   thumbStatus: number

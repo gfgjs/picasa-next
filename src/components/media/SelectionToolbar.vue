@@ -19,6 +19,10 @@
           <Heart :size="16" />
           <span>{{ $t('selection.favorite') }}</span>
         </button>
+        <button class="selection-action" @click="$emit('batch-unfavorite')" title="取消收藏">
+          <HeartOff :size="16" />
+          <span>取消收藏</span>
+        </button>
         <button class="selection-action selection-action--danger" @click="$emit('batch-delete')" :title="$t('selection.delete')">
           <Trash2 :size="16" />
           <span>{{ $t('selection.delete') }}</span>
@@ -33,11 +37,12 @@
 </template>
 
 <script setup lang="ts">
-import { Heart, Trash2, X, CheckSquare, CopyMinus } from '@lucide/vue'
+import { Heart, HeartOff, Trash2, X, CheckSquare, CopyMinus } from '@lucide/vue'
 import { useSelection } from '../../composables/useSelection'
 
 defineEmits<{
   (e: 'batch-favorite'): void
+  (e: 'batch-unfavorite'): void
   (e: 'batch-delete'): void
   (e: 'select-all'): void
   (e: 'invert-selection'): void

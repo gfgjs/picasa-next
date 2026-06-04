@@ -69,6 +69,9 @@
               {{ Math.round(state.scale.value * zoomRatio * 100) }}%
             </span>
             <button class="btn-icon" @click="state.zoomIn()" :title="$t('detail.zoomIn')"><ZoomIn :size="18" /></button>
+            <span v-if="media.navContext" class="zoom-percentage" style="opacity: 0.8; margin-left: 8px;">
+              {{ media.navContext.currentIndex + 1 }} / {{ media.navContext.itemIds.length }}
+            </span>
             <button class="btn-icon" @click="handleToggleZoom" :title="zoomModeTitle">
               <Maximize v-if="state.zoomMode.value === 'auto'" :size="18" />
               <span v-else-if="state.zoomMode.value === 'original'" style="font-size: 12px; font-weight: 700;">1:1</span>

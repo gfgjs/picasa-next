@@ -22,6 +22,7 @@ export const useAiStore = defineStore('ai', () => {
   const searchMode = ref<SearchMode>('filename')
   const semanticQuery = ref('')
   const semanticResults = ref<SemanticSearchResult[]>([])
+  const similarityThreshold = ref(0.20)
   const isSearching = ref(false)
   const searchError = ref<string | null>(null)
 
@@ -46,6 +47,10 @@ export const useAiStore = defineStore('ai', () => {
   })
 
   const isSemanticMode = computed(() => searchMode.value === 'semantic')
+
+  const visibleSemanticResults = computed(() => {
+    return semanticResults.value.filter(r => r.similarity >= similarityThreshold.value)
+  })
 
   // ── Actions ───────────────────────────────────────────────────────────────
 
@@ -119,9 +124,10 @@ export const useAiStore = defineStore('ai', () => {
     semanticQuery.value = query
 
     try {
+      // Fetch up to 500 results from backend to allow frontend filtering
       const results = await invoke<SemanticSearchResult[]>('semantic_search_cmd', {
         query,
-        limit,
+        limit: 500,
       })
       semanticResults.value = results
     } catch (e) {
@@ -196,12 +202,14 @@ export const useAiStore = defineStore('ai', () => {
     searchMode,
     semanticQuery,
     semanticResults,
+    similarityThreshold,
     isSearching,
     searchError,
     // computed
     analyzeProgress,
     providerLabel,
     isSemanticMode,
+    visibleSemanticResults,
     // actions
     fetchStatus,
     initEngine,

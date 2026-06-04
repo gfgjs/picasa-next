@@ -106,22 +106,17 @@ const thumbSrc = computed(() => {
   }
 })
 
-// Map raw cosine similarity [0.20, 0.35] to [10, 99] for better UX UX
-// 映射原始的余弦相似度到对用户更友好的百分比，避免误解
+// Display the true cosine similarity percentage
+// 显示真实的余弦相似度百分比
 const similarityPercent = computed(() => {
   const raw = props.item.similarity
-  // Clip's raw cosine similarity rarely exceeds 0.35 for cross-modal tasks
-  const minVal = 0.20
-  const maxVal = 0.35
-  let mapped = ((raw - minVal) / (maxVal - minVal)) * 100
-  mapped = Math.max(10, Math.min(99, mapped))
-  return Math.round(mapped)
+  return (raw * 100).toFixed(1)
 })
 
 const badgeClass = computed(() => {
-  const pct = similarityPercent.value
-  if (pct >= 80) return 'badge--high'
-  if (pct >= 60) return 'badge--mid'
+  const pct = props.item.similarity * 100
+  if (pct >= 30) return 'badge--high'
+  if (pct >= 25) return 'badge--mid'
   return 'badge--low'
 })
 </script>
@@ -138,10 +133,15 @@ const badgeClass = computed(() => {
   cursor: pointer;
   text-align: left;
   transition: all var(--transition-fast);
+  width: 100%;
+  height: 100%;
 }
 .result-card:hover {
   background: var(--color-bg-surface);
   border-color: var(--color-border);
+  transform: scale(1.03);
+  z-index: 10;
+  box-shadow: var(--shadow-md);
 }
 .result-card--selection-mode:hover {
   background: transparent;
@@ -153,7 +153,9 @@ const badgeClass = computed(() => {
 
 .result-card__thumb-wrap {
   position: relative;
-  aspect-ratio: 1;
+  width: 100%;
+  flex: 1;
+  min-height: 0;
   border-radius: var(--radius-sm);
   overflow: hidden;
   background: var(--color-bg-overlay);
@@ -167,10 +169,6 @@ const badgeClass = computed(() => {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  transition: transform var(--transition-fast);
-}
-.result-card:hover .result-card__thumb {
-  transform: scale(1.04);
 }
 .result-card--selection-mode:hover .result-card__thumb {
   transform: none;

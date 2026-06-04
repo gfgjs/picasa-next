@@ -98,28 +98,50 @@
 
       <!-- Results grid -->
       <!-- 结果网格 -->
-      <div v-else class="semantic-panel__results">
+      <div v-else class="semantic-panel__results" ref="semanticResultsOuterRef">
         <div class="semantic-panel__results-meta">
-          找到 {{ ai.semanticResults.length }} 张相关图片
+          <span>找到 {{ ai.visibleSemanticResults.length }} 张相关图片</span>
+          <div class="threshold-slider" v-if="ai.semanticResults.length > 0">
+            <label>相似度 &ge; {{ (ai.similarityThreshold * 100).toFixed(0) }}%</label>
+            <input type="range" min="0.1" max="0.5" step="0.01" v-model.number="ai.similarityThreshold" />
+          </div>
         </div>
-        <div class="semantic-panel__grid">
-          <SemanticResultCard
-            v-for="item in ai.semanticResults"
+        <div
+          v-if="layoutItems.length > 0"
+          ref="resultsContainerRef"
+          class="search-results-justified"
+          :style="{ height: layoutTotalHeight + 'px', position: 'relative', width: '100%' }"
+        >
+          <div
+            v-for="item in layoutItems"
             :key="item.id"
-            :item="item"
-            :cache-dir="cacheDir"
-            :is-selected="selection.isSelected(item.id)"
-            :is-selection-mode="selection.isSelectionMode.value"
-            @click="(i, e) => handleCardClick(i, e)"
-            @select="(i) => selection.toggleSelect(i.id)"
-            @pointerdown="selection.onPointerDown(item.id, $event)"
-          />
+            class="search-result-positioned"
+            :style="{
+              position: 'absolute',
+              left: item.x + 'px',
+              top: item.y + 'px',
+              width: item.w + 'px',
+              height: item.h + 'px',
+              transition: 'all 0.3s ease'
+            }"
+          >
+            <SemanticResultCard
+              :item="getResultById(item.id)!"
+              :cache-dir="cacheDir"
+              :is-selected="selection.isSelected(item.id)"
+              :is-selection-mode="selection.isSelectionMode.value"
+              @click="(i, e) => handleCardClick(i, e)"
+              @select="(i) => selection.toggleSelect(i.id)"
+              @pointerdown="selection.onPointerDown(item.id, $event)"
+            />
+          </div>
         </div>
       </div>
 
       <!-- Selection toolbar -->
       <SelectionToolbar
         @batch-favorite="batchFavorite"
+        @batch-unfavorite="batchUnfavorite"
         @batch-delete="batchDelete"
         @select-all="selection.selectAll(getAllVisibleItemIds())"
         @invert-selection="selection.invertSelection(getAllVisibleItemIds())"
@@ -137,9 +159,12 @@ import { useI18n } from 'vue-i18n'
 import { useAiStore } from '../../stores/aiStore'
 import { useUiStore } from '../../stores/uiStore'
 import { useSelection } from '../../composables/useSelection'
+import { useMediaStore } from '../../stores/mediaStore'
 import SemanticResultCard from './SemanticResultCard.vue'
 import SelectionToolbar from './SelectionToolbar.vue'
 import type { SemanticSearchResult } from '../../types/ai'
+import { computeJustifiedLayout, type PositionedItem } from '../../utils/justifiedLayout'
+import { watch } from 'vue'
 
 const emit = defineEmits<{
   (e: 'item-click', item: SemanticSearchResult): void
@@ -149,6 +174,7 @@ const ai = useAiStore()
 const ui = useUiStore()
 const { t } = useI18n()
 const selection = useSelection()
+const media = useMediaStore()
 const isInitialising = ref(false)
 
 // Resolve cache directory (same logic as MediaGrid.vue)
@@ -173,10 +199,76 @@ async function initAndStart() {
   }
 }
 
+// ── Justified Layout ─────────────────────────────────────────────────────
+const resultsContainerRef = ref<HTMLElement | null>(null)
+const containerWidth = ref(0)
+const layoutItems = ref<PositionedItem[]>([])
+const layoutTotalHeight = ref(0)
+let resizeObserver: ResizeObserver | null = null
+
+function updateLayout() {
+  if (containerWidth.value <= 0 || ai.visibleSemanticResults.length === 0) {
+    layoutItems.value = []
+    layoutTotalHeight.value = 0
+    return
+  }
+  const result = computeJustifiedLayout(
+    ai.visibleSemanticResults,
+    containerWidth.value,
+    180, // targetRowHeight
+    8    // gap
+  )
+  layoutItems.value = result.items
+  layoutTotalHeight.value = result.totalHeight
+}
+
+onMounted(() => {
+  resizeObserver = new ResizeObserver((entries) => {
+    const w = entries[0].contentRect.width
+    if (w > 0 && Math.abs(w - containerWidth.value) > 1) {
+      containerWidth.value = w
+      updateLayout()
+    }
+  })
+  
+  // Observe a parent element of the layout if we want, or the results wrapper.
+  // We'll observe the results parent meta div or we can watch the panel itself.
+  // Since resultsContainerRef might not exist initially, we should observe the document or wait.
+})
+
+// Use a ref for the outer container so we can measure its width even if it's empty
+const semanticResultsOuterRef = ref<HTMLElement | null>(null)
+
+watch([() => ai.visibleSemanticResults, () => ai.similarityThreshold], () => {
+  updateLayout()
+}, { deep: true })
+
+onMounted(() => {
+  if (resizeObserver && semanticResultsOuterRef.value) {
+    resizeObserver.observe(semanticResultsOuterRef.value)
+  }
+})
+
+watch(semanticResultsOuterRef, (el) => {
+  if (resizeObserver) {
+    resizeObserver.disconnect()
+    if (el) {
+      resizeObserver.observe(el)
+      // trigger immediate layout
+      containerWidth.value = el.clientWidth || 0
+      updateLayout()
+    }
+  }
+})
+
+function getResultById(id: number): SemanticSearchResult | undefined {
+  return ai.visibleSemanticResults.find(r => r.id === id)
+}
+
 // ── Detail & Selection ───────────────────────────────────────────────────
 
 function getAllVisibleItemIds(): number[] {
-  return ai.semanticResults.map(item => item.id)
+  return ai.visibleSemanticResults.map(i => i.id)
 }
 
 function handleCardClick(item: SemanticSearchResult, event: MouseEvent) {
@@ -209,9 +301,27 @@ async function batchFavorite() {
   if (ids.length === 0) return
   await invoke('batch_toggle_favorite', { itemIds: ids, value: true })
   
-  // Optional: Update ui store / show toast
+  // Update visible items
+  for (const item of ai.visibleSemanticResults) {
+    if (selection.isSelected(item.id)) {
+      // It's possible SemanticSearchResult doesn't have isFavorited, but if it did, we'd update it here.
+    }
+  }
+  await media.loadStats()
+  
   if (typeof (ui as any).showToast === 'function') {
     ;(ui as any).showToast(t('selection.favorited', { count: ids.length }))
+  }
+  selection.clearSelection()
+}
+
+async function batchUnfavorite() {
+  const ids = Array.from(selection.selectedIds.value)
+  if (ids.length === 0) return
+  await invoke('batch_toggle_favorite', { itemIds: ids, value: false })
+  await media.loadStats()
+  if (typeof (ui as any).showToast === 'function') {
+    ;(ui as any).showToast(`已取消收藏 ${ids.length} 项`)
   }
   selection.clearSelection()
 }
@@ -418,12 +528,30 @@ async function batchDelete() {
   gap: var(--spacing-md);
 }
 .semantic-panel__results-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   font-size: var(--font-size-xs);
   color: var(--color-text-tertiary);
+  padding: 0 4px;
 }
-.semantic-panel__grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: var(--spacing-sm);
+.threshold-slider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.threshold-slider label {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+.search-results-justified {
+  /* wrapper for absolute elements */
+  margin-top: 8px;
+}
+.search-result-positioned {
+  /* Ensure the hovered element sits above the others */
+}
+.search-result-positioned:hover {
+  z-index: 10;
 }
 </style>

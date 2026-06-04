@@ -195,7 +195,7 @@ pub async fn semantic_search_cmd(
     state: State<'_, Arc<AppState>>,
 ) -> std::result::Result<Vec<SemanticSearchResult>, String> {
     let state = Arc::clone(&state);
-    let top_k = limit.unwrap_or(50).min(200);
+    let top_k = limit.unwrap_or(50).min(1000);
 
     tokio::task::spawn_blocking(move || -> std::result::Result<Vec<SemanticSearchResult>, String> {
         // Ensure engine is ready

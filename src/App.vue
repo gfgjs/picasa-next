@@ -60,7 +60,8 @@ const route = useRoute()
 function onSemanticItemClick(item: SemanticSearchResult) {
   // Open the detail overlay for the clicked semantic search result.
   // 为点击的语义搜索结果打开详情视图。
-  media.openDetail(item.id)
+  const allIds = ai.semanticResults.map(r => r.id)
+  media.openDetailFromSearch(item.id, allIds)
 }
 
 // Init theme

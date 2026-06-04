@@ -88,6 +88,8 @@ pub fn semantic_search(
                 id:           item.id,
                 file_name:    item.file_name,
                 media_type:   item.media_type,
+                width:        item.width,
+                height:       item.height,
                 thumb_path:   item.thumb_path,
                 thumbhash:    item.thumbhash,
                 thumb_status: item.thumb_status,

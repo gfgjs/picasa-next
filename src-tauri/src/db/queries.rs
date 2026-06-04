@@ -846,7 +846,7 @@ pub fn search_media(
 ) -> Result<Vec<SearchResult>> {
     let pattern = format!("%{query}%");
     let mut sql = String::from(
-        "SELECT id, file_name, media_type, thumb_path, thumbhash, thumb_status
+        "SELECT id, file_name, media_type, width, height, thumb_path, thumbhash, thumb_status
          FROM media_items
          WHERE is_deleted=0 AND companion_of IS NULL AND file_name LIKE ?1",
     );
@@ -894,9 +894,11 @@ pub fn search_media(
             id:           row.get(0)?,
             file_name:    row.get(1)?,
             media_type:   row.get(2)?,
-            thumb_path:   row.get(3)?,
-            thumbhash:    row.get(4)?,
-            thumb_status: row.get(5)?,
+            width:        row.get(3)?,
+            height:       row.get(4)?,
+            thumb_path:   row.get(5)?,
+            thumbhash:    row.get(6)?,
+            thumb_status: row.get(7)?,
         })
     })?;
     rows.map(|r| r.map_err(AppError::from)).collect()
@@ -1143,7 +1145,7 @@ pub fn get_search_results_by_ids(
     }
     let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{i}")).collect();
     let sql = format!(
-        "SELECT m.id, m.file_name, m.media_type,
+        "SELECT m.id, m.file_name, m.media_type, m.width, m.height,
                 CASE
                     WHEN m.thumb_status = 3 OR m.thumb_path IS NULL THEN
                         CASE WHEN d.rel_path = '' THEN r.path || '/' || m.file_name
@@ -1169,9 +1171,11 @@ pub fn get_search_results_by_ids(
             id:           row.get(0)?,
             file_name:    row.get(1)?,
             media_type:   row.get(2)?,
-            thumb_path:   row.get(3)?,
-            thumbhash:    row.get(4)?,
-            thumb_status: row.get(5)?,
+            width:        row.get(3)?,
+            height:       row.get(4)?,
+            thumb_path:   row.get(5)?,
+            thumbhash:    row.get(6)?,
+            thumb_status: row.get(7)?,
         })
     })?;
     rows.map(|r| r.map_err(AppError::from)).collect()

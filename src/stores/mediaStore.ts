@@ -20,6 +20,13 @@ export const useMediaStore = defineStore('media', () => {
 
   // ── Detail view ─────────────────────────────────────────────────────────
   // ── 详情视图 ─────────────────────────────────────────────────────────
+  interface NavigationContext {
+    type: 'layout' | 'search'
+    itemIds: number[]
+    currentIndex: number
+  }
+
+  const navContext      = ref<NavigationContext | null>(null)
   const detailItem      = ref<MediaDetail | null>(null)
   const isDetailOpen    = ref(false)
 
@@ -109,6 +116,22 @@ export const useMediaStore = defineStore('media', () => {
     }
   }
 
+  async function openDetailFromLayout(id: number) {
+    navContext.value = null
+    detailItem.value = await invoke<MediaDetail>(IPC.GET_MEDIA_DETAIL, { id })
+    isDetailOpen.value = true
+  }
+
+  async function openDetailFromSearch(id: number, resultIds: number[]) {
+    navContext.value = {
+      type: 'search',
+      itemIds: resultIds,
+      currentIndex: resultIds.indexOf(id),
+    }
+    detailItem.value = await invoke<MediaDetail>(IPC.GET_MEDIA_DETAIL, { id })
+    isDetailOpen.value = true
+  }
+
   async function openDetail(id: number) {
     detailItem.value = await invoke<MediaDetail>(IPC.GET_MEDIA_DETAIL, { id })
     isDetailOpen.value = true
@@ -116,6 +139,17 @@ export const useMediaStore = defineStore('media', () => {
 
   async function navigateDetail(offset: number) {
     if (!detailItem.value) return
+
+    if (navContext.value) {
+      const nextIndex = navContext.value.currentIndex + offset
+      if (nextIndex >= 0 && nextIndex < navContext.value.itemIds.length) {
+        navContext.value.currentIndex = nextIndex
+        const nextId = navContext.value.itemIds[nextIndex]
+        detailItem.value = await invoke<MediaDetail>(IPC.GET_MEDIA_DETAIL, { id: nextId })
+      }
+      return
+    }
+
     const adj = await invoke<MediaDetail | null>('get_adjacent_media', { 
       currentId: detailItem.value.id, 
       offset 
@@ -128,6 +162,7 @@ export const useMediaStore = defineStore('media', () => {
   function closeDetail() {
     isDetailOpen.value = false
     detailItem.value   = null
+    navContext.value   = null
   }
 
   async function loadStats() {
@@ -164,10 +199,10 @@ export const useMediaStore = defineStore('media', () => {
 
   return {
     layoutSummary, rowCache, isComputingLayout, layoutDirty,
-    detailItem, isDetailOpen,
+    detailItem, isDetailOpen, navContext,
     stats,
     totalItems, totalHeight, totalRows, layoutVersion,
-    computeLayout, fetchRows, fetchRowsByY, openDetail, closeDetail, navigateDetail,
+    computeLayout, fetchRows, fetchRowsByY, openDetail, openDetailFromLayout, openDetailFromSearch, closeDetail, navigateDetail,
     loadStats, toggleFavorite, setRating, invalidateLayout, consumeLayoutDirty,
   }
 })

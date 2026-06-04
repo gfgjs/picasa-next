@@ -92,6 +92,7 @@
   <!-- Selection toolbar | 选择工具栏 -->
   <SelectionToolbar 
     @batch-favorite="batchFavorite" 
+    @batch-unfavorite="batchUnfavorite"
     @batch-delete="batchDelete" 
     @select-all="selection.selectAll(getAllVisibleItemIds())"
     @invert-selection="selection.invertSelection(getAllVisibleItemIds())"
@@ -346,7 +347,7 @@ function handleCardClick(id: number, event: MouseEvent) {
 
   // Normal mode OR normal click in selection mode: open detail
   // 普通模式 或 选择模式下的普通单击：打开详情
-  media.openDetail(id)
+  media.openDetailFromLayout(id)
 }
 
 /**
@@ -381,9 +382,31 @@ async function batchFavorite() {
       }
     }
   }
+  await media.loadStats()
   // Optional: check if showToast exists before calling
   if (typeof (ui as any).showToast === 'function') {
     ;(ui as any).showToast(t('selection.favorited', { count: ids.length }))
+  }
+  selection.clearSelection()
+}
+
+async function batchUnfavorite() {
+  const ids = Array.from(selection.selectedIds.value)
+  if (ids.length === 0) return
+  await invoke('batch_toggle_favorite', { itemIds: ids, value: false })
+  // Update visible items | 更新可见项
+  for (const row of visibleRows.value) {
+    if ((row as any).items) {
+      for (const item of (row as any).items) {
+        if (selection.isSelected(item.id)) {
+          item.isFavorited = false
+        }
+      }
+    }
+  }
+  await media.loadStats()
+  if (typeof (ui as any).showToast === 'function') {
+    ;(ui as any).showToast(`已取消收藏 ${ids.length} 项`)
   }
   selection.clearSelection()
 }

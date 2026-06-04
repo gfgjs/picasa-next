@@ -90,7 +90,7 @@
   </div>
 
   <!-- Floating Scroll Buttons -->
-  <!-- 悬浮滚动按钮 -->
+  <!-- 悬浮滚动按鈕 -->
     <div v-if="media.totalRows > 0" class="scroll-fab">
       <button class="fab-btn" @click="scrollGridToTop" :title="$t('empty.scrollToTop')">
         ↑
@@ -98,6 +98,21 @@
       <button class="fab-btn" @click="scrollGridToBottom" :title="$t('empty.scrollToBottom')">
         ↓
       </button>
+  </div>
+
+  <!-- batch-bar: 浮在网格内部，Glassmorphism 胶囊风格 -->
+  <!-- batch-bar: floats inside the grid, glassmorphism pill style -->
+  <Transition name="batch-bar">
+    <div v-if="selection.isSelectionMode" class="batch-bar">
+      <span class="batch-bar__count">✓ {{ selection.selectionCount }}</span>
+      <div class="batch-bar__sep" />
+      <button class="batch-bar__btn" @click="selection.selectAll()" title="全选">全选</button>
+      <button class="batch-bar__btn" @click="selection.favoriteSelected(true)" title="收藏">♥ 收藏</button>
+      <button class="batch-bar__btn" @click="selection.favoriteSelected(false)" title="取消收藏">♡ 取消</button>
+      <button class="batch-bar__btn batch-bar__btn--danger" @click="selection.deleteSelected()" title="删除">🗑</button>
+      <button class="batch-bar__btn batch-bar__btn--close" @click="selection.clearSelection()" title="退出">&#x2715;</button>
+    </div>
+  </Transition>
   </div>
 </template>
 
@@ -257,8 +272,22 @@ function onCardMouseEnter(e: MouseEvent, id: number) {
     return
   }
 
-  if (!isDraggingSelection || !dragActivated) return
+  if (!isDraggingSelection) return
   if (id === dragStartId) return // 回到起始卡片不重复处理 / skip re-entering start card
+
+  // 关键修复：进入与起始不同的新卡片时，立即激活拖拽模式。
+  // 原因：mouseenter 在 mousemove 之前触发，不能依赖 onGlobalMouseMove 激活。
+  // Key fix: activate drag as soon as mouse enters a different card.
+  // Reason: mouseenter fires before mousemove, so we can’t rely on the
+  // global mousemove handler having already set dragActivated = true.
+  if (!dragActivated) {
+    dragActivated = true
+    // 同时选中起始卡片 / Also select the starting card
+    if (dragStartId !== null) {
+      if (dragSelectState) selection.selectItem(dragStartId)
+      else selection.deselectItem(dragStartId)
+    }
+  }
 
   // 划过任意一张卡片即选中 / Toggle every card entered while dragging
   if (dragSelectState) selection.selectItem(id)
@@ -645,5 +674,69 @@ watch(
 .fab-btn:active {
   transform: scale(0.95);
 }
+
+
+/* ── batch-bar: Glassmorphism 胶囊浮层工具栏 / pill-style selection bar ──────────── */
+.batch-bar {
+  position: absolute;
+  bottom: 28px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 10px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 85%, transparent);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  border: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
+  border-radius: 99px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.08);
+  white-space: nowrap;
+  user-select: none;
+}
+.batch-bar-enter-active, .batch-bar-leave-active {
+  transition: opacity 0.2s ease, transform 0.25s cubic-bezier(0.34, 1.18, 0.64, 1);
+}
+.batch-bar-enter-from, .batch-bar-leave-to {
+  opacity: 0;
+  transform: translateX(-50%) translateY(10px) scale(0.96);
+}
+.batch-bar__count {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-accent);
+  padding: 0 8px;
+  min-width: 36px;
+  text-align: center;
+}
+.batch-bar__sep {
+  width: 1px;
+  height: 18px;
+  background: var(--color-border);
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+.batch-bar__btn {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 5px 10px;
+  border-radius: 99px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+.batch-bar__btn:hover {
+  background: color-mix(in srgb, var(--color-accent) 15%, transparent);
+  color: var(--color-accent);
+}
+.batch-bar__btn--danger { color: hsl(0 70% 60%); }
+.batch-bar__btn--danger:hover { background: color-mix(in srgb, hsl(0 70% 60%) 15%, transparent); color: hsl(0 70% 55%); }
+.batch-bar__btn--close { font-size: 14px; opacity: 0.6; }
+.batch-bar__btn--close:hover { background: var(--color-bg-overlay); color: var(--color-text-primary); opacity: 1; }
 
 </style>

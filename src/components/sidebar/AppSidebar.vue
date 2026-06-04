@@ -144,8 +144,14 @@
         class="scan-root-item"
       >
         <div class="scan-root-item__info">
-          <span class="scan-root-item__alias">{{ root.alias ?? root.path.split('/').pop() }}</span>
-          <div style="display: flex; gap: 4px;">
+          <!-- 状态指示点 | Status indicator dot -->
+          <span
+            class="scan-root-item__status-dot"
+            :class="rootStatusClass(root)"
+            :title="rootStatusTitle(root)"
+          />
+          <span class="scan-root-item__alias" :title="root.path">{{ root.alias ?? root.path.split('\\').pop()?.split('/').pop() ?? root.path }}</span>
+          <div style="display: flex; gap: 4px; margin-left: auto;">
             <button
               class="btn-icon scan-root-item__scan-btn"
               :class="{ active: scan.getProgress(root.id)?.isRunning }"
@@ -165,6 +171,7 @@
             </button>
           </div>
         </div>
+        <!-- 进度条 | Progress bar -->
         <div v-if="scan.getProgress(root.id)?.isRunning" class="scan-root-item__progress">
           <div class="progress-bar">
             <div
@@ -181,6 +188,11 @@
               {{ scan.getProgress(root.id)?.scanned ?? 0 }} / {{ scan.getProgress(root.id)?.total ?? 0 }}
             </template>
           </span>
+        </div>
+        <!-- 文件数 + 上次扫描时间 | File count + last scan time -->
+        <div v-if="!scan.getProgress(root.id)?.isRunning && root.totalFiles > 0" class="scan-root-item__meta">
+          <span>{{ root.totalFiles.toLocaleString() }} 个文件</span>
+          <span v-if="root.lastScanAt" class="scan-root-item__scan-time">{{ formatRelativeTime(root.lastScanAt) }}</span>
         </div>
       </div>
     </div>
@@ -374,6 +386,35 @@ function progressPercent(rootId: number): number {
   const p = scan.getProgress(rootId)
   if (!p || !p.total || p.status === 'discovering') return 0
   return Math.round((p.scanned / p.total) * 100)
+}
+
+// 根目录状态 CSS class | CSS class for scan root status dot
+function rootStatusClass(root: { id: number; scanStatus: string }): string {
+  if (scan.getProgress(root.id)?.isRunning) return 'status-dot--scanning'
+  if (root.scanStatus === 'done')           return 'status-dot--done'
+  if (root.scanStatus === 'error')          return 'status-dot--error'
+  return 'status-dot--idle'
+}
+
+// 根目录状态提示文字 | Tooltip for scan root status
+function rootStatusTitle(root: { id: number; scanStatus: string }): string {
+  if (scan.getProgress(root.id)?.isRunning) return '正在扫描中'
+  if (root.scanStatus === 'done')           return '扫描完成'
+  if (root.scanStatus === 'error')          return '扫描出错'
+  return '未扫描'
+}
+
+// 相对时间格式化（如"5分钟前"）| Relative time format ("5 minutes ago")
+function formatRelativeTime(ts: number): string {
+  const diffMs  = Date.now() - ts * 1000
+  const diffMin = Math.floor(diffMs / 60_000)
+  if (diffMin < 1)   return '刚刚'
+  if (diffMin < 60)  return `${diffMin} 分钟前`
+  const diffH = Math.floor(diffMin / 60)
+  if (diffH < 24)    return `${diffH} 小时前`
+  const diffD = Math.floor(diffH / 24)
+  if (diffD < 30)    return `${diffD} 天前`
+  return new Date(ts * 1000).toLocaleDateString('zh-CN')
 }
 
 async function toggleScan(rootId: number) {
@@ -775,5 +816,44 @@ onMounted(async () => {
 }
 .remove-dialog__btn--confirm:hover {
   filter: brightness(1.1);
+}
+
+/* ── 扫描根目录状态指示点 | Scan root status indicator dot ── */
+.scan-root-item__status-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--color-border-strong);
+}
+.status-dot--scanning {
+  background: var(--color-accent);
+  animation: status-pulse 1.2s ease-in-out infinite;
+}
+.status-dot--done {
+  background: #4caf50;
+}
+.status-dot--error {
+  background: var(--color-error);
+}
+.status-dot--idle {
+  background: var(--color-text-tertiary);
+}
+@keyframes status-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+/* ── 文件数 + 上次扫描时间 | File count + last scan meta ── */
+.scan-root-item__meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--color-text-tertiary);
+  padding: 2px 0 0 0;
+}
+.scan-root-item__scan-time {
+  font-style: italic;
 }
 </style>

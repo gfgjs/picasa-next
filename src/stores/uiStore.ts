@@ -94,7 +94,6 @@ export const useUiStore = defineStore('ui', () => {
 
   // ── Sort ───────────────────────────────────────────────────────────────
   // ── 排序 ───────────────────────────────────────────────────────────────
-  const sortBy    = ref<string>('sort_datetime')
   const sortOrder = ref<'asc' | 'desc'>('desc')
 
   // ── Grid Display Settings ────────────────────────────────────────────────
@@ -220,7 +219,7 @@ export const useUiStore = defineStore('ui', () => {
     groupBy, setGroupBy, sortWithinGroup, setSortWithinGroup,
     // sort
     // 排序
-    sortBy, sortOrder,
+    sortOrder,
     // toasts
     // 提示框
     toasts, addToast, removeToast,

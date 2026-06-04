@@ -117,20 +117,11 @@
         <option value="datetime">{{ $t('toolbar.sortByTime') }}</option>
         <option value="filename">{{ $t('toolbar.sortByName') }}</option>
       </select>
-    </div>
 
-    <!-- View sort -->
-    <!-- 视图排序 -->
-    <div class="toolbar__sort">
-      <select class="toolbar__select" v-model="ui.sortBy" @change="onSortChange">
-        <option value="sort_datetime">{{ $t('toolbar.sortByDate') }}</option>
-        <option value="file_mtime">按修改时间</option>
-        <option value="file_name">{{ $t('toolbar.sortByName') }}</option>
-        <option value="file_size">{{ $t('toolbar.sortBySize') }}</option>
-      </select>
+      <!-- Asc/Desc toggle -->
       <button
         class="btn-icon"
-        :title="ui.sortOrder === 'desc' ? '从新到旧' : '从旧到新'"
+        :title="ui.sortOrder === 'desc' ? '从新到旧 / Z-A' : '从旧到新 / A-Z'"
         @click="toggleSortOrder"
       >
         <ArrowDown v-if="ui.sortOrder === 'desc'" :size="16" />
@@ -152,7 +143,6 @@ import { DEFAULTS } from '../../constants/defaults'
 const emit = defineEmits<{
   (e: 'search', query: string): void
   (e: 'semantic-search', query: string): void
-  (e: 'sort-change'): void
 }>()
 
 const ui     = useUiStore()
@@ -203,11 +193,6 @@ function toggleSearchMode() {
 
 function toggleSortOrder() {
   ui.sortOrder = ui.sortOrder === 'desc' ? 'asc' : 'desc'
-  emit('sort-change')
-}
-
-function onSortChange() {
-  emit('sort-change')
 }
 
 let rowHeightTimer: ReturnType<typeof setTimeout> | null = null

@@ -395,6 +395,7 @@ pub fn query_layout_items(
     filter: &MediaFilter,
     group_by: Option<&str>,
     sort_within: Option<&str>,
+    sort_order: Option<&str>,
 ) -> Result<Vec<LayoutItem>> {
     let mut sql = String::from(
         "SELECT m.id, m.width, m.height, m.file_size, m.sort_datetime, m.file_format, m.media_type, m.is_live_photo,
@@ -460,17 +461,22 @@ pub fn query_layout_items(
         sql.push_str(" AND m.is_live_photo=1");
     }
 
+    let order_dir = match sort_order {
+        Some("asc") => "ASC",
+        _ => "DESC",
+    };
+
     if group_by == Some("folder") {
         if sort_within == Some("filename") {
-            sql.push_str(" ORDER BY d.rel_path ASC, m.file_name ASC");
+            sql.push_str(&format!(" ORDER BY d.rel_path ASC, m.file_name {}", order_dir));
         } else {
-            sql.push_str(" ORDER BY d.rel_path ASC, m.sort_datetime DESC");
+            sql.push_str(&format!(" ORDER BY d.rel_path ASC, m.sort_datetime {}", order_dir));
         }
     } else {
         if sort_within == Some("filename") {
-            sql.push_str(" ORDER BY m.file_name ASC");
+            sql.push_str(&format!(" ORDER BY m.file_name {}", order_dir));
         } else {
-            sql.push_str(" ORDER BY m.sort_datetime DESC");
+            sql.push_str(&format!(" ORDER BY m.sort_datetime {}", order_dir));
         }
     }
 

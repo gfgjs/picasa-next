@@ -50,6 +50,7 @@ export function useJustifiedLayout(containerWidthRef: () => number) {
       gap:            DEFAULTS.GRID_GAP,
       groupBy:        ui.groupBy,
       sortWithinGroup: ui.sortWithinGroup,
+      sortOrder:      ui.sortOrder,
     })
   }
 
@@ -77,6 +78,7 @@ export function useJustifiedLayout(containerWidthRef: () => number) {
       () => ui.gridRowHeight,
       () => ui.groupBy,
       () => ui.sortWithinGroup,
+      () => ui.sortOrder,
     ],
     () => compute(),
     { deep: true }

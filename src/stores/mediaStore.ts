@@ -45,6 +45,7 @@ export const useMediaStore = defineStore('media', () => {
     gap?:            number
     groupBy?:        string
     sortWithinGroup?: string
+    sortOrder?:       string
   }) {
 
     if (params.containerWidth < 100) {
@@ -63,6 +64,7 @@ export const useMediaStore = defineStore('media', () => {
           gap:           params.gap ?? DEFAULTS.GRID_GAP,
           groupBy:       params.groupBy ?? 'date',
           sortWithinGroup: params.sortWithinGroup ?? 'datetime',
+          sortOrder:     params.sortOrder ?? 'desc',
         }
       })
 

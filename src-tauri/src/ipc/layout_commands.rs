@@ -25,6 +25,7 @@ pub struct ComputeLayoutParams {
     pub gap:             f64,
     pub group_by:        Option<String>,
     pub sort_within_group: Option<String>,
+    pub sort_order:      Option<String>,
 }
 
 /// Compute the Justified Layout for the given filters.
@@ -50,7 +51,7 @@ pub async fn compute_layout(
     // 从读取池查询布局项
     let items = {
         let pool = state.db_read_pool.get().map_err(AppError::from)?;
-        query_layout_items(&pool, &filter, params.group_by.as_deref(), params.sort_within_group.as_deref())?
+        query_layout_items(&pool, &filter, params.group_by.as_deref(), params.sort_within_group.as_deref(), params.sort_order.as_deref())?
     };
 
     if items.is_empty() {

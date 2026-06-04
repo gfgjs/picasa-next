@@ -402,9 +402,24 @@ pub fn query_layout_items(
                 m.duration_ms, m.thumb_status, m.thumb_path, m.thumbhash, m.is_favorited,
                 d.rel_path as dir_path, d.name as dir_name, m.file_name
          FROM media_items m
-         JOIN directories d ON m.directory_id = d.id
-         WHERE m.is_deleted=0 AND m.companion_of IS NULL",
+         JOIN directories d ON m.directory_id = d.id"
     );
+
+    let mut needs_meta_join = false;
+    if let Some(ref q) = filter.search_query {
+        if !q.trim().is_empty() {
+            let scope = filter.search_scope.as_deref().unwrap_or("filename");
+            if scope == "device" || scope == "location" || scope == "global" {
+                needs_meta_join = true;
+            }
+        }
+    }
+
+    if needs_meta_join {
+        sql.push_str("\n         LEFT JOIN image_meta im ON m.id = im.item_id");
+    }
+
+    sql.push_str("\n         WHERE m.is_deleted=0 AND m.companion_of IS NULL");
 
     let mut param_idx = 0usize;
     let mut extras: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -463,9 +478,63 @@ pub fn query_layout_items(
 
     if let Some(ref q) = filter.search_query {
         if !q.trim().is_empty() {
-            param_idx += 1;
-            sql.push_str(&format!(" AND m.file_name LIKE ?{param_idx}"));
-            extras.push(Box::new(format!("%{}%", q.trim())));
+            let scope = filter.search_scope.as_deref().unwrap_or("filename");
+            let pattern = format!("%{}%", q.trim());
+            match scope {
+                "folder" => {
+                    param_idx += 1;
+                    let p1 = format!("?{}", param_idx);
+                    param_idx += 1;
+                    let p2 = format!("?{}", param_idx);
+                    sql.push_str(&format!(" AND (d.rel_path LIKE {} OR d.name LIKE {})", p1, p2));
+                    extras.push(Box::new(pattern.clone()));
+                    extras.push(Box::new(pattern));
+                }
+                "date" => {
+                    param_idx += 1;
+                    sql.push_str(&format!(" AND strftime('%Y-%m-%d %H:%M:%S', m.sort_datetime, 'unixepoch', 'localtime') LIKE ?{}", param_idx));
+                    extras.push(Box::new(pattern));
+                }
+                "device" => {
+                    param_idx += 1;
+                    let p1 = format!("?{}", param_idx);
+                    param_idx += 1;
+                    let p2 = format!("?{}", param_idx);
+                    param_idx += 1;
+                    let p3 = format!("?{}", param_idx);
+                    sql.push_str(&format!(" AND (im.exif_make LIKE {} OR im.exif_model LIKE {} OR im.exif_lens LIKE {})", p1, p2, p3));
+                    extras.push(Box::new(pattern.clone()));
+                    extras.push(Box::new(pattern.clone()));
+                    extras.push(Box::new(pattern));
+                }
+                "location" => {
+                    param_idx += 1;
+                    let p1 = format!("?{}", param_idx);
+                    param_idx += 1;
+                    let p2 = format!("?{}", param_idx);
+                    // 预留经纬度字符串或未来 city 字段匹配
+                    sql.push_str(&format!(" AND (CAST(im.exif_gps_lat AS TEXT) LIKE {} OR CAST(im.exif_gps_lng AS TEXT) LIKE {})", p1, p2));
+                    extras.push(Box::new(pattern.clone()));
+                    extras.push(Box::new(pattern));
+                }
+                "global" => {
+                    let mut p = vec![];
+                    for _ in 0..9 {
+                        param_idx += 1;
+                        p.push(format!("?{}", param_idx));
+                        extras.push(Box::new(pattern.clone()));
+                    }
+                    sql.push_str(&format!(
+                        " AND (m.file_name LIKE {} OR d.rel_path LIKE {} OR d.name LIKE {} OR strftime('%Y-%m-%d %H:%M:%S', m.sort_datetime, 'unixepoch', 'localtime') LIKE {} OR im.exif_make LIKE {} OR im.exif_model LIKE {} OR im.exif_lens LIKE {} OR CAST(im.exif_gps_lat AS TEXT) LIKE {} OR CAST(im.exif_gps_lng AS TEXT) LIKE {})",
+                        p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8]
+                    ));
+                }
+                _ => { // "filename"
+                    param_idx += 1;
+                    sql.push_str(&format!(" AND m.file_name LIKE ?{}", param_idx));
+                    extras.push(Box::new(pattern));
+                }
+            }
         }
     }
 

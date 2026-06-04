@@ -173,6 +173,7 @@ export const useUiStore = defineStore('ui', () => {
   // ── Search ─────────────────────────────────────────────────────────────
   // ── 搜索 ─────────────────────────────────────────────────────────────
   const searchQuery = ref('')
+  const searchScope = ref<string>('filename')
   const isSearching = ref(false)
 
   // ── Loading states ─────────────────────────────────────────────────────
@@ -245,7 +246,7 @@ export const useUiStore = defineStore('ui', () => {
     toasts, addToast, removeToast,
     // search
     // 搜索
-    searchQuery, isSearching,
+    searchQuery, searchScope, isSearching,
     // loading
     // 加载
     isLayoutLoading,

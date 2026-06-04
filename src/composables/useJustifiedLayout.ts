@@ -44,6 +44,7 @@ export function useJustifiedLayout(containerWidthRef: () => number) {
     if (ui.searchQuery && ui.searchQuery.trim() !== '') {
       // Add searchQuery to the filters sent to Rust
       ;(filters as any).searchQuery = ui.searchQuery.trim()
+      ;(filters as any).searchScope = ui.searchScope
     }
     await media.computeLayout({
       directoryId,
@@ -79,6 +80,7 @@ export function useJustifiedLayout(containerWidthRef: () => number) {
       () => ui.activeSmartAlbum,
       () => ui.activeDirectoryId,
       () => ui.searchQuery,
+      () => ui.searchScope,
       () => ui.gridRowHeight,
       () => ui.groupBy,
       () => ui.sortWithinGroup,

@@ -62,6 +62,21 @@
       </button>
 
       <Search :size="14" class="toolbar__search-icon" />
+
+      <!-- Scope selector (only for normal search mode) -->
+      <!-- 搜索范围选择器（仅限普通搜索模式） -->
+      <select
+        v-if="!ai.isSemanticMode"
+        class="toolbar__search-scope"
+        v-model="ui.searchScope"
+      >
+        <option value="filename">{{ $t('toolbar.searchScopeFilename') }}</option>
+        <option value="folder">{{ $t('toolbar.searchScopeFolder') }}</option>
+        <option value="date">{{ $t('toolbar.searchScopeDate') }}</option>
+        <option value="device">{{ $t('toolbar.searchScopeDevice') }}</option>
+        <option value="location">{{ $t('toolbar.searchScopeLocation') }}</option>
+        <option value="global">{{ $t('toolbar.searchScopeGlobal') }}</option>
+      </select>
       <input
         ref="searchInputRef"
         class="toolbar__search"
@@ -284,6 +299,22 @@ function onSortWithinGroupChange(e: Event) {
   width: 280px;
 }
 .toolbar__search-icon { color: var(--color-text-tertiary); flex-shrink: 0; }
+.toolbar__search-scope {
+  appearance: none;
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  padding: 0 6px 0 2px;
+  margin-right: 4px;
+  cursor: pointer;
+  outline: none;
+  transition: color var(--transition-fast);
+}
+.toolbar__search-scope:hover {
+  color: var(--color-text-primary);
+}
 .toolbar__search {
   flex: 1;
   font-size: var(--font-size-sm);

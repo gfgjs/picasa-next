@@ -44,6 +44,12 @@ export default {
   },
   toolbar: {
     searchPlaceholder: 'Search...',
+    searchScopeFilename: 'Filename',
+    searchScopeFolder: 'Folder',
+    searchScopeDate: 'Date',
+    searchScopeDevice: 'Device/EXIF',
+    searchScopeLocation: 'Location',
+    searchScopeGlobal: 'Global',
     sortByDate: 'Sort by Date',
     sortBySize: 'Sort by Size',
     sortByName: 'Sort by Name',

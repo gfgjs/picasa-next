@@ -44,6 +44,12 @@ export default {
   },
   toolbar: {
     searchPlaceholder: '搜索...',
+    searchScopeFilename: '文件名',
+    searchScopeFolder: '目录',
+    searchScopeDate: '日期',
+    searchScopeDevice: '设备/参数',
+    searchScopeLocation: '地理位置',
+    searchScopeGlobal: '全局',
     sortByDate: '按日期排序',
     sortBySize: '按大小排序',
     sortByName: '按名称排序',

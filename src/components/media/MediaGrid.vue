@@ -3,7 +3,7 @@
     <div
       ref="gridRef"
       class="media-grid"
-      :class="{ 'is-scrolling': isScrolling }"
+      :class="{ 'is-scrolling': isScrolling, 'selection-mode': selection.isSelectionMode }"
       @scroll.passive="onGridScroll"
     >
     <!-- Empty state -->
@@ -204,6 +204,7 @@ function openDetail(id: number) {
 
 // ── Slide-to-select logic ────────────────────────────────────────────────
 let isDraggingSelection = false
+let dragStartId: number | null = null
 let dragSelectState = true // true = selecting, false = deselecting
 
 function onCheckboxClick(id: number) {
@@ -212,15 +213,25 @@ function onCheckboxClick(id: number) {
 
 function onCardMouseDown(e: MouseEvent, id: number) {
   if (e.button !== 0) return // Only left click
-  if (selection.isSelectionMode) {
-    isDraggingSelection = true
-    dragSelectState = !selection.selectedIds.has(id)
+  
+  if (e.ctrlKey || e.metaKey || e.shiftKey) {
     selection.toggleSelection(id)
+    return
   }
+
+  isDraggingSelection = true
+  dragStartId = id
+  dragSelectState = !selection.selectedIds.has(id)
 }
 
 function onCardMouseEnter(id: number) {
   if (isDraggingSelection) {
+    if (dragStartId !== null) {
+      if (dragSelectState) selection.selectItem(dragStartId)
+      else selection.deselectItem(dragStartId)
+      dragStartId = null
+    }
+    
     if (dragSelectState) {
       selection.selectItem(id)
     } else {
@@ -231,6 +242,7 @@ function onCardMouseEnter(id: number) {
 
 function onCardMouseUp() {
   isDraggingSelection = false
+  dragStartId = null
 }
 
 // Global mouse up to catch drags outside
@@ -483,16 +495,16 @@ watch(
     z-index 0ms 220ms;
 }
 
-.media-card:hover {
-  transform: scale(1.06);
+.media-grid:not(.selection-mode) .media-card:hover {
   z-index: 10;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.25);
-
+  transform: scale(1.02);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
   /* On hover-in, apply z-index immediately (no delay) */
   /* 鼠标悬停时，立即应用 z-index（无延迟） */
   transition:
     transform 220ms cubic-bezier(0.34, 1.18, 0.64, 1),
-    box-shadow 220ms ease;
+    box-shadow 220ms ease,
+    z-index 0ms 0ms;
 }
 
 .scroll-fab {

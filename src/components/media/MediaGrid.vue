@@ -61,7 +61,7 @@
             :style="{ width: item.w + 'px', height: item.h + 'px' }"
             @click.exact="onCardClick($event, item.id)"
             @click.shift.exact.prevent="onCardShiftClick(item.id)"
-            @mousedown.left="onCardMouseDown(item.id)"
+            @mousedown.left.prevent="onCardMouseDown(item.id)"
             @mouseenter="onCardMouseEnter(item.id)"
           >
             <MediaThumb
@@ -327,6 +327,10 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
  * Normal click: in selection mode → toggleSelect, else → openDetail
  */
 function onCardClick(e: MouseEvent, id: number) {
+  if (sel.hasDragged.value) {
+    sel.hasDragged.value = false
+    return
+  }
   if (sel.isSelectionMode.value) {
     sel.toggleSelect(id)
   } else {
@@ -343,7 +347,6 @@ function onCardShiftClick(id: number) {
 
 /** 鼠标按下：开始拖框选 | Mousedown: start rubber-band selection */
 function onCardMouseDown(id: number) {
-  if (!sel.isSelectionMode.value) return  // 非选择模式不拖选，只允许 Ctrl/Shift 开启
   sel.onDragStart(id)
 }
 

@@ -26,6 +26,7 @@ export function useSelection() {
 
   // 拖拽框选进行中 | Rubber-band drag in progress
   const isDragging = ref(false)
+  const hasDragged = ref(false)
 
   // 上一次 anchor（Shift 起点）id | Last anchor ID for Shift+click range
   const anchorId = ref<number | null>(null)
@@ -98,6 +99,7 @@ export function useSelection() {
   /** 开始拖拽选择 | Begin rubber-band drag selection */
   function onDragStart(startId: number) {
     isDragging.value  = true
+    hasDragged.value  = false
     _dragAnchorId.value = startId
     // 不立刻 toggleSelect，等待 onDragOver 确定方向
     // Don't toggleSelect yet; wait for onDragOver to determine direction
@@ -110,6 +112,9 @@ export function useSelection() {
    */
   function onDragOver(currentId: number, allIds: number[]) {
     if (!isDragging.value || _dragAnchorId.value === null) return
+    if (_dragAnchorId.value !== currentId) {
+      hasDragged.value = true
+    }
     const anchor = _dragAnchorId.value
     const ai = allIds.indexOf(anchor)
     const ci = allIds.indexOf(currentId)
@@ -158,6 +163,7 @@ export function useSelection() {
     selectedIds,
     isSelectionMode,
     isDragging,
+    hasDragged,
     selectedCount,
     hasSelection,
     // helpers

@@ -64,7 +64,6 @@
       <!-- Selection checkbox -->
       <!-- 选择复选框 -->
       <div
-        v-if="isSelected || isSelectionMode"
         class="media-thumb__checkbox"
         @click.stop="emit('select', id)"
       >

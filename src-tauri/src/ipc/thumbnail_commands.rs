@@ -22,11 +22,15 @@ const USE_PIPELINE: bool = true;
 #[tauri::command]
 pub async fn batch_request_thumbnails(
     item_ids: Vec<i64>,
+    target_size: Option<u32>,
     on_result: tauri::ipc::Channel<ThumbResult>,
     state: State<'_, Arc<AppState>>,
 ) -> Result<()> {
     let state_arc = state.inner().clone();
-    let config = { state_arc.thumb_config.read().unwrap().clone() };
+    let mut config = { state_arc.thumb_config.read().unwrap().clone() };
+    if let Some(size) = target_size {
+        config.size = size;
+    }
 
     let mut fast_results = std::collections::HashMap::new();
     let mut needs_gen = Vec::new();

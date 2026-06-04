@@ -23,6 +23,8 @@ pub struct ComputeLayoutParams {
     pub container_width: f64,
     pub row_height:      f64,
     pub gap:             f64,
+    pub group_by:        Option<String>,
+    pub sort_within_group: Option<String>,
 }
 
 /// Compute the Justified Layout for the given filters.
@@ -48,7 +50,7 @@ pub async fn compute_layout(
     // 从读取池查询布局项
     let items = {
         let pool = state.db_read_pool.get().map_err(AppError::from)?;
-        query_layout_items(&pool, &filter)?
+        query_layout_items(&pool, &filter, params.group_by.as_deref(), params.sort_within_group.as_deref())?
     };
 
     if items.is_empty() {
@@ -65,9 +67,11 @@ pub async fn compute_layout(
     // Run layout algorithm (CPU-bound) in a blocking task
     // 在阻塞任务中运行布局算法（受限于 CPU）
     let layout_params = LayoutParams {
-        container_width:  params.container_width.max(100.0),
+        container_width:   params.container_width.max(100.0),
         target_row_height: params.row_height.max(50.0),
         gap:               params.gap.max(0.0),
+        group_by:          params.group_by.unwrap_or_else(|| "date".to_string()),
+        sort_within_group: params.sort_within_group.unwrap_or_else(|| "datetime".to_string()),
     };
 
     let rows: Vec<LayoutRow> = tokio::task::spawn_blocking(move || {

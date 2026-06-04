@@ -46,8 +46,10 @@ export function useJustifiedLayout(containerWidthRef: () => number) {
       directoryId,
       filters,
       containerWidth: cw,
-      rowHeight:      DEFAULTS.GRID_ROW_HEIGHT,
+      rowHeight:      ui.gridRowHeight,
       gap:            DEFAULTS.GRID_GAP,
+      groupBy:        ui.groupBy,
+      sortWithinGroup: ui.sortWithinGroup,
     })
   }
 
@@ -72,6 +74,9 @@ export function useJustifiedLayout(containerWidthRef: () => number) {
       () => filter.minRating,
       () => ui.activeSmartAlbum,
       () => ui.activeDirectoryId,
+      () => ui.gridRowHeight,
+      () => ui.groupBy,
+      () => ui.sortWithinGroup,
     ],
     () => compute(),
     { deep: true }

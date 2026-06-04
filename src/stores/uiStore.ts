@@ -97,6 +97,44 @@ export const useUiStore = defineStore('ui', () => {
   const sortBy    = ref<string>('sort_datetime')
   const sortOrder = ref<'asc' | 'desc'>('desc')
 
+  // ── Grid Display Settings ────────────────────────────────────────────────
+  // ── 网格显示设置 ────────────────────────────────────────────────
+  const gridRowHeight = ref(200)
+
+  function setGridRowHeight(h: number) {
+    gridRowHeight.value = h
+    invoke(IPC.SET_APP_CONFIG, { key: 'grid_row_height', value: String(h) }).catch(console.error)
+  }
+
+  // Load saved grid row height
+  invoke<string | null>(IPC.GET_APP_CONFIG, { key: 'grid_row_height' })
+    .then(savedRowHeight => {
+      if (savedRowHeight) {
+        gridRowHeight.value = parseInt(savedRowHeight, 10) || 200
+      }
+    }).catch(console.error)
+
+  // ── Group and sort settings ──────────────────────────────────────────────
+  // ── 分组和排序设置 ──────────────────────────────────────────────
+  const groupBy = ref<'date' | 'folder' | 'none'>('date')
+  const sortWithinGroup = ref<'datetime' | 'filename'>('datetime')
+
+  function setGroupBy(mode: 'date' | 'folder' | 'none') {
+    groupBy.value = mode
+    invoke(IPC.SET_APP_CONFIG, { key: 'group_by', value: mode }).catch(console.error)
+  }
+
+  function setSortWithinGroup(sort: 'datetime' | 'filename') {
+    sortWithinGroup.value = sort
+    invoke(IPC.SET_APP_CONFIG, { key: 'sort_within_group', value: sort }).catch(console.error)
+  }
+
+  // Load saved group and sort settings
+  invoke<string | null>(IPC.GET_APP_CONFIG, { key: 'group_by' })
+    .then(saved => { if (saved) groupBy.value = saved as any }).catch(console.error)
+  invoke<string | null>(IPC.GET_APP_CONFIG, { key: 'sort_within_group' })
+    .then(saved => { if (saved) sortWithinGroup.value = saved as any }).catch(console.error)
+
   // ── Toasts ─────────────────────────────────────────────────────────────
   // ── 提示框 ─────────────────────────────────────────────────────────────
   const toasts = ref<ToastMessage[]>([])
@@ -170,6 +208,12 @@ export const useUiStore = defineStore('ui', () => {
     // view
     // 视图
     activeSmartAlbum, activeDirectoryId, setSmartAlbum, setActiveDirectory,
+    // grid display
+    // 网格显示
+    gridRowHeight, setGridRowHeight,
+    // grouping & sorting
+    // 分组和排序
+    groupBy, setGroupBy, sortWithinGroup, setSortWithinGroup,
     // sort
     // 排序
     sortBy, sortOrder,

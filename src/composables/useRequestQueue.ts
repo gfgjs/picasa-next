@@ -8,8 +8,16 @@ import { ref } from 'vue'
 import { invoke, Channel } from '@tauri-apps/api/core'
 import type { ThumbResult } from '../types/media'
 import { IPC } from '../constants/ipc'
-import { DEFAULTS } from '../constants/defaults'
+import { DEFAULTS, THUMB_SIZE_TIERS } from '../constants/defaults'
 import { useScanStore } from '../stores/scanStore'
+import { useUiStore } from '../stores/uiStore'
+
+function getOptimalThumbTier(rowHeight: number): number {
+  for (const tier of THUMB_SIZE_TIERS) {
+    if (tier >= rowHeight) return tier
+  }
+  return THUMB_SIZE_TIERS[THUMB_SIZE_TIERS.length - 1]
+}
 
 type Resolver = (result: ThumbResult) => void
 
@@ -51,7 +59,10 @@ export function useRequestQueue() {
       }
     }
 
-    invoke(IPC.BATCH_REQUEST_THUMBNAILS, { itemIds: batch, onResult })
+    const ui = useUiStore()
+    const targetSize = getOptimalThumbTier(ui.gridRowHeight)
+
+    invoke(IPC.BATCH_REQUEST_THUMBNAILS, { itemIds: batch, targetSize, onResult })
       .then(() => {
         console.log(`[useRequestQueue] batch finished`)
       })

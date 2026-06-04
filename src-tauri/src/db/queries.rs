@@ -77,6 +77,9 @@ fn map_layout_item(row: &Row<'_>) -> rusqlite::Result<LayoutItem> {
         thumb_path:    row.get(10)?,
         thumbhash:     row.get(11)?,
         is_favorited:  row.get::<_, i64>(12)? != 0,
+        dir_path:      row.get(13)?,
+        dir_name:      row.get(14)?,
+        file_name:     row.get(15)?,
     })
 }
 
@@ -390,12 +393,16 @@ pub fn get_media_detail(conn: &Connection, id: i64) -> Result<MediaDetail> {
 pub fn query_layout_items(
     conn: &Connection,
     filter: &MediaFilter,
+    group_by: Option<&str>,
+    sort_within: Option<&str>,
 ) -> Result<Vec<LayoutItem>> {
     let mut sql = String::from(
-        "SELECT id, width, height, file_size, sort_datetime, file_format, media_type, is_live_photo,
-                duration_ms, thumb_status, thumb_path, thumbhash, is_favorited
-         FROM media_items
-         WHERE is_deleted=0 AND companion_of IS NULL",
+        "SELECT m.id, m.width, m.height, m.file_size, m.sort_datetime, m.file_format, m.media_type, m.is_live_photo,
+                m.duration_ms, m.thumb_status, m.thumb_path, m.thumbhash, m.is_favorited,
+                d.rel_path as dir_path, d.name as dir_name, m.file_name
+         FROM media_items m
+         JOIN directories d ON m.directory_id = d.id
+         WHERE m.is_deleted=0 AND m.companion_of IS NULL",
     );
 
     let mut param_idx = 0usize;
@@ -450,10 +457,22 @@ pub fn query_layout_items(
     }
 
     if filter.live_photo_only == Some(true) {
-        sql.push_str(" AND is_live_photo=1");
+        sql.push_str(" AND m.is_live_photo=1");
     }
 
-    sql.push_str(" ORDER BY sort_datetime DESC");
+    if group_by == Some("folder") {
+        if sort_within == Some("filename") {
+            sql.push_str(" ORDER BY d.rel_path ASC, m.file_name ASC");
+        } else {
+            sql.push_str(" ORDER BY d.rel_path ASC, m.sort_datetime DESC");
+        }
+    } else {
+        if sort_within == Some("filename") {
+            sql.push_str(" ORDER BY m.file_name ASC");
+        } else {
+            sql.push_str(" ORDER BY m.sort_datetime DESC");
+        }
+    }
 
     let mut stmt = conn.prepare(&sql)?;
     let refs: Vec<&dyn rusqlite::ToSql> = extras.iter().map(|b| b.as_ref()).collect();

@@ -77,6 +77,48 @@
       <span v-if="ai.isSearching" class="toolbar__search-spinner" />
     </div>
 
+    <!-- Row height slider | 行高调节滑块 -->
+    <div class="toolbar-row-height">
+      <span class="toolbar-icon" :title="$t('toolbar.rowHeight')">
+        <Rows3 :size="16" />
+      </span>
+      <input
+        type="range"
+        class="row-height-slider"
+        :min="60"
+        :max="960"
+        :step="20"
+        :value="ui.gridRowHeight"
+        @input="onRowHeightInput"
+      />
+      <span class="row-height-value">{{ ui.gridRowHeight }}px</span>
+    </div>
+
+    <!-- Group by selector | 分组选择器 -->
+    <div class="toolbar-group">
+      <select
+        class="toolbar__select"
+        :value="ui.groupBy"
+        @change="onGroupByChange"
+      >
+        <option value="date">{{ $t('toolbar.groupByDate') }}</option>
+        <option value="folder">{{ $t('toolbar.groupByFolder') }}</option>
+        <option value="none">{{ $t('toolbar.noGroup') }}</option>
+      </select>
+
+      <!-- Sort within group (visible only for folder grouping) -->
+      <!-- 组内排序（仅在文件夹分组时可见） -->
+      <select
+        v-if="ui.groupBy === 'folder'"
+        class="toolbar__select"
+        :value="ui.sortWithinGroup"
+        @change="onSortWithinGroupChange"
+      >
+        <option value="datetime">{{ $t('toolbar.sortByTime') }}</option>
+        <option value="filename">{{ $t('toolbar.sortByName') }}</option>
+      </select>
+    </div>
+
     <!-- View sort -->
     <!-- 视图排序 -->
     <div class="toolbar__sort">
@@ -100,7 +142,7 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { ImageIcon, Video, Sparkles, X, Maximize2, Minimize2, Search, ArrowDown, ArrowUp } from '@lucide/vue'
+import { ImageIcon, Video, Sparkles, X, Maximize2, Minimize2, Search, ArrowDown, ArrowUp, Rows3 } from '@lucide/vue'
 import { useUiStore } from '../../stores/uiStore'
 import { useFilterStore } from '../../stores/filterStore'
 import { useMediaStore } from '../../stores/mediaStore'
@@ -166,6 +208,29 @@ function toggleSortOrder() {
 
 function onSortChange() {
   emit('sort-change')
+}
+
+let rowHeightTimer: ReturnType<typeof setTimeout> | null = null
+
+function onRowHeightInput(e: Event) {
+  const value = parseInt((e.target as HTMLInputElement).value, 10)
+  ui.gridRowHeight = value  // 即时更新 UI
+  // Debounce the actual layout recomputation
+  // 防抖实际的布局重新计算
+  if (rowHeightTimer) clearTimeout(rowHeightTimer)
+  rowHeightTimer = setTimeout(() => {
+    ui.setGridRowHeight(value) // 持久化
+  }, 300)
+}
+
+function onGroupByChange(e: Event) {
+  const value = (e.target as HTMLSelectElement).value as 'date' | 'folder' | 'none'
+  ui.setGroupBy(value)
+}
+
+function onSortWithinGroupChange(e: Event) {
+  const value = (e.target as HTMLSelectElement).value as 'datetime' | 'filename'
+  ui.setSortWithinGroup(value)
 }
 </script>
 
@@ -262,6 +327,50 @@ function onSortChange() {
   transition: border-color var(--transition-fast);
 }
 .toolbar__select:hover { border-color: var(--color-border-strong); }
+
+.toolbar-row-height {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+.toolbar-icon {
+  display: flex;
+  color: var(--color-text-secondary);
+}
+.row-height-slider {
+  width: 80px;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--color-border);
+  border-radius: 2px;
+  cursor: pointer;
+}
+.row-height-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  cursor: pointer;
+  transition: transform var(--transition-fast);
+}
+.row-height-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
+.row-height-value {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  min-width: 40px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
 
 /* ── AI semantic search toggle ────────────────────────────────────────────── */
 .toolbar__search-wrap.semantic-mode {

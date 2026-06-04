@@ -19,6 +19,19 @@ use crate::error::{AppError, Result};
 use crate::thumbnail::cache::{ensure_thumb_dir, thumb_db_path, thumb_path};
 use crate::thumbnail::thumbhash::generate_thumbhash;
 
+/// Valid thumbnail size tiers
+/// 有效缩略图尺寸档位
+const THUMB_TIERS: [u32; 4] = [120, 240, 480, 960];
+
+/// Snap an arbitrary thumbnail size to the nearest valid tier.
+/// 将任意缩略图尺寸就近取整到最近的有效档位。
+pub fn snap_to_tier(size: u32) -> u32 {
+    THUMB_TIERS.iter()
+        .copied()
+        .min_by_key(|&t| (t as i64 - size as i64).unsigned_abs())
+        .unwrap_or(240)
+}
+
 #[derive(Clone)]
 pub struct ThumbConfig {
     pub cache_dir:       std::path::PathBuf,
@@ -43,6 +56,10 @@ pub fn generate_thumbnail(
     arena: &EngineArena,
     config: &ThumbConfig,
 ) -> Result<ThumbResult> {
+    let mut snapped_config = config.clone();
+    snapped_config.size = snap_to_tier(config.size);
+    let config = &snapped_config;
+
     match decode_media_step(item, abs_path, arena, config)? {
         DecodeResult::Ready(res) => Ok(res),
         DecodeResult::ToEncode { item_id, cache_key, decoded } => {

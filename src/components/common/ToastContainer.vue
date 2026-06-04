@@ -35,7 +35,7 @@ const iconMap: Record<string, any> = { success: Check, error: X, warning: AlertT
   flex-direction: column;
   align-items: center;
   gap: var(--spacing-sm);
-  z-index: 999;
+  z-index: 99999;
   pointer-events: none;
 }
 .toast {

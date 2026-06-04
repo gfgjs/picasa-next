@@ -107,26 +107,18 @@
         <div class="settings-card__item">
           <div class="settings-card__info">
             <div class="settings-card__label">{{ $t('settings.thumbSize') || '缩略图大小' }}</div>
-            <div class="settings-card__desc">{{ $t('settings.thumbSizeDesc') || '生成的缩略图的最大边长 (像素)' }}</div>
+            <div class="settings-card__desc">{{ $t('settings.thumbSizeHint') || '更高档位缩略图占用更多磁盘空间' }}</div>
           </div>
-          <div class="setting-slider-group">
-            <input
-              type="range"
-              v-model.number="thumbSize"
-              min="4"
-              max="1024"
-              step="1"
-              class="input-range"
-              @change="saveThumbSize"
-            />
-            <input
-              type="number"
-              v-model.number="thumbSize"
-              min="4"
-              max="1024"
-              class="input-number"
-              @change="saveThumbSize"
-            />
+          <div class="segmented-control">
+            <button
+              v-for="tier in THUMB_SIZE_TIERS"
+              :key="tier"
+              class="segmented-btn"
+              :class="{ active: currentThumbTier === tier }"
+              @click="setThumbTier(tier)"
+            >
+              {{ getTierLabel(tier) }}
+            </button>
           </div>
         </div>
 
@@ -355,6 +347,7 @@ import { useI18n } from 'vue-i18n'
 import { X, Database, Paintbrush, RotateCcw } from '@lucide/vue'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { IPC } from '../constants/ipc'
+import { THUMB_SIZE_TIERS, type ThumbSizeTier } from '../constants/defaults'
 
 const ui = useUiStore()
 const scan = useScanStore()
@@ -363,7 +356,7 @@ const ai = useAiStore()
 const { t } = useI18n()
 
 const thumbSkipMaxKb = ref(200)
-const thumbSize = ref(300)
+const currentThumbTier = ref<number>(240)
 const thumbCacheDir = ref('')
 const logDir = ref('')
 const timelineScrollWidth = ref(6)
@@ -412,7 +405,7 @@ onMounted(async () => {
     if (val4) enableHoverScale.value = val4 === 'true'
 
     const val5 = await invoke<string | null>('get_app_config', { key: 'thumb_size' })
-    if (val5) thumbSize.value = parseInt(val5, 10)
+    if (val5) currentThumbTier.value = parseInt(val5, 10)
 
     try {
       thumbCacheDir.value = await invoke<string>('get_thumb_cache_dir')
@@ -476,9 +469,20 @@ async function saveGpuEngine() {
   ui.setGpuEngine(gpuEngine.value)
 }
 
-async function saveThumbSize() {
-  await saveConfig('thumb_size', thumbSize.value.toString())
-  ui.addToast('success', '已修改生成尺寸，新尺寸将在生成新缩略图时生效')
+function getTierLabel(tier: number): string {
+  const labels: Record<number, string> = {
+    120: t('settings.thumbTierS'),
+    240: t('settings.thumbTierM'),
+    480: t('settings.thumbTierL'),
+    960: t('settings.thumbTierXL'),
+  }
+  return labels[tier] ?? `${tier}px`
+}
+
+async function setThumbTier(tier: number) {
+  currentThumbTier.value = tier
+  await saveConfig('thumb_size', tier.toString())
+  ui.addToast('success', t('settings.thumbSizeChanged', { size: tier }))
 }
 
 async function changeCacheDir() {
@@ -737,6 +741,30 @@ function closeSettings() {
 @keyframes shimmer {
   0% { background-position: -200% 0; }
   100% { background-position: 200% 0; }
+}
+
+/* ── Segmented Control ─────────────────────────────────────────────────── */
+.segmented-control {
+  display: inline-flex;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  overflow: hidden;
+}
+.segmented-btn {
+  padding: 8px 16px;
+  font-size: 13px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  border: none;
+  border-right: 1px solid var(--color-border);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+.segmented-btn:last-child { border-right: none; }
+.segmented-btn:hover { background: var(--color-bg-hover); }
+.segmented-btn.active {
+  background: var(--color-accent);
+  color: #fff;
 }
 
 /* ── Buttons ───────────────────────────────────────────────────────────── */

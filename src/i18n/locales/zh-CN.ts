@@ -33,7 +33,14 @@ export default {
     clearDbSuccess: '数据库已清空',
     clearDbFailed: '清空失败: {error}',
     clearSettingsConfirm: '确定清空设置吗？\n\n这将重置主题、偏好设置等，并刷新页面。',
-    clearSettingsFailed: '清空设置失败: {error}'
+    clearSettingsFailed: '清空设置失败: {error}',
+    clearThumbnails: '同时清除已生成的缩略图缓存',
+    thumbnailsCleared: '已清理 {count} 个缩略图',
+    overlapDetected: '检测到文件夹重叠',
+    overlapParentMsg: '新文件夹「{path}」包含已添加的文件夹：{children}。是否合并？（删除子文件夹，仅保留父文件夹）',
+    overlapChildMsg: '新文件夹「{path}」是已添加文件夹「{parents}」的子文件夹，可能存在重复索引。是否仍然添加？',
+    mergeAndReplace: '合并（删除子文件夹）',
+    addAnyway: '仍然添加'
   },
   toolbar: {
     searchPlaceholder: '搜索...',
@@ -90,6 +97,12 @@ export default {
     uiFontSizeDesc: '调整整个应用的基础字体大小（建议 12 - 20），默认 15px。',
     hoverScale: '鼠标划过缩略图时放大',
     hoverScaleDesc: '开启后，鼠标悬停在瀑布流缩略图上时会略微放大。如果觉得卡顿可以关闭。',
+    thumbSizeChanged: '新缩略图将以 {size}px 生成，已有缩略图保留',
+    thumbSizeHint: '更高档位缩略图占用更多磁盘空间',
+    thumbTierS: '小 (120px)',
+    thumbTierM: '中 (240px)',
+    thumbTierL: '大 (480px)',
+    thumbTierXL: '超清 (960px)',
     database: '数据库',
     clearDb: '清空数据库',
     clearDbDesc: '清除所有已扫描的文件记录（不会删除本地文件），缩略图缓存将会保留。',

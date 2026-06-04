@@ -33,7 +33,14 @@ export default {
     clearDbSuccess: 'Database cleared',
     clearDbFailed: 'Clear failed: {error}',
     clearSettingsConfirm: 'Are you sure you want to clear settings?\n\nThis will reset themes, preferences, and reload the page.',
-    clearSettingsFailed: 'Clear settings failed: {error}'
+    clearSettingsFailed: 'Clear settings failed: {error}',
+    clearThumbnails: 'Also clear generated thumbnail cache',
+    thumbnailsCleared: 'Cleared {count} thumbnails',
+    overlapDetected: 'Folder Overlap Detected',
+    overlapParentMsg: 'New folder "{path}" contains existing folders: {children}. Merge? (Removes children, keeps parent)',
+    overlapChildMsg: 'New folder "{path}" is a child of existing folder "{parents}". It may cause duplicate indexing. Add anyway?',
+    mergeAndReplace: 'Merge (remove children)',
+    addAnyway: 'Add Anyway'
   },
   toolbar: {
     searchPlaceholder: 'Search...',
@@ -90,6 +97,12 @@ export default {
     uiFontSizeDesc: 'Adjust the base font size of the application (12 - 20 recommended), default 15px.',
     hoverScale: 'Scale Thumbnail on Hover',
     hoverScaleDesc: 'When enabled, hovering over a thumbnail will slightly enlarge it. You can disable this if it causes lag.',
+    thumbSizeChanged: 'New thumbnails will be generated at {size}px. Existing ones are kept.',
+    thumbSizeHint: 'Higher tiers use more disk space',
+    thumbTierS: 'S (120px)',
+    thumbTierM: 'M (240px)',
+    thumbTierL: 'L (480px)',
+    thumbTierXL: 'XL (960px)',
     database: 'Database',
     clearDb: 'Clear Database',
     clearDbDesc: 'Clear all scanned file records (local files will not be deleted). Thumbnail cache will be retained.',

@@ -15,6 +15,10 @@ use crate::utils::hash::cache_key_to_hex;
 /// Build the full path for a thumbnail file.
 /// 构建缩略图文件的完整路径。
 pub fn thumb_path(cache_dir: &Path, size: u32, cache_key: i64) -> PathBuf {
+    debug_assert!(
+        [120, 240, 480, 960].contains(&size),
+        "Thumbnail size {} is not a valid tier | 缩略图尺寸 {} 不是有效档位", size, size
+    );
     let hex = cache_key_to_hex(cache_key);
     let prefix = &hex[..2];
     cache_dir
@@ -33,6 +37,10 @@ pub fn thumb_exists(cache_dir: &Path, size: u32, cache_key: i64) -> bool {
 /// The relative path stored in the DB: `"{size}/{prefix}/{hex}.webp"`.
 /// 存储在数据库中的相对路径：`"{size}/{prefix}/{hex}.webp"`。
 pub fn thumb_db_path(size: u32, cache_key: i64) -> String {
+    debug_assert!(
+        [120, 240, 480, 960].contains(&size),
+        "Thumbnail size {} is not a valid tier | 缩略图尺寸 {} 不是有效档位", size, size
+    );
     let hex = cache_key_to_hex(cache_key);
     let prefix = &hex[..2];
     format!("{size}/{prefix}/{hex}.webp")

@@ -4,6 +4,8 @@
 
 use std::sync::Arc;
 
+use serde::Serialize;
+
 use tauri::{AppHandle, Manager, State};
 use tauri::ipc::Channel;
 use tracing::info;
@@ -66,6 +68,150 @@ pub async fn remove_scan_root(id: i64, state: State<'_, Arc<AppState>>) -> Resul
     q::delete_scan_root(&conn, id)?;
     info!("Scan root removed: id={id} | 已移除扫描根目录: id={id}");
     Ok(())
+}
+
+/// Result of removing a scan root with options
+/// 带选项删除扫描根的结果
+#[derive(Serialize)]
+pub struct RemoveRootResult {
+    /// Number of thumbnail files scheduled for cleanup
+    /// 计划清理的缩略图文件数
+    pub cleared_count: usize,
+}
+
+/// Remove a scan root with options for thumbnail cleanup.
+/// 带缩略图清理选项删除扫描根。
+#[tauri::command]
+pub async fn remove_scan_root_with_options(
+    state: State<'_, Arc<AppState>>,
+    id: i64,
+    clear_thumbnails: bool,
+) -> Result<RemoveRootResult> {
+    // 1. Cancel any ongoing scan for this root
+    //    取消该根的任何正在进行的扫描
+    state.cancel_scan(id);
+    
+    // 2. If clear_thumbnails, collect thumb_path list BEFORE cascade delete
+    //    如果 clear_thumbnails，在级联删除前收集 thumb_path 列表
+    let thumb_paths: Vec<String> = if clear_thumbnails {
+        let conn = state.db_read_pool.get()?;
+        let mut stmt = conn.prepare(
+            "SELECT m.thumb_path FROM media_items m \
+             JOIN directories d ON m.directory_id = d.id \
+             WHERE d.root_id = ?1 AND m.thumb_path IS NOT NULL"
+        )?;
+        let paths: Vec<String> = stmt.query_map([id], |row| row.get::<_, String>(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+        paths
+    } else {
+        vec![]
+    };
+    
+    let cleared_count = thumb_paths.len();
+    
+    // 3. CASCADE delete DB records
+    //    级联删除数据库记录
+    {
+        let conn = state.db_writer.lock()
+            .map_err(|e| AppError::Db(format!("Lock error: {e} | 锁错误: {e}")))?;
+        q::delete_scan_root(&conn, id)?;
+    }
+    
+    // 4. Async background delete thumbnail files
+    //    异步后台删除缩略图文件
+    if !thumb_paths.is_empty() {
+        let cache_dir = state.thumb_config.read().unwrap().cache_dir.clone();
+        tokio::spawn(async move {
+            let mut deleted = 0u32;
+            for path in &thumb_paths {
+                let full = cache_dir.join("thumbnails").join(path);
+                if tokio::fs::remove_file(&full).await.is_ok() {
+                    deleted += 1;
+                }
+            }
+            tracing::info!(
+                "Cleaned {deleted}/{} thumbnails | 清理缩略图 {deleted}/{}",
+                thumb_paths.len(), thumb_paths.len()
+            );
+        });
+    }
+    
+    Ok(RemoveRootResult { cleared_count })
+}
+
+/// Information about an overlapping scan root
+/// 重叠扫描根的信息
+#[derive(Serialize, Clone)]
+pub struct OverlapInfo {
+    pub id: i64,
+    pub path: String,
+    pub alias: Option<String>,
+}
+
+/// Result of folder overlap check
+/// 文件夹重叠检查结果
+#[derive(Serialize)]
+pub struct FolderOverlapResult {
+    /// Existing roots that are children of the new path
+    /// 新路径包含的已有根（新路径是父级）
+    pub children: Vec<OverlapInfo>,
+    /// Existing roots that are parents of the new path
+    /// 包含新路径的已有根（新路径是子级）
+    pub parents: Vec<OverlapInfo>,
+}
+
+/// Check if a new folder path overlaps with existing scan roots.
+/// 检查新文件夹路径是否与现有扫描根重叠。
+#[tauri::command]
+pub async fn check_folder_overlap(
+    state: State<'_, Arc<AppState>>,
+    new_path: String,
+) -> Result<FolderOverlapResult> {
+    // Normalize path separators to forward slashes for comparison
+    // 标准化路径分隔符为正斜杠以便比较
+    let normalized = new_path.replace('\\', "/");
+    let normalized_with_sep = format!("{}/", normalized.trim_end_matches('/'));
+    
+    let conn = state.db_read_pool.get()?;
+    let mut stmt = conn.prepare(
+        "SELECT id, path, alias FROM scan_roots WHERE is_active = 1"
+    )?;
+    
+    let roots: Vec<(i64, String, Option<String>)> = stmt
+        .query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
+    
+    let mut children = vec![];
+    let mut parents = vec![];
+    
+    for (id, path, alias) in &roots {
+        let root_normalized = path.replace('\\', "/");
+        let root_with_sep = format!("{}/", root_normalized.trim_end_matches('/'));
+        
+        if root_with_sep.starts_with(&normalized_with_sep) && root_normalized != normalized {
+            // Existing root is a child of the new path
+            // 已有根是新路径的子级（新路径是父级）
+            children.push(OverlapInfo {
+                id: *id,
+                path: path.clone(),
+                alias: alias.clone(),
+            });
+        } else if normalized_with_sep.starts_with(&root_with_sep) && root_normalized != normalized {
+            // Existing root is a parent of the new path
+            // 已有根是新路径的父级（新路径是子级）
+            parents.push(OverlapInfo {
+                id: *id,
+                path: path.clone(),
+                alias: alias.clone(),
+            });
+        }
+    }
+    
+    Ok(FolderOverlapResult { children, parents })
 }
 
 /// List all scan roots.

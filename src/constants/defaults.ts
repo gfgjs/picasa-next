@@ -2,8 +2,11 @@
 // Application default values
 // 应用程序默认值
 
+export const THUMB_SIZE_TIERS = [120, 240, 480, 960] as const
+export type ThumbSizeTier = (typeof THUMB_SIZE_TIERS)[number]
+
 export const DEFAULTS = {
-  THUMB_SIZE:         300,
+  THUMB_SIZE:         240,
   THUMB_SKIP_MAX_KB:  200,
   THUMB_QUALITY:      80,
   THUMB_FORMAT:       'webp',

@@ -258,6 +258,8 @@ pub fn run() {
             // scan
             ipc::scan_commands::add_scan_root,
             ipc::scan_commands::remove_scan_root,
+            ipc::scan_commands::remove_scan_root_with_options,
+            ipc::scan_commands::check_folder_overlap,
             ipc::scan_commands::list_scan_roots,
             ipc::scan_commands::start_scan,
             ipc::scan_commands::stop_scan,

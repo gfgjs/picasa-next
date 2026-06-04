@@ -197,6 +197,25 @@
       </button>
     </div>
 
+    <!-- Custom Confirm Dialog -->
+    <div v-if="confirmDialog.isOpen" class="custom-modal-overlay">
+      <div class="custom-modal">
+        <h3 class="custom-modal__title">{{ confirmDialog.title }}</h3>
+        <p class="custom-modal__message">{{ confirmDialog.message }}</p>
+        
+        <div v-if="confirmDialog.showCheckbox" class="custom-modal__checkbox">
+          <label class="checkbox-label" style="display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer;">
+            <input type="checkbox" v-model="confirmDialog.checkboxValue" />
+            {{ confirmDialog.checkboxLabel }}
+          </label>
+        </div>
+
+        <div class="custom-modal__actions">
+          <button class="btn btn-secondary" @click="closeConfirmDialog(false)">{{ confirmDialog.cancelText }}</button>
+          <button class="btn btn-primary" @click="closeConfirmDialog(true)">{{ confirmDialog.confirmText }}</button>
+        </div>
+      </div>
+    </div>
   </nav>
 </template>
 
@@ -227,7 +246,51 @@ const router   = useRouter()
 const route    = useRoute()
 const { t }    = useI18n()
 
+// ── Custom Confirm Dialog ──────────────────────────────────────────────────
+interface ConfirmDialogOptions {
+  title: string
+  message: string
+  confirmText?: string
+  cancelText?: string
+  showCheckbox?: boolean
+  checkboxLabel?: string
+  checkboxValue?: boolean
+}
 
+const confirmDialog = ref({
+  isOpen: false,
+  title: '',
+  message: '',
+  confirmText: '确认',
+  cancelText: '取消',
+  showCheckbox: false,
+  checkboxLabel: '',
+  checkboxValue: true,
+  resolve: null as ((val: boolean) => void) | null
+})
+
+function showConfirmDialog(options: ConfirmDialogOptions): Promise<boolean> {
+  return new Promise(resolve => {
+    confirmDialog.value = {
+      isOpen: true,
+      title: options.title,
+      message: options.message,
+      confirmText: options.confirmText || '确认',
+      cancelText: options.cancelText || '取消',
+      showCheckbox: options.showCheckbox || false,
+      checkboxLabel: options.checkboxLabel || '',
+      checkboxValue: options.checkboxValue ?? true,
+      resolve
+    }
+  })
+}
+
+function closeConfirmDialog(result: boolean) {
+  if (confirmDialog.value.resolve) {
+    confirmDialog.value.resolve(result)
+  }
+  confirmDialog.value.isOpen = false
+}
 
 // ── Smart albums ───────────────────────────────────────────────────────────
 // ── 智能相册 ───────────────────────────────────────────────────────────
@@ -360,6 +423,17 @@ async function toggleScan(rootId: number) {
   }
 }
 
+export interface OverlapInfo {
+  id: number
+  path: string
+  alias: string | null
+}
+
+export interface FolderOverlapResult {
+  children: OverlapInfo[]
+  parents: OverlapInfo[]
+}
+
 async function addRoot() {
   try {
     const selected = await open({
@@ -370,6 +444,36 @@ async function addRoot() {
     if (!selected) return
     const path = typeof selected === 'string' ? selected : selected[0]
     if (!path) return
+
+    // Step 1: Check for overlaps
+    const overlap = await invoke<FolderOverlapResult>('check_folder_overlap', { newPath: path })
+    
+    if (overlap.children.length > 0) {
+      const childNames = overlap.children.map(c => c.alias || c.path).join(', ')
+      const merge = await showConfirmDialog({
+        title: t('sidebar.overlapDetected'),
+        message: t('sidebar.overlapParentMsg', { path, children: childNames }),
+        confirmText: t('sidebar.mergeAndReplace'),
+        cancelText: t('sidebar.addAnyway'),
+      })
+      if (merge) {
+        for (const child of overlap.children) {
+          await invoke('remove_scan_root_with_options', {
+            id: child.id, clearThumbnails: false,
+          })
+        }
+      }
+    } else if (overlap.parents.length > 0) {
+      const parentNames = overlap.parents.map(p => p.alias || p.path).join(', ')
+      const proceed = await showConfirmDialog({
+        title: t('sidebar.overlapDetected'),
+        message: t('sidebar.overlapChildMsg', { path, parents: parentNames }),
+        confirmText: t('sidebar.addAnyway'),
+        cancelText: t('sidebar.cancel') || '取消',
+      })
+      if (!proceed) return
+    }
+
     try {
       const root = await scan.addScanRoot(path)
       
@@ -396,9 +500,27 @@ async function addRoot() {
 }
 
 async function removeRoot(id: number) {
-  if (!confirm(t('sidebar.confirmRemove'))) return
+  const proceed = await showConfirmDialog({
+    title: t('sidebar.removeFolder'),
+    message: t('sidebar.confirmRemove'),
+    confirmText: t('sidebar.removeFolder') || '移除',
+    cancelText: t('sidebar.cancel') || '取消',
+    showCheckbox: true,
+    checkboxLabel: t('sidebar.clearThumbnails'),
+    checkboxValue: true
+  })
+  if (!proceed) return
+
   try {
-    await scan.removeScanRoot(id)
+    const result = await invoke<{ cleared_count: number }>(
+      'remove_scan_root_with_options',
+      { id, clearThumbnails: confirmDialog.value.checkboxValue }
+    )
+    if (result.cleared_count > 0) {
+      ui.addToast('success', t('sidebar.thumbnailsCleared', { count: result.cleared_count }))
+    }
+
+    await scan.loadScanRoots()
     media.loadStats()
     folderTree.loadRoots(scan.scanRoots)
   } catch (e) {
@@ -661,5 +783,47 @@ onMounted(async () => {
 .sidebar__tree-chevron-spacer {
   width: 14px;
   flex-shrink: 0;
+}
+
+/* ── Custom Modal ──────────────────────────────────────────────────────── */
+.custom-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.custom-modal {
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-lg);
+  width: 400px;
+  max-width: 90vw;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+.custom-modal__title {
+  margin: 0;
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+.custom-modal__message {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+}
+.custom-modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-sm);
 }
 </style>

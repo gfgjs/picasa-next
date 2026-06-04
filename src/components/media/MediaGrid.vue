@@ -99,6 +99,27 @@
         ↓
       </button>
     </div>
+    <!-- Batch selection bar: shows when items are selected -->
+    <!-- 批量选择栏：有项目被选中时显示 -->
+    <Transition name="batch-bar">
+      <div v-if="selection.isSelectionMode" class="batch-bar">
+        <span class="batch-bar__count">已选 {{ selection.selectionCount }} 张</span>
+        <div class="batch-bar__actions">
+          <button class="batch-bar__btn" @click="selection.favoriteSelected(true)" title="收藏选中项目">
+            ♥ 收藏
+          </button>
+          <button class="batch-bar__btn" @click="selection.favoriteSelected(false)" title="取消收藏">
+            ♡ 取消收藏
+          </button>
+          <button class="batch-bar__btn batch-bar__btn--danger" @click="selection.deleteSelected()" title="删除选中项目">
+            🗑 删除
+          </button>
+          <button class="batch-bar__btn batch-bar__btn--ghost" @click="selection.clearSelection()" title="取消选择">
+            ✕ 取消
+          </button>
+        </div>
+      </div>
+    </Transition>
   </div>
 </template>
 
@@ -578,5 +599,45 @@ watch(
 .fab-btn:active {
   transform: scale(0.95);
 }
+
+/* ── 批量操作栏 / Batch operations bar ──────────────────────────────────── */
+.batch-bar {
+  position: absolute;
+  bottom: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  padding: 10px 20px;
+  background: color-mix(in srgb, var(--color-bg-surface) 92%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--color-border);
+  border-radius: 99px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+  white-space: nowrap;
+}
+.batch-bar-enter-active, .batch-bar-leave-active { transition: opacity 0.2s ease, transform 0.2s ease; }
+.batch-bar-enter-from, .batch-bar-leave-to { opacity: 0; transform: translateX(-50%) translateY(12px); }
+.batch-bar__count { font-size: var(--font-size-sm); font-weight: 600; color: var(--color-text-primary); }
+.batch-bar__actions { display: flex; align-items: center; gap: 4px; }
+.batch-bar__btn {
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  padding: 5px 12px;
+  border-radius: 99px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+.batch-bar__btn:hover { background: var(--color-accent); border-color: var(--color-accent); color: #fff; }
+.batch-bar__btn--danger:hover { background: hsl(0 70% 50%); border-color: hsl(0 70% 50%); }
+.batch-bar__btn--ghost { background: transparent; border-color: transparent; }
+.batch-bar__btn--ghost:hover { background: var(--color-bg-hover); border-color: var(--color-border); color: var(--color-text-primary); }
 
 </style>

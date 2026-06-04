@@ -47,13 +47,21 @@ import ToastContainer     from './components/common/ToastContainer.vue'
 import { useAiStore }     from './stores/aiStore'
 import { useRoute }       from 'vue-router'
 import type { SemanticSearchResult } from './types/ai'
+import type { SearchResult } from './types/media'
 
 const ui = useUiStore()
 const ai = useAiStore()
 const media = useMediaStore()
 const route = useRoute()
 
-function onSemanticItemClick(item: SemanticSearchResult) {
+function onSemanticItemClick(item: SemanticSearchResult | SearchResult) {
+  // Extract IDs from current search mode results to use as navigation context
+  // 从当前搜索模式结果中提取 ID 用作导航上下文
+  const ids = ai.isSemanticMode
+    ? ai.semanticResults.map(i => i.id)
+    : ai.standardResults.map(i => i.id)
+  media.setNavigationContext(ids)
+
   // Open the detail overlay for the clicked semantic search result.
   // 为点击的语义搜索结果打开详情视图。
   media.openDetail(item.id)
@@ -65,6 +73,7 @@ useTheme()
 
 function onSearch(query: string) {
   ui.searchQuery = query
+  ai.runStandardSearch(query)
 }
 
 function onSortChange() {

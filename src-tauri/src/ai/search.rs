@@ -91,6 +91,8 @@ pub fn semantic_search(
                 thumb_path:   item.thumb_path,
                 thumbhash:    item.thumbhash,
                 thumb_status: item.thumb_status,
+                width:        item.width,
+                height:       item.height,
                 similarity,
             }
         })

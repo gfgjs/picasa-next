@@ -235,6 +235,7 @@
 import { ref, computed, watch, onMounted, markRaw } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { ask } from '@tauri-apps/plugin-dialog'
 import { open } from '@tauri-apps/plugin-dialog'
 import { invoke } from '@tauri-apps/api/core'
 import { IPC } from '../../constants/ipc'
@@ -440,7 +441,19 @@ async function addRoot() {
     const path = typeof selected === 'string' ? selected : selected[0]
     if (!path) return
     try {
-      const root = await scan.addScanRoot(path)
+      const overlaps = await scan.checkFolderOverlap(path)
+      let root: any
+      if (overlaps.length > 0) {
+        const overlapPaths = overlaps.map(r => r.path).join('\n')
+        const shouldMerge = await ask(
+          `添加此目录将涵盖以下已存在的目录：\n${overlapPaths}\n\n是否合并？（原目录在侧边栏将被移除，但媒体数据会自动迁移到新目录）`,
+          { title: '发现重叠目录', kind: 'warning' }
+        )
+        if (!shouldMerge) return
+        root = await scan.mergeScanRoots(path, null, overlaps.map(r => r.id))
+      } else {
+        root = await scan.addScanRoot(path)
+      }
       
       // 立即重新加载目录树，并在左侧选中该文件夹
       await scan.loadScanRoots()

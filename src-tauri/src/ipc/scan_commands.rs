@@ -56,6 +56,101 @@ pub async fn add_scan_root(
     Ok(root)
 }
 
+/// Check if a new path overlaps with any existing scan roots.
+/// 检查新路径是否与任何现有的扫描根目录重叠（包含现有目录）。
+#[tauri::command]
+pub async fn check_folder_overlap(
+    path: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<Vec<ScanRoot>> {
+    let norm = normalize_db_path(&path);
+    let pool = state.db_read_pool.get().map_err(AppError::from)?;
+    let roots = q::list_scan_roots(&pool)?;
+    
+    let norm_with_sep = if norm.ends_with('/') { norm.clone() } else { format!("{}/", norm) };
+    
+    let mut overlapping = Vec::new();
+    for root in roots {
+        let root_with_sep = if root.path.ends_with('/') { root.path.clone() } else { format!("{}/", root.path) };
+        if root_with_sep.starts_with(&norm_with_sep) && root.path != norm {
+            overlapping.push(root);
+        }
+    }
+    
+    Ok(overlapping)
+}
+
+/// Merge existing overlapping roots into a new root.
+/// 将现有的重叠根目录合并到新根目录中。
+#[tauri::command]
+pub async fn merge_scan_roots(
+    new_path: String,
+    alias: Option<String>,
+    overlapping_ids: Vec<i64>,
+    state: State<'_, Arc<AppState>>
+) -> Result<ScanRoot> {
+    let norm = normalize_db_path(&new_path);
+    
+    // 1. Create the new root
+    let new_root = {
+        let mut conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        let id = q::insert_scan_root(&conn, &norm, alias.as_deref())?;
+        
+        let dir_name = alias.clone().unwrap_or_else(|| {
+            std::path::Path::new(&norm)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string()
+        });
+        q::upsert_directory(&conn, id, None, "", &dir_name, 0, None)?;
+        
+        q::get_scan_root(&conn, id)?
+    };
+
+    // 2. Fetch existing roots and update directories
+    {
+        let pool = state.db_read_pool.get().map_err(AppError::from)?;
+        let roots = q::list_scan_roots(&pool)?;
+        
+        let mut conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        let tx = conn.transaction()?;
+        
+        for old_id in &overlapping_ids {
+            // Cancel scan if running
+            state.cancel_scan(*old_id);
+            
+            if let Some(old_root) = roots.iter().find(|r| r.id == *old_id) {
+                if let Some(suffix) = old_root.path.strip_prefix(&norm) {
+                    let prefix = suffix.trim_start_matches('/');
+                    let prefix_depth = if prefix.is_empty() { 0 } else { prefix.split('/').count() as i64 };
+                    
+                    tx.execute(
+                        "UPDATE directories 
+                         SET root_id = ?1,
+                             rel_path = CASE 
+                                 WHEN rel_path = '' THEN ?2 
+                                 ELSE ?2 || '/' || rel_path 
+                             END,
+                             depth = depth + ?3
+                         WHERE root_id = ?4",
+                        rusqlite::params![new_root.id, prefix, prefix_depth, old_id]
+                    )?;
+                    
+                    // delete old root without CASCADE because we just moved all directories
+                    tx.execute("DELETE FROM scan_roots WHERE id = ?1", rusqlite::params![old_id])?;
+                }
+            }
+        }
+        tx.commit()?;
+    }
+    
+    // Invalidate cache
+    *state.layout_cache.write().unwrap() = None;
+    
+    Ok(new_root)
+}
+
 /// Remove a scan root and all its data (CASCADE).
 /// 移除扫描根目录及其所有数据 (CASCADE)。
 #[tauri::command]

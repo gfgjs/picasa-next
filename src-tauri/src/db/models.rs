@@ -109,6 +109,9 @@ pub struct LayoutItem {
     pub thumb_status:  i64,
     pub thumb_path:    Option<String>,
     pub thumbhash:     Option<Vec<u8>>,
+    pub directory_id:  i64,
+    pub dir_rel_path:  Option<String>,
+    pub dir_name:      Option<String>,
 }
 
 // ── Image meta ───────────────────────────────────────────────────────────────
@@ -162,6 +165,8 @@ pub struct SearchResult {
     pub thumb_path:   Option<String>,
     pub thumbhash:    Option<Vec<u8>>,
     pub thumb_status: i64,
+    pub width:        i64,
+    pub height:       i64,
 }
 
 // ── App stats ────────────────────────────────────────────────────────────────
@@ -275,6 +280,8 @@ pub struct SemanticSearchResult {
     pub thumb_path:   Option<String>,
     pub thumbhash:    Option<Vec<u8>>,
     pub thumb_status: i64,
+    pub width:        i64,
+    pub height:       i64,
     /// Cosine similarity in [0, 1] range.
     /// [0, 1] 范围内的余弦相似度。
     pub similarity:   f32,

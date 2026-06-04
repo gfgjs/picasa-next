@@ -5,8 +5,10 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 
+import type { MediaType } from '../types/media'
+
 export const useFilterStore = defineStore('filter', () => {
-  const mediaTypes    = ref<string[]>([])  // empty = all
+  const mediaTypes    = ref<MediaType[]>([])  // empty = all
                                            // 空 = 全部
   const livePhotoOnly = ref(false)
   const favoritedOnly = ref(false)
@@ -22,11 +24,11 @@ export const useFilterStore = defineStore('filter', () => {
     dateFrom.value !== null
   )
 
-  function setMediaTypes(types: string[]) {
+  function setMediaTypes(types: MediaType[]) {
     mediaTypes.value = types
   }
 
-  function toggleMediaType(type: string) {
+  function toggleMediaType(type: MediaType) {
     const idx = mediaTypes.value.indexOf(type)
     if (idx >= 0) {
       mediaTypes.value = mediaTypes.value.filter(t => t !== type)
@@ -44,7 +46,7 @@ export const useFilterStore = defineStore('filter', () => {
     dateTo.value        = null
   }
 
-  function toApiFilter() {
+  function toApiFilter(): import('../types/media').MediaFilter {
     return {
       mediaTypes:    mediaTypes.value.length ? mediaTypes.value : undefined,
       livePhotoOnly: livePhotoOnly.value || undefined,

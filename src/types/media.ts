@@ -96,6 +96,8 @@ export interface SearchResult {
   thumbPath:   string | null
   thumbhash:   number[] | null
   thumbStatus: ThumbStatus
+  width:       number
+  height:      number
 }
 
 export interface AppStats {
@@ -129,4 +131,6 @@ export interface MediaFilter {
   minRating?:     number | null
   dateRange?:     DateRange | null
   livePhotoOnly?: boolean | null
+  sortBy?:        string | null
+  sortOrder?:     string | null
 }

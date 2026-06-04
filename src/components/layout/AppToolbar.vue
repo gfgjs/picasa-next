@@ -91,9 +91,18 @@
       />
     </div>
 
-    <!-- Folder sort toggle (only when viewing a directory) | 文件夹内排序切换针对文件夹视图 -->
+    <!-- Group by -->
+    <div class="toolbar__sort">
+      <select class="toolbar__select" v-model="ui.groupBy" @change="onSortChange">
+        <option value="date">按日期分组</option>
+        <option value="folder">按文件夹分组</option>
+        <option value="none">不分组</option>
+      </select>
+    </div>
+
+    <!-- Folder sort toggle (only when viewing a directory or grouping by folder) -->
     <button
-      v-if="ui.activeDirectoryId !== null"
+      v-if="ui.activeDirectoryId !== null || ui.groupBy === 'folder'"
       class="btn-icon"
       :title="ui.folderSortBy === 'sort_datetime' ? '切换为按文件名排序' : '切换为按时间排序'"
       @click="toggleFolderSort"

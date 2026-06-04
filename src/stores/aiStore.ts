@@ -22,6 +22,7 @@ export const useAiStore = defineStore('ai', () => {
   const searchMode = ref<SearchMode>('filename')
   const semanticQuery = ref('')
   const semanticResults = ref<SemanticSearchResult[]>([])
+  const standardResults = ref<import('../types/media').SearchResult[]>([])
   const isSearching = ref(false)
   const searchError = ref<string | null>(null)
 
@@ -132,10 +133,36 @@ export const useAiStore = defineStore('ai', () => {
     }
   }
 
+  /** Run a standard filename search query | 运行标准文件名搜索查询 */
+  async function runStandardSearch(query: string, limit = 100) {
+    if (!query.trim()) {
+      standardResults.value = []
+      return
+    }
+
+    isSearching.value = true
+    searchError.value = null
+
+    try {
+      const results = await invoke<import('../types/media').SearchResult[]>('search_media', {
+        query,
+        filter: {},
+        limit,
+      })
+      standardResults.value = results
+    } catch (e) {
+      searchError.value = String(e)
+      standardResults.value = []
+    } finally {
+      isSearching.value = false
+    }
+  }
+
   /** Toggle between filename and semantic search modes | 在文件名和语义搜索模式之间切换 */
   function toggleSearchMode() {
     searchMode.value = searchMode.value === 'filename' ? 'semantic' : 'filename'
     semanticResults.value = []
+    standardResults.value = []
     searchError.value = null
   }
 
@@ -143,6 +170,8 @@ export const useAiStore = defineStore('ai', () => {
     searchMode.value = mode
     if (mode === 'filename') {
       semanticResults.value = []
+    } else {
+      standardResults.value = []
     }
   }
 
@@ -196,6 +225,7 @@ export const useAiStore = defineStore('ai', () => {
     searchMode,
     semanticQuery,
     semanticResults,
+    standardResults,
     isSearching,
     searchError,
     // computed
@@ -209,6 +239,7 @@ export const useAiStore = defineStore('ai', () => {
     stopAnalysis,
     rebuildEmbeddings,
     runSemanticSearch,
+    runStandardSearch,
     toggleSearchMode,
     setSearchMode,
     startStatusPolling,

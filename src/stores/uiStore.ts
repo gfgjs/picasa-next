@@ -97,6 +97,14 @@ export const useUiStore = defineStore('ui', () => {
   const sortBy    = ref<string>('sort_datetime')
   const sortOrder = ref<'asc' | 'desc'>('desc')
 
+  // ── Group by ─────────────────────────────────────────────────────────────
+  // ── 分组方式 ─────────────────────────────────────────────────────────────
+  const groupBy = ref<'date' | 'folder' | 'none'>('date')
+
+  function setGroupBy(gb: 'date' | 'folder' | 'none') {
+    groupBy.value = gb
+  }
+
   // ── Grid row height ─────────────────────────────────────────────────────
   // ── 网格行高 ─────────────────────────────────────────────────────────────
   const gridRowHeight = ref<number>(200)
@@ -191,6 +199,9 @@ export const useUiStore = defineStore('ui', () => {
     // sort
     // 排序
     sortBy, sortOrder,
+    // group by
+    // 分组
+    groupBy, setGroupBy,
     // folder sort
     // 文件夹分组内排序
     folderSortBy, folderSortOrder, setFolderSort,

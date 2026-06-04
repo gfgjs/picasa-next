@@ -1,15 +1,16 @@
 <template>
   <!-- Semantic search results overlay panel -->
-  <!-- 语义搜索结果覆盖面板 -->
+  <!-- 搜索结果覆盖面板 -->
   <Transition name="semantic-panel">
-    <div v-if="ai.isSemanticMode" class="semantic-panel" role="region" aria-label="AI 语义搜索结果">
+    <div v-if="uiStore.searchQuery || ai.semanticQuery || ai.isSearching" class="semantic-panel" role="region" aria-label="搜索结果">
 
       <!-- Header -->
       <div class="semantic-panel__header">
         <div class="semantic-panel__title">
-          <Sparkles :size="16" class="semantic-panel__icon" />
-          <span>AI 语义搜索</span>
-          <span class="semantic-panel__provider" v-if="ai.status.provider">
+          <Sparkles v-if="ai.isSemanticMode" :size="16" class="semantic-panel__icon" />
+          <Search v-else :size="16" class="semantic-panel__icon" />
+          <span>{{ ai.isSemanticMode ? 'AI 语义搜索' : '文件名搜索' }}</span>
+          <span class="semantic-panel__provider" v-if="ai.isSemanticMode && ai.status.provider">
             {{ ai.providerLabel }}
           </span>
         </div>
@@ -30,8 +31,8 @@
           </span>
         </div>
 
-        <!-- Controls -->
-        <div class="semantic-panel__controls">
+        <!-- Controls (Semantic mode only) -->
+        <div class="semantic-panel__controls" v-if="ai.isSemanticMode">
           <!-- Start analysis if not yet running -->
           <!-- 如果尚未运行则启动分析 -->
           <button
@@ -75,41 +76,53 @@
 
       <!-- Empty state: no query yet -->
       <!-- 空状态：尚无查询 -->
-      <div v-else-if="!ai.semanticQuery && !ai.isSearching" class="semantic-panel__empty">
-        <Sparkles :size="40" class="semantic-panel__empty-icon" />
-        <p>在上方搜索框中用自然语言描述图片</p>
-        <p class="semantic-panel__hint">例：「海边日落」「两人自拍」「猫咪玩耍」</p>
+      <div v-else-if="(ai.isSemanticMode && !ai.semanticQuery) || (!ai.isSemanticMode && !uiStore.searchQuery)" class="semantic-panel__empty">
+        <Sparkles v-if="ai.isSemanticMode" :size="40" class="semantic-panel__empty-icon" />
+        <Search v-else :size="40" class="semantic-panel__empty-icon" />
+        <p v-if="ai.isSemanticMode">在上方搜索框中用自然语言描述图片</p>
+        <p v-else>在上方搜索框中输入文件名以查找图片</p>
+        <p class="semantic-panel__hint" v-if="ai.isSemanticMode">例：「海边日落」「两人自拍」「猫咪玩耍」</p>
       </div>
 
       <!-- Searching spinner -->
       <!-- 搜索中旋转器 -->
       <div v-else-if="ai.isSearching" class="semantic-panel__loading">
         <div class="semantic-panel__spinner" />
-        <span>语义分析中…</span>
+        <span>{{ ai.isSemanticMode ? '语义分析中…' : '搜索中…' }}</span>
       </div>
 
       <!-- No results -->
       <!-- 无结果 -->
-      <div v-else-if="ai.semanticResults.length === 0 && ai.semanticQuery" class="semantic-panel__empty">
+      <div v-else-if="currentResults.length === 0" class="semantic-panel__empty">
         <Search :size="32" class="semantic-panel__empty-icon" />
         <p>未找到匹配的图片</p>
-        <p class="semantic-panel__hint">尝试换一种描述方式，或先完成 AI 分析（{{ ai.status.analyzedItems }}/{{ ai.status.totalItems }} 张）</p>
+        <p class="semantic-panel__hint" v-if="ai.isSemanticMode">尝试换一种描述方式，或先完成 AI 分析（{{ ai.status.analyzedItems }}/{{ ai.status.totalItems }} 张）</p>
+        <p class="semantic-panel__hint" v-else>尝试使用其他关键字搜索</p>
       </div>
 
       <!-- Results grid -->
       <!-- 结果网格 -->
-      <div v-else class="semantic-panel__results">
+      <div v-else class="semantic-panel__results" ref="resultsContainerRef">
         <div class="semantic-panel__results-meta">
-          找到 {{ ai.semanticResults.length }} 张相关图片
+          找到 {{ currentResults.length }} 张相关图片
         </div>
-        <div class="semantic-panel__grid">
-          <SemanticResultCard
-            v-for="item in ai.semanticResults"
-            :key="item.id"
-            :item="item"
-            :cache-dir="cacheDir"
-            @click="emit('item-click', item)"
-          />
+        <div class="semantic-panel__justified" :style="{ height: totalHeight + 'px' }">
+          <template v-for="row in layoutRows" :key="row.y">
+            <SemanticResultCard
+              v-for="item in row.items"
+              :key="item.id"
+              :item="item"
+              :cache-dir="cacheDir"
+              :style="{
+                position: 'absolute',
+                top: `${item.offsetY}px`,
+                left: `${item.offsetX}px`,
+                width: `${item.scaledWidth}px`,
+                height: `${item.scaledHeight}px`
+              }"
+              @click="emit('item-click', item)"
+            />
+          </template>
         </div>
       </div>
 
@@ -118,18 +131,22 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted, watch, shallowRef, computed } from 'vue'
 import { Sparkles, Zap, Square, RefreshCw, AlertCircle, Search } from '@lucide/vue'
 import { appDataDir, join } from '@tauri-apps/api/path'
 import { useAiStore } from '../../stores/aiStore'
+import { useUiStore } from '../../stores/uiStore'
 import SemanticResultCard from './SemanticResultCard.vue'
 import type { SemanticSearchResult } from '../../types/ai'
+import type { SearchResult } from '../../types/media'
+import { computeJustifiedLayout, type LayoutRowResult } from '../../utils/justifiedLayout'
 
 const emit = defineEmits<{
-  (e: 'item-click', item: SemanticSearchResult): void
+  (e: 'item-click', item: SemanticSearchResult | SearchResult): void
 }>()
 
 const ai = useAiStore()
+const uiStore = useUiStore()
 const isInitialising = ref(false)
 
 // Resolve cache directory (same logic as MediaGrid.vue)
@@ -153,6 +170,67 @@ async function initAndStart() {
     isInitialising.value = false
   }
 }
+
+// ── Justified Layout ──────────────────────────────────────────────────────
+type CombinedSearchResult = SemanticSearchResult | SearchResult
+
+const resultsContainerRef = ref<HTMLElement | null>(null)
+const layoutRows = shallowRef<LayoutRowResult<CombinedSearchResult & { w: number, h: number }>[]>([])
+const totalHeight = ref(0)
+let resizeObserver: ResizeObserver | null = null
+
+const currentResults = computed<CombinedSearchResult[]>(() => {
+  return ai.isSemanticMode ? ai.semanticResults : ai.standardResults
+})
+
+function updateLayout() {
+  if (!resultsContainerRef.value || currentResults.value.length === 0) {
+    layoutRows.value = []
+    totalHeight.value = 0
+    return
+  }
+  const cw = resultsContainerRef.value.clientWidth - 32 // padding
+  if (cw <= 0) return
+
+  const items = currentResults.value.map((item: CombinedSearchResult) => ({
+    ...item,
+    w: item.width || 1,
+    h: item.height || 1,
+  }))
+
+  const rows = computeJustifiedLayout(items, cw, uiStore.gridRowHeight, 4)
+  layoutRows.value = rows
+  
+  if (rows.length > 0) {
+    const lastRow = rows[rows.length - 1]
+    totalHeight.value = lastRow.y + lastRow.height
+  } else {
+    totalHeight.value = 0
+  }
+}
+
+watch(currentResults, updateLayout, { deep: false })
+watch(() => uiStore.gridRowHeight, updateLayout)
+
+onMounted(() => {
+  resizeObserver = new ResizeObserver(() => {
+    updateLayout()
+  })
+  if (resultsContainerRef.value) {
+    resizeObserver.observe(resultsContainerRef.value)
+  }
+})
+
+watch(resultsContainerRef, (el) => {
+  if (resizeObserver) {
+    resizeObserver.disconnect()
+    if (el) resizeObserver.observe(el)
+  }
+})
+
+onUnmounted(() => {
+  if (resizeObserver) resizeObserver.disconnect()
+})
 </script>
 
 <style scoped>
@@ -344,10 +422,10 @@ async function initAndStart() {
 .semantic-panel__results-meta {
   font-size: var(--font-size-xs);
   color: var(--color-text-tertiary);
+  margin-bottom: var(--spacing-md);
 }
-.semantic-panel__grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: var(--spacing-sm);
+.semantic-panel__justified {
+  position: relative;
+  width: 100%;
 }
 </style>

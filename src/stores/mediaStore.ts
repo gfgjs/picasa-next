@@ -27,6 +27,10 @@ export const useMediaStore = defineStore('media', () => {
   // ── 统计 ────────────────────────────────────────────────────────────────
   const stats           = ref<AppStats | null>(null)
 
+  // Navigation Context for detail overlay (used when opening from search results)
+  // 详情覆盖层的导航上下文（从搜索结果打开时使用）
+  const navigationContext = ref<number[] | null>(null)
+
   // ── Computed ─────────────────────────────────────────────────────────────
   // ── 计算属性 ─────────────────────────────────────────────────────────────
   const totalItems   = computed(() => stats.value?.totalItems ?? 0)
@@ -38,11 +42,12 @@ export const useMediaStore = defineStore('media', () => {
   // ── 动作 ───────────────────────────────────────────────────────────────
 
   async function computeLayout(params: {
-    directoryId?:    number | null
-    filters?:        Record<string, unknown>
-    containerWidth:  number
-    rowHeight?:      number
-    gap?:            number
+    directoryId?: number | null
+    filters?: import('../types/media').MediaFilter
+    containerWidth: number
+    rowHeight: number
+    gap: number
+    groupBy?: string
   }) {
 
     if (params.containerWidth < 100) {
@@ -59,6 +64,7 @@ export const useMediaStore = defineStore('media', () => {
           containerWidth: params.containerWidth,
           rowHeight:     params.rowHeight ?? DEFAULTS.GRID_ROW_HEIGHT,
           gap:           params.gap ?? DEFAULTS.GRID_GAP,
+          groupBy:       params.groupBy ?? 'date',
         }
       })
 
@@ -103,6 +109,14 @@ export const useMediaStore = defineStore('media', () => {
     }
   }
 
+  function setNavigationContext(ids: number[]) {
+    navigationContext.value = ids
+  }
+
+  function clearNavigationContext() {
+    navigationContext.value = null
+  }
+
   async function openDetail(id: number) {
     detailItem.value = await invoke<MediaDetail>(IPC.GET_MEDIA_DETAIL, { id })
     isDetailOpen.value = true
@@ -110,6 +124,28 @@ export const useMediaStore = defineStore('media', () => {
 
   async function navigateDetail(offset: number) {
     if (!detailItem.value) return
+
+    // If we have a frontend navigation context (e.g. from search results), use it first
+    // 如果我们有前端导航上下文（例如来自搜索结果），则优先使用它
+    if (navigationContext.value) {
+      const idx = navigationContext.value.indexOf(detailItem.value.id)
+      if (idx !== -1) {
+        const nextIdx = idx + offset
+        if (nextIdx >= 0 && nextIdx < navigationContext.value.length) {
+          const nextId = navigationContext.value[nextIdx]
+          try {
+            const adj = await invoke<MediaDetail>(IPC.GET_MEDIA_DETAIL, { id: nextId })
+            detailItem.value = adj
+          } catch (e) {
+            console.error('[MediaStore] Error loading adjacent item from context:', e)
+          }
+        }
+        return // handled by context
+      }
+    }
+
+    // Otherwise fallback to backend global layout order
+    // 否则回退到后端全局布局顺序
     const adj = await invoke<MediaDetail | null>('get_adjacent_media', { 
       currentId: detailItem.value.id, 
       offset 
@@ -122,6 +158,7 @@ export const useMediaStore = defineStore('media', () => {
   function closeDetail() {
     isDetailOpen.value = false
     detailItem.value   = null
+    navigationContext.value = null
   }
 
   async function loadStats() {
@@ -154,10 +191,11 @@ export const useMediaStore = defineStore('media', () => {
 
   return {
     layoutSummary, rowCache, isComputingLayout, layoutDirty,
-    detailItem, isDetailOpen,
+    detailItem, isDetailOpen, navigationContext,
     stats,
     totalItems, totalHeight, totalRows, layoutVersion,
     computeLayout, fetchRows, fetchRowsByY, openDetail, closeDetail, navigateDetail,
+    setNavigationContext, clearNavigationContext,
     loadStats, toggleFavorite, setRating, invalidateLayout, consumeLayoutDirty,
   }
 })

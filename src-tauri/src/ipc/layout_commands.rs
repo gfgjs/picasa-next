@@ -10,7 +10,7 @@ use crate::db::models::MediaFilter;
 use crate::db::queries::query_layout_items;
 use crate::error::{AppError, Result};
 use crate::layout::cache::{get_rows, get_summary, store_layout, LayoutSummary};
-use crate::layout::justified::{compute_justified_layout, LayoutParams, LayoutRow};
+use crate::layout::justified::{compute_justified_layout, GroupBy, LayoutParams, LayoutRow};
 use crate::state::AppState;
 
 /// Parameters for layout computation.
@@ -23,6 +23,7 @@ pub struct ComputeLayoutParams {
     pub container_width: f64,
     pub row_height:      f64,
     pub gap:             f64,
+    pub group_by:        Option<GroupBy>,
 }
 
 /// Compute the Justified Layout for the given filters.
@@ -46,10 +47,22 @@ pub async fn compute_layout(
 
     // Query layout items from the read pool
     // 从读取池查询布局项
-    let items = {
+    let mut items = {
         let pool = state.db_read_pool.get().map_err(AppError::from)?;
         query_layout_items(&pool, &filter)?
     };
+
+    let group_by = params.group_by.unwrap_or(GroupBy::Date);
+
+    // If grouping by folder, stably sort by directory relative path
+    // 这样可以保留原有的时间/文件名排序（因为 sort_by 是稳定排序）
+    if group_by == GroupBy::Folder {
+        items.sort_by(|a, b| {
+            let rel_a = a.dir_rel_path.as_deref().unwrap_or("");
+            let rel_b = b.dir_rel_path.as_deref().unwrap_or("");
+            rel_a.cmp(rel_b)
+        });
+    }
 
     if items.is_empty() {
         // Store empty layout
@@ -68,6 +81,7 @@ pub async fn compute_layout(
         container_width:  params.container_width.max(100.0),
         target_row_height: params.row_height.max(50.0),
         gap:               params.gap.max(0.0),
+        group_by,
     };
 
     let rows: Vec<LayoutRow> = tokio::task::spawn_blocking(move || {

@@ -54,6 +54,7 @@ export function useJustifiedLayout(containerWidthRef: () => number) {
       // 使用响应式行高，范围 60-960px | Use reactive row height (60-960px)
       rowHeight:      ui.gridRowHeight,
       gap:            DEFAULTS.GRID_GAP,
+      groupBy:        ui.groupBy,
     })
   }
 
@@ -80,6 +81,8 @@ export function useJustifiedLayout(containerWidthRef: () => number) {
       () => ui.activeDirectoryId,
       // 行高变化时重新计算布局 | Re-compute when row height changes
       () => ui.gridRowHeight,
+      // 分组变化 | Group by changes
+      () => ui.groupBy,
       // 文件夹内排序变化 | Folder sort changes
       () => ui.folderSortBy,
       () => ui.folderSortOrder,

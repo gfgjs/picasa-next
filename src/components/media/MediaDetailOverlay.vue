@@ -238,7 +238,7 @@ const absPath = computed(() => detail.value ? convertFileSrc(detail.value.absPat
 const state = useMediaDetail()
 
 const viewerRef = ref<HTMLElement | null>(null)
-const imgRef = ref<HTMLImageElement | null>(null)
+const imgRef = ref<HTMLImageElement | HTMLVideoElement | null>(null)
 
 const zoomModeTitle = computed(() => {
   switch (state.zoomMode.value) {
@@ -255,8 +255,8 @@ function handleToggleZoom() {
     state.resetZoom()
     return
   }
-  const iw = imgRef.value.naturalWidth
-  const ih = imgRef.value.naturalHeight
+  const iw = ('naturalWidth' in imgRef.value) ? imgRef.value.naturalWidth : (imgRef.value as HTMLVideoElement).videoWidth
+  const ih = ('naturalHeight' in imgRef.value) ? imgRef.value.naturalHeight : (imgRef.value as HTMLVideoElement).videoHeight
   const cw = viewerRef.value.clientWidth
   const ch = viewerRef.value.clientHeight
   if (!iw || !ih || !cw || !ch) {

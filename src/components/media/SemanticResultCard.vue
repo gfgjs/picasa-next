@@ -3,7 +3,7 @@
   <!-- 单个语义搜索结果卡片 -->
   <button
     class="result-card"
-    :title="`${item.fileName} · 相似度 ${similarityPercent}%`"
+    :title="hasSimilarity ? `${item.fileName} · 相似度 ${similarityPercent}%` : item.fileName"
     @click="emit('click', item)"
   >
     <!-- Thumbnail -->
@@ -22,7 +22,7 @@
 
       <!-- Similarity badge -->
       <!-- 相似度徽章 -->
-      <div class="result-card__badge" :class="badgeClass">
+      <div v-if="hasSimilarity" class="result-card__badge" :class="badgeClass">
         {{ similarityPercent }}%
       </div>
     </div>
@@ -37,14 +37,15 @@ import { computed } from 'vue'
 import { ImageIcon } from '@lucide/vue'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import type { SemanticSearchResult } from '../../types/ai'
+import type { SearchResult } from '../../types/media'
 
 const props = defineProps<{
-  item: SemanticSearchResult
+  item: SemanticSearchResult | SearchResult
   /** Absolute path to app cache dir (e.g. C:/Users/.../AppData/.../cache) */
   /** 应用缓存目录的绝对路径 */
   cacheDir?: string
 }>()
-const emit = defineEmits<{ (e: 'click', item: SemanticSearchResult): void }>()
+const emit = defineEmits<{ (e: 'click', item: SemanticSearchResult | SearchResult): void }>()
 
 /**
  * Resolve thumb_path to a displayable URL, mirroring MediaThumb.vue's logic:
@@ -79,9 +80,12 @@ const thumbSrc = computed(() => {
   }
 })
 
+const hasSimilarity = computed(() => 'similarity' in props.item)
+
 // Map raw cosine similarity [0.20, 0.35] to [10, 99] for better UX UX
 // 映射原始的余弦相似度到对用户更友好的百分比，避免误解
 const similarityPercent = computed(() => {
+  if (!('similarity' in props.item)) return 0
   const raw = props.item.similarity
   // Clip's raw cosine similarity rarely exceeds 0.35 for cross-modal tasks
   const minVal = 0.20

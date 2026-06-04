@@ -45,6 +45,19 @@ export const useScanStore = defineStore('scan', () => {
     return root
   }
 
+  async function checkFolderOverlap(path: string): Promise<ScanRoot[]> {
+    return await invoke<ScanRoot[]>('check_folder_overlap', { path })
+  }
+
+  async function mergeScanRoots(newPath: string, alias: string | null, overlappingIds: number[]): Promise<ScanRoot> {
+    const root = await invoke<ScanRoot>('merge_scan_roots', { newPath, alias, overlappingIds })
+    scanRoots.value = scanRoots.value.filter(r => !overlappingIds.includes(r.id))
+    if (!scanRoots.value.some(r => r.id === root.id)) {
+      scanRoots.value.push(root)
+    }
+    return root
+  }
+
   async function removeScanRoot(id: number) {
     await invoke(IPC.REMOVE_SCAN_ROOT, { id })
     scanRoots.value = scanRoots.value.filter(r => r.id !== id)
@@ -176,7 +189,7 @@ export const useScanStore = defineStore('scan', () => {
   return {
     scanRoots, progressMap, isLoadingRoots,
     hasScanRoots, isAnyScanRunning,
-    loadScanRoots, addScanRoot, removeScanRoot,
+    loadScanRoots, addScanRoot, checkFolderOverlap, mergeScanRoots, removeScanRoot,
     startScan, stopScan, getProgress, clearDatabase,
     thumbGenProgress, startFullThumbnailGeneration, stopFullThumbnailGeneration,
     autoThumbQueueSize, autoThumbInFlight

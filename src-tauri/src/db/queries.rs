@@ -76,6 +76,9 @@ fn map_layout_item(row: &Row<'_>) -> rusqlite::Result<LayoutItem> {
         thumb_status:  row.get(9)?,
         thumb_path:    row.get(10)?,
         thumbhash:     row.get(11)?,
+        directory_id:  row.get(12)?,
+        dir_rel_path:  row.get(13)?,
+        dir_name:      row.get(14)?,
     })
 }
 
@@ -173,7 +176,8 @@ pub fn upsert_directory(
         "INSERT INTO directories (root_id, parent_id, rel_path, name, depth, mtime)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)
          ON CONFLICT(root_id, rel_path) DO UPDATE SET
-             name=excluded.name, mtime=excluded.mtime",
+             name=excluded.name, mtime=excluded.mtime,
+             parent_id=excluded.parent_id, depth=excluded.depth",
         params![root_id, parent_id, rel_path, name, depth, mtime],
     )?;
     // After upsert, get the id (may have existed before)
@@ -391,10 +395,12 @@ pub fn query_layout_items(
     filter: &MediaFilter,
 ) -> Result<Vec<LayoutItem>> {
     let mut sql = String::from(
-        "SELECT id, width, height, file_size, sort_datetime, file_format, media_type, is_live_photo,
-                duration_ms, thumb_status, thumb_path, thumbhash
-         FROM media_items
-         WHERE is_deleted=0 AND companion_of IS NULL",
+        "SELECT m.id, m.width, m.height, m.file_size, m.sort_datetime, m.file_format, m.media_type, m.is_live_photo,
+                m.duration_ms, m.thumb_status, m.thumb_path, m.thumbhash,
+                m.directory_id, d.rel_path, d.name
+         FROM media_items m
+         LEFT JOIN directories d ON m.directory_id = d.id
+         WHERE m.is_deleted=0 AND m.companion_of IS NULL",
     );
 
     let mut param_idx = 0usize;
@@ -402,7 +408,7 @@ pub fn query_layout_items(
 
     if let Some(dir_id) = filter.directory_id {
         param_idx += 1;
-        sql.push_str(&format!(" AND directory_id IN (
+        sql.push_str(&format!(" AND m.directory_id IN (
             WITH RECURSIVE dir_tree(id) AS (
                 SELECT ?{param_idx}
                 UNION ALL
@@ -421,7 +427,7 @@ pub fn query_layout_items(
                 .enumerate()
                 .map(|(i, _)| format!("?{}", param_idx + i + 1))
                 .collect();
-            sql.push_str(&format!(" AND media_type IN ({})", placeholders.join(",")));
+            sql.push_str(&format!(" AND m.media_type IN ({})", placeholders.join(",")));
             for t in types {
                 extras.push(Box::new(t.clone()));
             }
@@ -430,32 +436,32 @@ pub fn query_layout_items(
     }
 
     if filter.favorited_only == Some(true) {
-        sql.push_str(" AND is_favorited=1");
+        sql.push_str(" AND m.is_favorited=1");
     }
 
     if let Some(min_r) = filter.min_rating {
         param_idx += 1;
-        sql.push_str(&format!(" AND rating >= ?{param_idx}"));
+        sql.push_str(&format!(" AND m.rating >= ?{param_idx}"));
         extras.push(Box::new(min_r));
     }
 
     if let Some(ref dr) = filter.date_range {
         param_idx += 1;
-        sql.push_str(&format!(" AND sort_datetime >= ?{param_idx}"));
+        sql.push_str(&format!(" AND m.sort_datetime >= ?{param_idx}"));
         extras.push(Box::new(dr.from));
         param_idx += 1;
-        sql.push_str(&format!(" AND sort_datetime <= ?{param_idx}"));
+        sql.push_str(&format!(" AND m.sort_datetime <= ?{param_idx}"));
         extras.push(Box::new(dr.to));
     }
 
     if filter.live_photo_only == Some(true) {
-        sql.push_str(" AND is_live_photo=1");
+        sql.push_str(" AND m.is_live_photo=1");
     }
 
     // 排序列白名单校验（防 SQL 注入）| Whitelist-validated sort column (SQL injection prevention)
     let sort_col = match filter.sort_by.as_deref().unwrap_or("sort_datetime") {
-        "file_name" => "file_name",
-        _           => "sort_datetime",
+        "file_name" => "m.file_name",
+        _           => "m.sort_datetime",
     };
     let sort_dir = match filter.sort_order.as_deref().unwrap_or("desc") {
         "asc" => "ASC",
@@ -787,7 +793,7 @@ pub fn search_media(
 ) -> Result<Vec<SearchResult>> {
     let pattern = format!("%{query}%");
     let mut sql = String::from(
-        "SELECT id, file_name, media_type, thumb_path, thumbhash, thumb_status
+        "SELECT id, file_name, media_type, thumb_path, thumbhash, thumb_status, width, height
          FROM media_items
          WHERE is_deleted=0 AND companion_of IS NULL AND file_name LIKE ?1",
     );
@@ -838,6 +844,8 @@ pub fn search_media(
             thumb_path:   row.get(3)?,
             thumbhash:    row.get(4)?,
             thumb_status: row.get(5)?,
+            width:        row.get(6)?,
+            height:       row.get(7)?,
         })
     })?;
     rows.map(|r| r.map_err(AppError::from)).collect()
@@ -1096,7 +1104,8 @@ pub fn get_search_results_by_ids(
                 CASE
                     WHEN m.thumb_path IS NULL THEN 3
                     ELSE m.thumb_status
-                END AS thumb_status
+                END AS thumb_status,
+                m.width, m.height
          FROM media_items m
          JOIN directories d ON m.directory_id = d.id
          JOIN scan_roots r ON d.root_id = r.id
@@ -1113,6 +1122,8 @@ pub fn get_search_results_by_ids(
             thumb_path:   row.get(3)?,
             thumbhash:    row.get(4)?,
             thumb_status: row.get(5)?,
+            width:        row.get(6)?,
+            height:       row.get(7)?,
         })
     })?;
     rows.map(|r| r.map_err(AppError::from)).collect()

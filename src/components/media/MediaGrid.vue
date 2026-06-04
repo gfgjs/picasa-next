@@ -75,11 +75,13 @@
               :file-format="item.fileFormat"
               :file-size="item.fileSize"
               :cache-dir="cacheDir"
+              :is-favorited="item.isFavorited"
               :is-selected="selection.selectedIds.has(item.id)"
               :is-selection-mode="selection.isSelectionMode"
               @select="onCheckboxClick(item.id)"
               @request-thumb="onRequestThumb"
               @cancel-thumb="onCancelThumb"
+              @favorite="handleFavorite"
             />
           </div>
         </template>
@@ -277,7 +279,11 @@ function scrollGridToBottom() {
 const containerWidth = ref(0)
 let resizeObserver: ResizeObserver | null = null
 
-const { compute, onResize } = useJustifiedLayout(() => containerWidth.value)
+// 网格内容的左右内边距 (px)，用于覆盖 scale(1.06) 约 6px 的溢出量
+// Horizontal padding for the grid content to absorb scale(1.06) bleed
+const GRID_PADDING = 12
+
+const { compute, onResize } = useJustifiedLayout(() => containerWidth.value - GRID_PADDING * 2)
 
 onMounted(async () => {
   // Get cache dir from Tauri
@@ -299,7 +305,7 @@ onMounted(async () => {
     // 忽略亚像素更改（通常由滚动条渲染故障引起）
     if (w > 0 && Math.abs(w - containerWidth.value) > 1) {
       containerWidth.value = w
-      onResize(w)
+      onResize(w - GRID_PADDING * 2)
     }
   })
   if (gridRef.value) resizeObserver.observe(gridRef.value)
@@ -355,7 +361,23 @@ onBeforeUnmount(() => {
 // ── Detail ─────────────────────────────────────────────────────────────────
 // ── 详情 ─────────────────────────────────────────────────────────────────
 
-
+async function handleFavorite(id: number) {
+  const newVal = await media.toggleFavorite(id)
+  // 同步更新可见行中的收藏状态 / sync isFavorited in visible rows
+  for (const row of visibleRows.value) {
+    if ((row as any).items) {
+      const item = (row as any).items.find((it: any) => it.id === id)
+      if (item) {
+        item.isFavorited = newVal
+        break
+      }
+    }
+  }
+  // 收藏视图中切换后需移除该项，触发重新布局 / remove item from favorites view
+  if (ui.activeSmartAlbum === 'favorites') {
+    await compute()
+  }
+}
 
 // ── Listen to enrichment events ────────────────────────────────────────────
 // ── 监听增强事件 ────────────────────────────────────────────
@@ -452,6 +474,10 @@ watch(
 .media-grid__content {
   position: relative;
   width: 100%;
+  /* 左右内边距：覆盖 scale(1.06) 约 6px 的溢出量，避免悬停时卡片被裁剪 */
+  /* Horizontal padding: absorbs ~6px bleed from scale(1.06) hover effect */
+  padding: 0 12px;
+  box-sizing: border-box;
 }
 
 .media-grid__loading {
@@ -477,7 +503,8 @@ watch(
   font-weight: 600;
   color: var(--color-text-primary);
   align-items: center;
-  padding-left: var(--spacing-sm);
+  /* 与图片左边缘对齐（考虑网格内边距） / align with photo left edge */
+  padding-left: calc(var(--spacing-sm) + 12px);
 }
 
 .media-card {

@@ -1,8 +1,10 @@
 <template>
+  <!-- 设置页面容器：flex 列布局，height:100% 确保独立滚动上下文 -->
   <div class="settings-view">
+    <!-- sticky header: position:sticky + backdrop-filter 磨砂玻璃效果 -->
     <header class="settings-header">
       <h1 class="settings-title">{{ $t('settings.title') }}</h1>
-      <button class="btn-close" title="关闭设置" @click="closeSettings"><X :size="18" /></button>
+      <button class="btn-close" title="关闭设置 (ESC)" @click="closeSettings"><X :size="18" /></button>
     </header>
 
     <main class="settings-content">
@@ -344,7 +346,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { invoke } from '@tauri-apps/api/core'
 import { useUiStore } from '../stores/uiStore'
@@ -386,7 +388,12 @@ const thumbGenPercent = computed(() => {
   return Math.min(100, Math.round((generated / total) * 100))
 })
 
+// ESC 键关闭设置页面 / Close settings on ESC key
+function onKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape') closeSettings()
+}
 onMounted(async () => {
+  document.addEventListener('keydown', onKeydown)
   try {
     const val1 = await invoke<string | null>('get_app_config', { key: 'thumb_skip_max_kb' })
     if (val1) thumbSkipMaxKb.value = parseInt(val1, 10)
@@ -444,6 +451,10 @@ onMounted(async () => {
   } catch (e) {
     console.error('Failed to get config:', e)
   }
+})
+
+onUnmounted(() => {
+  document.removeEventListener('keydown', onKeydown)
 })
 
 async function saveConfig(key: string, value: string) {
@@ -617,11 +628,13 @@ function closeSettings() {
   flex: 1;
   display: flex;
   flex-direction: column;
+  /* 独立滚动上下文 / independent scroll context */
   height: 100%;
-  background: var(--color-bg-primary);
   overflow-y: auto;
+  background: var(--color-bg-primary);
 }
 
+/* 顶部固定头部：sticky + 磨砂玻璃 / sticky header with glassmorphism */
 .settings-header {
   display: flex;
   justify-content: space-between;
@@ -629,6 +642,13 @@ function closeSettings() {
   padding: var(--spacing-lg) var(--spacing-xl);
   border-bottom: 1px solid var(--color-border);
   flex-shrink: 0;
+  /* sticky 定位，随内容区滚动保持顶部固定 */
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  background: color-mix(in srgb, var(--color-bg-primary) 85%, transparent);
 }
 
 .settings-title {

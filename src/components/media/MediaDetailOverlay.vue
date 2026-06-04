@@ -66,6 +66,8 @@
           <div class="detail-controls__left">
             <button class="btn-icon" @click="close" :title="$t('detail.close')"><X :size="18" /></button>
             <button class="btn-icon" @click="state.zoomIn()" :title="$t('detail.zoomIn')"><ZoomIn :size="18" /></button>
+            <!-- 缩放百分比显示 / zoom percentage indicator -->
+            <span class="detail-zoom-pct">{{ Math.round(state.scale.value * 100) }}%</span>
             <button class="btn-icon" @click="state.zoomOut()" :title="$t('detail.zoomOut')"><ZoomOut :size="18" /></button>
             <button class="btn-icon" @click="handleToggleZoom" :title="zoomModeTitle">
               <Maximize v-if="state.zoomMode.value === 'auto'" :size="18" />
@@ -447,6 +449,16 @@ async function toggleLive() {
 }
 .detail-controls .btn-icon:hover { color: #fff; background: rgba(255,255,255,0.12); }
 .detail-controls .btn-icon.active { color: var(--color-accent); }
+/* 缩放百分比指示器 / zoom percentage indicator */
+.detail-zoom-pct {
+  font-size: var(--font-size-xs);
+  color: rgba(255,255,255,0.75);
+  font-variant-numeric: tabular-nums;
+  min-width: 44px;
+  text-align: center;
+  letter-spacing: 0.01em;
+  user-select: none;
+}
 .detail-controls__center {
   flex: 1;
   text-align: center;

@@ -96,7 +96,17 @@
     <section class="sidebar__section sidebar__section--tree">
       <div class="sidebar__section-label">
         <span>{{ $t('sidebar.folders') }}</span>
-        <button class="btn-icon" :title="$t('sidebar.addFolder')" @click="addRoot"><FolderPlus :size="16" /></button>
+        <!-- 显示全部按鈕：清除文件夹选择。选中时高亮，未选时灰色 -->
+        <!-- Show-all button: clears folder selection. Highlighted when active -->
+        <div class="sidebar__section-label-actions">
+          <button
+            class="btn-icon sidebar__show-all-btn"
+            :class="{ active: !ui.activeDirectoryId }"
+            :title="$t('sidebar.showAll') || '显示全部'"
+            @click="showAll"
+          >{{ $t('sidebar.showAll') || '全部' }}</button>
+          <button class="btn-icon" :title="$t('sidebar.addFolder')" @click="addRoot"><FolderPlus :size="16" /></button>
+        </div>
       </div>
 
       <div v-if="folderTree.nodes.value.length === 0 && !scan.hasScanRoots" class="sidebar__empty">
@@ -345,6 +355,12 @@ async function toggleScan(rootId: number) {
   }
 }
 
+// \u663e\u793a\u5168\u90e8\uff1a\u53d6\u6d88\u6587\u4ef6\u5939\u9009\u62e9\uff0c\u8fd4\u56de\u5168\u90e8\u7167\u7247\u89c6\u56fe / Show all: clear folder selection, return to all-photos view
+function showAll() {
+  ui.setSmartAlbum('all')
+  if (route.path !== '/') router.push('/')
+}
+
 async function addRoot() {
   try {
     const selected = await open({
@@ -467,6 +483,30 @@ onMounted(async () => {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--color-text-tertiary);
+}
+/* \u6807\u9898\u884c\u53f3\u4fa7\u64cd\u4f5c\u6309\u9215\u7ec4 / label row right-side actions group */
+.sidebar__section-label-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+/* \u663e\u793a\u5168\u90e8\u6309\u9215 / show-all toggle button */
+.sidebar__show-all-btn {
+  font-size: var(--font-size-xs);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-tertiary);
+  opacity: 0.8;
+  transition: color var(--transition-fast), opacity var(--transition-fast);
+}
+.sidebar__show-all-btn:hover {
+  color: var(--color-text-primary);
+  opacity: 1;
+}
+/* \u6d3b\u8dc3\u72b6\u6001\uff1a\u5f53\u524d\u65e0\u6587\u4ef6\u5939\u9009\u4e2d\u65f6\u9ad8\u4eae / active: highlighted when no folder selected */
+.sidebar__show-all-btn.active {
+  color: var(--color-accent);
+  opacity: 1;
 }
 .sidebar__divider {
   height: 1px;

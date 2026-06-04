@@ -96,7 +96,16 @@
     <section class="sidebar__section sidebar__section--tree">
       <div class="sidebar__section-label">
         <span>{{ $t('sidebar.folders') }}</span>
-        <button class="btn-icon" :title="$t('sidebar.addFolder')" @click="addRoot"><FolderPlus :size="16" /></button>
+        <div style="display: flex; align-items: center; gap: 4px;">
+          <!-- 显示全部按钮 | Show-all button to clear folder selection -->
+          <button
+            class="btn-icon sidebar__show-all-btn"
+            :class="{ active: !ui.activeDirectoryId && ui.activeSmartAlbum === 'all' }"
+            :title="$t('sidebar.allPhotos') + ' (显示全部)'" 
+            @click="showAll"
+          >{{ $t('sidebar.allPhotos').slice(0, 2) || '全部' }}</button>
+          <button class="btn-icon" :title="$t('sidebar.addFolder')" @click="addRoot"><FolderPlus :size="16" /></button>
+        </div>
       </div>
 
       <div v-if="folderTree.nodes.value.length === 0 && !scan.hasScanRoots" class="sidebar__empty">
@@ -248,6 +257,15 @@ function onNodeClick(node: any) {
 
 function handleSmartAlbumClick(albumId: string) {
   ui.setSmartAlbum(albumId as any)
+  if (route.path !== '/') {
+    router.push('/')
+  }
+}
+
+// 显示全部：清空文件夹选择，切换到全量照片视图 | Show all: clear folder selection, switch to all photos
+function showAll() {
+  ui.setSmartAlbum('all')
+  ui.setActiveDirectory(null)
   if (route.path !== '/') {
     router.push('/')
   }
@@ -627,5 +645,22 @@ onMounted(async () => {
 .sidebar__tree-chevron-spacer {
   width: 14px;
   flex-shrink: 0;
+}
+
+/* 显示全部按钮 | Show-all button */
+.sidebar__show-all-btn {
+  font-size: var(--font-size-xs);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-tertiary);
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+.sidebar__show-all-btn:hover {
+  color: var(--color-text-primary);
+  background: var(--color-sidebar-hover-bg);
+}
+.sidebar__show-all-btn.active {
+  color: var(--color-accent);
+  font-weight: 600;
 }
 </style>

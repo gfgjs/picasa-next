@@ -345,7 +345,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { invoke } from '@tauri-apps/api/core'
 import { useUiStore } from '../stores/uiStore'
@@ -387,7 +387,12 @@ const thumbGenPercent = computed(() => {
   return Math.min(100, Math.round((generated / total) * 100))
 })
 
+// ESC 快捷键：按下 Escape 关闭设置页 | ESC shortcut: close settings on Escape
+function onKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape') closeSettings()
+}
 onMounted(async () => {
+  document.addEventListener('keydown', onKeydown)
   try {
     const val1 = await invoke<string | null>('get_app_config', { key: 'thumb_skip_max_kb' })
     if (val1) thumbSkipMaxKb.value = parseInt(val1, 10)
@@ -445,6 +450,10 @@ onMounted(async () => {
   } catch (e) {
     console.error('Failed to get config:', e)
   }
+})
+
+onUnmounted(() => {
+  document.removeEventListener('keydown', onKeydown)
 })
 
 async function saveConfig(key: string, value: string) {
@@ -620,6 +629,7 @@ function closeSettings() {
   flex-direction: column;
   height: 100%;
   background: var(--color-bg-primary);
+  /* 独立滚动上下文，使 sticky header 生效 | Independent scroll context for sticky header */
   overflow-y: auto;
 }
 
@@ -630,6 +640,13 @@ function closeSettings() {
   padding: var(--spacing-lg) var(--spacing-xl);
   border-bottom: 1px solid var(--color-border);
   flex-shrink: 0;
+  /* 顶部固定，毛玻璃效果 | Sticky top with glassmorphism */
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  background: rgba(var(--color-bg-primary-rgb, 18, 18, 18), 0.85);
 }
 
 .settings-title {

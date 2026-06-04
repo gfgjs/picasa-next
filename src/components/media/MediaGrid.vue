@@ -37,8 +37,8 @@
           top: 0,
           transform: `translate3d(0, ${(row as any).y}px, 0)`,
           willChange: 'transform',
-          left: 0,
-          right: 0,
+          left: '12px',
+          right: '12px',
           height: (row as any).height + 'px',
           gap: row.rowType === 'separator' ? undefined : GAP + 'px'
         }"
@@ -74,6 +74,7 @@
               :cache-dir="cacheDir"
               @request-thumb="onRequestThumb"
               @cancel-thumb="onCancelThumb"
+              @favorite="handleFavorite"
             />
           </div>
         </template>
@@ -209,13 +210,14 @@ onMounted(async () => {
   // Read container width immediately
   // 立即读取容器宽度
   if (gridRef.value) {
-    containerWidth.value = gridRef.value.clientWidth
+    // 减去左右各 12px 的内边距，与布局计算对齐 | Subtract 12px×2 side padding from layout width
+    containerWidth.value = gridRef.value.clientWidth - 24
   } else {
     console.warn('[MediaGrid] onMounted: gridRef is null!')
   }
 
   resizeObserver = new ResizeObserver(entries => {
-    const w = entries[0].contentRect.width
+    const w = entries[0].contentRect.width - 24
     // Ignore sub-pixel changes (often caused by scrollbar rendering glitches)
     // 忽略亚像素更改（通常由滚动条渲染故障引起）
     if (w > 0 && Math.abs(w - containerWidth.value) > 1) {
@@ -278,6 +280,25 @@ onBeforeUnmount(() => {
 
 function openDetail(id: number) {
   media.openDetail(id)
+}
+
+// 处理来自 MediaThumb 的收藏切换事件 | Handle favorite toggle from MediaThumb
+async function handleFavorite(id: number) {
+  const newVal = await media.toggleFavorite(id)
+  // 更新 visibleRows 中对应项的收藏状态 | Update isFavorited in the visible rows cache
+  for (const row of visibleRows.value) {
+    if ((row as any).items) {
+      const item = (row as any).items.find((it: any) => it.id === id)
+      if (item) {
+        item.isFavorited = newVal
+        break
+      }
+    }
+  }
+  // 如果当前在收藏视图，取消收藏后重新计算布局 | In favorites view, recompute layout after unfavoriting
+  if (ui.activeSmartAlbum === 'favorites' && !newVal) {
+    await compute()
+  }
 }
 
 // ── Listen to enrichment events ────────────────────────────────────────────

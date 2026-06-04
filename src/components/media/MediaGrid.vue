@@ -236,38 +236,35 @@ function onCheckboxClick(id: number) {
 
 function onCardMouseDown(e: MouseEvent, id: number) {
   if (e.button !== 0) return // Only left click
-  
+
   if (e.ctrlKey || e.metaKey || e.shiftKey) {
     selection.toggleSelection(id)
     return
   }
 
-  isDraggingSelection = true
-  dragStartId = id
+  // 立即决定拖拽方向（选中 or 取消）并选中起始卡片 /
+  // Immediately determine drag direction and toggle the starting card.
   dragSelectState = !selection.selectedIds.has(id)
+  if (dragSelectState) selection.selectItem(id)
+  else selection.deselectItem(id)
+
+  isDraggingSelection = true
+  dragStartId = null  // 起始卡片已处理，无需在 mouseenter 重复处理 / starting card done, no re-process needed
 }
 
 function onCardMouseEnter(e: MouseEvent, id: number) {
-  // e.buttons bitmask: 1 = Left click. If it's not pressed, stop dragging.
+  // e.buttons bitmask: 1 = Left button held. Stop dragging if released.
+  // e.buttons 位模板：1 = 左键按下。如果已松开则停止拖拽。
   if ((e.buttons & 1) === 0) {
     isDraggingSelection = false
-    dragStartId = null
     return
   }
 
-  if (isDraggingSelection) {
-    if (dragStartId !== null) {
-      if (dragSelectState) selection.selectItem(dragStartId)
-      else selection.deselectItem(dragStartId)
-      dragStartId = null
-    }
-    
-    if (dragSelectState) {
-      selection.selectItem(id)
-    } else {
-      selection.deselectItem(id)
-    }
-  }
+  if (!isDraggingSelection) return
+
+  // 划过任意一张卡片即可触发 / Any card entered while dragging gets toggled.
+  if (dragSelectState) selection.selectItem(id)
+  else selection.deselectItem(id)
 }
 
 function onCardMouseUp() {
@@ -578,6 +575,13 @@ watch(
     transform 220ms cubic-bezier(0.34, 1.18, 0.64, 1),
     box-shadow 220ms ease,
     z-index 0ms 0ms;
+}
+/* 选择模式：禁用放大效果、重置已放大的卡片、光标改为默认 */
+/* Selection mode: disable scale, reset any elevated card, use default cursor */
+.media-grid.selection-mode .media-card {
+  transform: none !important;
+  box-shadow: none !important;
+  cursor: default;
 }
 
 .scroll-fab {

@@ -59,7 +59,7 @@
             :style="{ width: item.w + 'px', height: item.h + 'px' }"
             @click="openDetail(item.id)"
             @mousedown="onCardMouseDown($event, item.id)"
-            @mouseenter="onCardMouseEnter(item.id)"
+            @mouseenter="onCardMouseEnter($event, item.id)"
             @mouseup="onCardMouseUp"
           >
             <MediaThumb
@@ -224,7 +224,14 @@ function onCardMouseDown(e: MouseEvent, id: number) {
   dragSelectState = !selection.selectedIds.has(id)
 }
 
-function onCardMouseEnter(id: number) {
+function onCardMouseEnter(e: MouseEvent, id: number) {
+  // e.buttons bitmask: 1 = Left click. If it's not pressed, stop dragging.
+  if ((e.buttons & 1) === 0) {
+    isDraggingSelection = false
+    dragStartId = null
+    return
+  }
+
   if (isDraggingSelection) {
     if (dragStartId !== null) {
       if (dragSelectState) selection.selectItem(dragStartId)

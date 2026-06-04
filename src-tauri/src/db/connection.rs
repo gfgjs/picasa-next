@@ -48,6 +48,7 @@ pub fn create_write_connection(db_path: &Path) -> Result<DbWriter> {
     info!("Opening write connection at {:?} | 正在 {:?} 建立数据库写连接", db_path, db_path);
     let conn = Connection::open(db_path)?;
     apply_pragmas(&conn)?;
+    crate::db::register_custom_collations(&conn).map_err(AppError::from)?;
     debug!("Write connection PRAGMAs applied");
     Ok(Mutex::new(conn))
 }
@@ -62,7 +63,9 @@ struct ReadPoolCustomiser;
 
 impl r2d2::CustomizeConnection<Connection, rusqlite::Error> for ReadPoolCustomiser {
     fn on_acquire(&self, conn: &mut Connection) -> std::result::Result<(), rusqlite::Error> {
-        conn.execute_batch(PRAGMAS)
+        conn.execute_batch(PRAGMAS)?;
+        crate::db::register_custom_collations(conn)?;
+        Ok(())
     }
 }
 
@@ -95,4 +98,20 @@ pub fn create_read_pool(db_path: &Path, pool_size: u32) -> Result<DbPool> {
 
     debug!("Read pool created successfully");
     Ok(pool)
+}
+#[test]
+fn test_collation() {
+    let db_path = std::path::Path::new("test_collation.db");
+    if db_path.exists() {
+        std::fs::remove_file(db_path).unwrap();
+    }
+    let write_conn = crate::db::create_write_connection(db_path).unwrap();
+    let read_pool = crate::db::create_read_pool(db_path, 2).unwrap();
+    
+    write_conn.lock().unwrap().execute_batch("CREATE TABLE test(name TEXT); INSERT INTO test VALUES ('001');").unwrap();
+    
+    let conn = read_pool.get().unwrap();
+    let mut stmt = conn.prepare("SELECT name FROM test ORDER BY name COLLATE NATURAL_CMP ASC").unwrap();
+    let rows: Vec<String> = stmt.query_map([], |row| row.get(0)).unwrap().map(|r| r.unwrap()).collect();
+    assert_eq!(rows, vec!["001"]);
 }

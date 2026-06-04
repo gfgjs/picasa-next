@@ -468,13 +468,13 @@ pub fn query_layout_items(
 
     if group_by == Some("folder") {
         if sort_within == Some("filename") {
-            sql.push_str(&format!(" ORDER BY d.rel_path ASC, m.file_name {}", order_dir));
+            sql.push_str(&format!(" ORDER BY d.rel_path ASC, m.file_name COLLATE NATURAL_CMP {}", order_dir));
         } else {
             sql.push_str(&format!(" ORDER BY d.rel_path ASC, m.sort_datetime {}", order_dir));
         }
     } else {
         if sort_within == Some("filename") {
-            sql.push_str(&format!(" ORDER BY m.file_name {}", order_dir));
+            sql.push_str(&format!(" ORDER BY m.file_name COLLATE NATURAL_CMP {}", order_dir));
         } else {
             sql.push_str(&format!(" ORDER BY m.sort_datetime {}", order_dir));
         }

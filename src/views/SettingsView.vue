@@ -109,24 +109,17 @@
             <div class="settings-card__label">{{ $t('settings.thumbSize') || '缩略图大小' }}</div>
             <div class="settings-card__desc">{{ $t('settings.thumbSizeDesc') || '生成的缩略图的最大边长 (像素)' }}</div>
           </div>
-          <div class="setting-slider-group">
-            <input
-              type="range"
-              v-model.number="thumbSize"
-              min="4"
-              max="1024"
-              step="1"
-              class="input-range"
-              @change="saveThumbSize"
-            />
-            <input
-              type="number"
-              v-model.number="thumbSize"
-              min="4"
-              max="1024"
-              class="input-number"
-              @change="saveThumbSize"
-            />
+          <!-- 四档分段按钮 | Four-tier segmented button -->
+          <div class="thumb-tier-group">
+            <button
+              v-for="tier in THUMB_SIZE_TIERS"
+              :key="tier"
+              class="thumb-tier-btn"
+              :class="{ active: thumbSize === tier }"
+              @click="selectThumbTier(tier)"
+            >
+              {{ tierLabel(tier) }}
+            </button>
           </div>
         </div>
 
@@ -356,6 +349,7 @@ import { useI18n } from 'vue-i18n'
 import { X, Database, Paintbrush, RotateCcw } from '@lucide/vue'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { IPC } from '../constants/ipc'
+import { THUMB_SIZE_TIERS, type ThumbSizeTier } from '../constants/defaults'
 
 const ui = useUiStore()
 const scan = useScanStore()
@@ -480,6 +474,20 @@ async function saveGpuEngine() {
 async function saveThumbSize() {
   await saveConfig('thumb_size', thumbSize.value.toString())
   ui.addToast('success', '已修改生成尺寸，新尺寸将在生成新缩略图时生效')
+}
+
+// 选择缩略图档位 | Select a thumbnail size tier
+async function selectThumbTier(tier: ThumbSizeTier) {
+  thumbSize.value = tier
+  await saveConfig('thumb_size', tier.toString())
+  const labels: Record<number, string> = { 120: '小 (120px)', 240: '中 (240px)', 480: '大 (480px)', 960: '超清 (960px)' }
+  ui.addToast('success', `缩略图档位已切换为 ${labels[tier]}，新尺寸将在生成新缩略图时生效`)
+}
+
+// 档位文字标签 | Tier display label
+function tierLabel(tier: ThumbSizeTier): string {
+  const map: Record<number, string> = { 120: '小\n120px', 240: '中\n240px', 480: '大\n480px', 960: '超清\n960px' }
+  return map[tier] ?? `${tier}px`
 }
 
 async function changeCacheDir() {
@@ -786,5 +794,35 @@ function closeSettings() {
   background: var(--color-error);
   color: #fff;
   border-color: var(--color-error);
+}
+
+/* ── 缩略图档位分段按钮 | Thumb size tier segmented buttons ── */
+.thumb-tier-group {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.thumb-tier-btn {
+  padding: 6px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  white-space: pre-line;
+  text-align: center;
+  line-height: 1.3;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+.thumb-tier-btn:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}
+.thumb-tier-btn.active {
+  background: var(--color-accent);
+  color: #fff;
+  border-color: var(--color-accent);
+  font-weight: 600;
 }
 </style>

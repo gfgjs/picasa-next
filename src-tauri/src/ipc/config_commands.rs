@@ -10,6 +10,7 @@ use tauri::State;
 use crate::db::queries::{get_config, set_config};
 use crate::error::{AppError, Result};
 use crate::state::AppState;
+use crate::thumbnail::generator::snap_to_tier;
 
 /// Get a configuration value by key.
 /// 根据键获取配置值。
@@ -89,7 +90,8 @@ pub async fn set_app_config(key: String, value: String, state: State<'_, Arc<App
     } else if key == "thumb_size" {
         if let Ok(val) = value.parse::<u32>() {
             let mut config = state.thumb_config.write().unwrap();
-            config.size = val;
+            // 小数点对齐到最近档位 | Snap to nearest tier
+            config.size = snap_to_tier(val);
         }
     } else if key == "thumb_cache_dir" {
         let mut config = state.thumb_config.write().unwrap();

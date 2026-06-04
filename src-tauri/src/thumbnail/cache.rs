@@ -15,6 +15,11 @@ use crate::utils::hash::cache_key_to_hex;
 /// Build the full path for a thumbnail file.
 /// 构建缩略图文件的完整路径。
 pub fn thumb_path(cache_dir: &Path, size: u32, cache_key: i64) -> PathBuf {
+    // 断言 size 必须是四个固定档位之一 | Assert size must be one of the four fixed tiers
+    debug_assert!(
+        [120u32, 240, 480, 960].contains(&size),
+        "thumb_path: size={size} is not a valid tier [120, 240, 480, 960]"
+    );
     let hex = cache_key_to_hex(cache_key);
     let prefix = &hex[..2];
     cache_dir

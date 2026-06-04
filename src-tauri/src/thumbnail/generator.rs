@@ -28,6 +28,36 @@ pub struct ThumbConfig {
     pub gpu_engine:      String,
 }
 
+/// 将任意尺寸就近取整到固定四档 [120, 240, 480, 960]。
+/// Snap any size to the nearest fixed tier [120, 240, 480, 960].
+pub fn snap_to_tier(size: u32) -> u32 {
+    const TIERS: [u32; 4] = [120, 240, 480, 960];
+    TIERS.iter()
+        .copied()
+        .min_by_key(|&t| (t as i64 - size as i64).unsigned_abs())
+        .unwrap_or(240)
+}
+
+impl ThumbConfig {
+    /// 构造时自动将 size 对齐到最近档位 | Auto-snap size to nearest tier on construction
+    pub fn new(
+        cache_dir: std::path::PathBuf,
+        size: u32,
+        skip_max_bytes: u64,
+        strategy: String,
+        gpu_engine: String,
+    ) -> Self {
+        Self {
+            cache_dir,
+            size: snap_to_tier(size),
+            skip_max_bytes,
+            strategy,
+            gpu_engine,
+        }
+    }
+}
+
+
 pub enum DecodeResult {
     Ready(ThumbResult),
     ToEncode {

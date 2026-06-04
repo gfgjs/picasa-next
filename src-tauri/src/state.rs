@@ -87,13 +87,13 @@ impl AppState {
             scan_tokens: Mutex::new(HashMap::new()),
             layout_cache: new_layout_cache(),
             engine_arena: EngineArena::phase1(),
-            thumb_config: RwLock::new(ThumbConfig {
+            thumb_config: RwLock::new(ThumbConfig::new(
                 cache_dir,
-                size: thumb_size,
-                skip_max_bytes: thumb_skip_max_kb * 1024,
-                strategy: thumb_strategy,
+                thumb_size,
+                thumb_skip_max_kb * 1024,
+                thumb_strategy,
                 gpu_engine,
-            }),
+            )),
             thumb_gen_token: Mutex::new(None),
             cancelled_thumb_ids: Mutex::new(HashSet::new()),
             log_dir,

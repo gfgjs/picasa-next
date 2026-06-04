@@ -68,6 +68,83 @@ pub async fn remove_scan_root(id: i64, state: State<'_, Arc<AppState>>) -> Resul
     Ok(())
 }
 
+/// Result of removing a scan root with optional thumbnail cleanup.
+/// 移除扫描根目录的结果（含可选缩略图清理）。
+#[derive(serde::Serialize)]
+pub struct RemoveRootResult {
+    /// Number of thumbnail files queued for deletion.
+    /// 已加入删除队列的缩略图文件数量。
+    pub cleared_count: usize,
+}
+
+/// Remove a scan root, optionally clearing its cached thumbnails in the background.
+/// 移除扫描根目录，可选择在后台清除其缓存的缩略图。
+#[tauri::command]
+pub async fn remove_scan_root_with_options(
+    id: i64,
+    clear_thumbnails: bool,
+    state: State<'_, Arc<AppState>>,
+) -> Result<RemoveRootResult> {
+    info!(
+        "User action: Removing scan root ID: {} clear_thumbnails={} | 用户操作：移除扫描根目录 ID: {} 清除缩略图={}",
+        id, clear_thumbnails, id, clear_thumbnails
+    );
+
+    // 取消该根目录正在运行的扫描 | Cancel any running scan for this root
+    state.cancel_scan(id);
+
+    let thumb_paths: Vec<String> = if clear_thumbnails {
+        // 先收集需要删除的缩略图路径 | Collect thumb paths before cascade delete
+        let pool = state.db_read_pool.get().map_err(AppError::from)?;
+        let mut stmt = pool.prepare(
+            "SELECT m.thumb_path FROM media_items m
+             JOIN directories d ON m.directory_id = d.id
+             WHERE d.root_id = ?1 AND m.thumb_path IS NOT NULL AND m.thumb_status = 1"
+        )?;
+        let rows = stmt.query_map(rusqlite::params![id], |row| row.get(0))?;
+        rows.filter_map(|r| r.ok()).collect()
+    } else {
+        vec![]
+    };
+
+    let cleared_count = thumb_paths.len();
+
+    // 删除数据库记录 (CASCADE) | Delete DB records (CASCADE)
+    {
+        let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        q::delete_scan_root(&conn, id)?;
+    }
+
+    // 布局缓存失效 | Invalidate layout cache
+    *state.layout_cache.write().unwrap() = None;
+
+    // 后台异步删除缩略图文件 | Delete thumbnail files in background async
+    if !thumb_paths.is_empty() {
+        let cache_dir = state.thumb_config.read().unwrap().cache_dir.clone();
+        tokio::spawn(async move {
+            let mut deleted = 0usize;
+            for rel_path in &thumb_paths {
+                let full = cache_dir.join("thumbnails").join(rel_path);
+                if full.exists() {
+                    if let Err(e) = std::fs::remove_file(&full) {
+                        tracing::warn!("[RemoveRoot] Failed to delete thumb {:?}: {} | 删除缩略图失败: {}", full, e, e);
+                    } else {
+                        deleted += 1;
+                    }
+                }
+            }
+            tracing::info!(
+                "[RemoveRoot] Background thumb cleanup: {}/{} files deleted | 后台缩略图清理: {}/{} 文件已删除",
+                deleted, thumb_paths.len(), deleted, thumb_paths.len()
+            );
+        });
+    }
+
+    info!("Scan root removed with options: id={id} cleared={cleared_count} | 已移除扫描根目录并处理缩略图: id={id} 清除={cleared_count}");
+    Ok(RemoveRootResult { cleared_count })
+}
+
+
 /// List all scan roots.
 /// 列出所有扫描根目录。
 #[tauri::command]

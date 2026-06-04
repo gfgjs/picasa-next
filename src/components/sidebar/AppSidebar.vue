@@ -196,6 +196,26 @@
       </button>
     </div>
 
+
+    <!-- 删除根目录确认对话 | Remove scan root confirmation dialog -->
+    <Teleport to="body">
+      <div v-if="showRemoveDialog" class="remove-dialog-overlay" @click.self="showRemoveDialog = false">
+        <div class="remove-dialog">
+          <div class="remove-dialog__title">移除文件夹</div>
+          <div class="remove-dialog__body">
+            <p>确定要移除该文件夹及其所有媒体记录？此操作不可撤销。</p>
+            <label class="remove-dialog__checkbox">
+              <input type="checkbox" v-model="clearThumbsOnRemove" />
+              <span>同时清除已生成的缩略图缓存（后台异步删除）</span>
+            </label>
+          </div>
+          <div class="remove-dialog__actions">
+            <button class="remove-dialog__btn remove-dialog__btn--cancel" @click="showRemoveDialog = false">取消</button>
+            <button class="remove-dialog__btn remove-dialog__btn--confirm" @click="confirmRemoveRoot">确认移除</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </nav>
 </template>
 
@@ -225,6 +245,11 @@ const folderTree = useFolderTree()
 const router   = useRouter()
 const route    = useRoute()
 const { t }    = useI18n()
+
+// 删除确认对话状态 | Delete confirmation dialog state
+const showRemoveDialog = ref(false)
+const removingRootId = ref<number | null>(null)
+const clearThumbsOnRemove = ref(true)
 
 
 
@@ -399,13 +424,31 @@ async function addRoot() {
 }
 
 async function removeRoot(id: number) {
-  if (!confirm(t('sidebar.confirmRemove'))) return
+  // 弹出带复选框的确认对话框 | Show confirmation dialog with checkbox
+  removingRootId.value = id
+  clearThumbsOnRemove.value = true
+  showRemoveDialog.value = true
+}
+
+async function confirmRemoveRoot() {
+  const id = removingRootId.value
+  if (id == null) return
+  showRemoveDialog.value = false
   try {
-    await scan.removeScanRoot(id)
+    const result = await invoke<{ clearedCount: number }>('remove_scan_root_with_options', {
+      id,
+      clearThumbnails: clearThumbsOnRemove.value,
+    })
     media.loadStats()
     folderTree.loadRoots(scan.scanRoots)
+    const msg = clearThumbsOnRemove.value
+      ? `文件夹已移除，已将 ${result.clearedCount} 个缩略图加入后台删除队列`
+      : '文件夹已移除，缩略图缓存已保留'
+    ui.addToast('success', msg)
   } catch (e) {
     ui.addToast('error', t('sidebar.removeFolderFailed') + ' ' + e)
+  } finally {
+    removingRootId.value = null
   }
 }
 
@@ -662,5 +705,75 @@ onMounted(async () => {
 .sidebar__show-all-btn.active {
   color: var(--color-accent);
   font-weight: 600;
+}
+
+/* ── 删除确认对话 | Remove scan root confirmation dialog ── */
+.remove-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.remove-dialog {
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-xl);
+  width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+}
+.remove-dialog__title {
+  font-size: var(--font-size-md);
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+.remove-dialog__body p {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--spacing-sm);
+}
+.remove-dialog__checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+.remove-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-sm);
+}
+.remove-dialog__btn {
+  padding: 7px 16px;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid var(--color-border);
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.remove-dialog__btn--cancel {
+  background: transparent;
+  color: var(--color-text-secondary);
+}
+.remove-dialog__btn--cancel:hover {
+  background: var(--color-bg-hover);
+}
+.remove-dialog__btn--confirm {
+  background: var(--color-error);
+  color: #fff;
+  border-color: var(--color-error);
+}
+.remove-dialog__btn--confirm:hover {
+  filter: brightness(1.1);
 }
 </style>

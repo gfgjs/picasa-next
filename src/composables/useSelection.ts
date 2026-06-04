@@ -18,6 +18,10 @@ const lastHoveredId = ref<number | null>(null)
 const hasDragMoved = ref(false)
 const lastClickedId = ref<number | null>(null)
 
+// Tracking for drag sequence to allow reverse-selection and cross-row ranges
+const initialSelection = ref(new Set<number>())
+const lastValidRangeIds = ref<number[]>([])
+
 // Move threshold: must move > 5px to count as drag (not click)
 // 移动阈值：必须移动 > 5px 才算拖拽（不是单击）
 const DRAG_THRESHOLD = 5
@@ -101,6 +105,9 @@ export function useSelection() {
       dragMode.value = 'select'
     }
 
+    initialSelection.value = new Set(selectedIds.value)
+    lastValidRangeIds.value = []
+
     // Register document-level listeners (cleaned up in onPointerUp)
     // 注册文档级监听器（在 onPointerUp 中清理）
     document.addEventListener('pointermove', onPointerMoveGlobal)
@@ -125,12 +132,10 @@ export function useSelection() {
       // 超过阈值 — 正式开始拖拽
       hasDragMoved.value = true
       isDragging.value = true
-      isSelectionMode.value = true
 
-      // Apply action to the starting item
-      // 对起始项应用操作
+      // Apply initial item
       if (dragStartId.value !== null) {
-        applyDragAction(dragStartId.value)
+        applyDragRange(dragStartId.value, dragStartId.value)
       }
     }
 
@@ -147,18 +152,53 @@ export function useSelection() {
 
     if (itemId !== lastHoveredId.value) {
       lastHoveredId.value = itemId
-      applyDragAction(itemId)
+      
+      applyDragRange(dragStartId.value!, itemId)
     }
   }
 
-  function applyDragAction(id: number) {
-    const newSet = new Set(selectedIds.value)
-    if (dragMode.value === 'select') {
-      newSet.add(id)
-    } else if (dragMode.value === 'deselect') {
-      newSet.delete(id)
+  function applyDragRange(startId: number, endId: number) {
+    const cards = document.querySelectorAll('.media-card[data-item-id]')
+    const visibleIds: number[] = []
+    for (let i = 0; i < cards.length; i++) {
+      const id = parseInt((cards[i] as HTMLElement).dataset.itemId || '', 10)
+      if (!isNaN(id)) visibleIds.push(id)
     }
+
+    const startIndex = visibleIds.indexOf(startId)
+    const endIndex = visibleIds.indexOf(endId)
+
+    let rangeIds: number[] = []
+    if (startIndex !== -1 && endIndex !== -1) {
+      const minIdx = Math.min(startIndex, endIndex)
+      const maxIdx = Math.max(startIndex, endIndex)
+      for (let i = minIdx; i <= maxIdx; i++) {
+        rangeIds.push(visibleIds[i])
+      }
+      lastValidRangeIds.value = rangeIds
+    } else {
+      // Fallback if scrolled out
+      rangeIds = [...lastValidRangeIds.value]
+      if (!rangeIds.includes(endId)) {
+        rangeIds.push(endId)
+      }
+    }
+
+    const newSet = new Set(initialSelection.value)
+    for (const id of rangeIds) {
+      if (dragMode.value === 'select') {
+        newSet.add(id)
+      } else if (dragMode.value === 'deselect') {
+        newSet.delete(id)
+      }
+    }
+    
     selectedIds.value = newSet
+    if (newSet.size > 0 && !isSelectionMode.value) {
+      isSelectionMode.value = true
+    } else if (newSet.size === 0 && isSelectionMode.value) {
+      isSelectionMode.value = false
+    }
   }
 
   function onPointerUpGlobal(_event: PointerEvent) {

@@ -660,8 +660,10 @@ watch(() => ui.pendingScrollLabel, async (label) => {
 
 /* ── Selection toolbar | 选择工具栏 ─────────────────────── */
 .selection-toolbar {
-  position: sticky;
+  position: absolute;
   top: 0;
+  left: 0;
+  right: 0;
   z-index: 50;
   display: flex;
   align-items: center;

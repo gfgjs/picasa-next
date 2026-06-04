@@ -95,12 +95,16 @@ export function useSelection() {
   // dragAnchor records pointer-down position; dragOverIds are IDs swept during drag
 
   const _dragAnchorId = ref<number | null>(null)
+  const _initialSelection = ref<Set<number>>(new Set())
+  const _dragMode = ref<'add' | 'remove'>('add')
 
   /** 开始拖拽选择 | Begin rubber-band drag selection */
   function onDragStart(startId: number) {
     isDragging.value  = true
     hasDragged.value  = false
     _dragAnchorId.value = startId
+    _initialSelection.value = new Set(selectedIds.value)
+    _dragMode.value = selectedIds.value.has(startId) ? 'remove' : 'add'
     // 不立刻 toggleSelect，等待 onDragOver 确定方向
     // Don't toggleSelect yet; wait for onDragOver to determine direction
   }
@@ -120,10 +124,21 @@ export function useSelection() {
     const ci = allIds.indexOf(currentId)
     if (ai === -1 || ci === -1) return
     const [lo, hi] = ai < ci ? [ai, ci] : [ci, ai]
-    const next = new Set<number>()
-    for (let i = lo; i <= hi; i++) next.add(allIds[i])
+    
+    // 从拖拽开始前的状态开始 | Start with the initial selection
+    const next = new Set(_initialSelection.value)
+    
+    // 应用当前的拖选范围 | Apply the current drag range
+    for (let i = lo; i <= hi; i++) {
+      if (_dragMode.value === 'add') {
+        next.add(allIds[i])
+      } else {
+        next.delete(allIds[i])
+      }
+    }
+    
     selectedIds.value     = next
-    isSelectionMode.value = true
+    isSelectionMode.value = next.size > 0
   }
 
   /** 结束拖拽 | End rubber-band drag */

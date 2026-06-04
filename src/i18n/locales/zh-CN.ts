@@ -7,6 +7,8 @@ export default {
     videos: '视频',
     livePhotos: '实况照片',
     folders: '文件夹',
+    showAll: '全部',
+    showAllTitle: '显示所有文件夹内容',
     loading: '加载中...',
     noFolders: '暂无文件夹',
     addFolder: '添加文件夹',

@@ -63,8 +63,11 @@
           <!-- 左侧 -->
           <div class="detail-controls__left">
             <button class="btn-icon" @click="close" :title="$t('detail.close')"><X :size="18" /></button>
-            <button class="btn-icon" @click="state.zoomIn()" :title="$t('detail.zoomIn')"><ZoomIn :size="18" /></button>
             <button class="btn-icon" @click="state.zoomOut()" :title="$t('detail.zoomOut')"><ZoomOut :size="18" /></button>
+            <span class="zoom-percentage" :class="{ 'zoom-highlight': isZoomChanged }">
+              {{ Math.round(state.scale.value * 100) }}%
+            </span>
+            <button class="btn-icon" @click="state.zoomIn()" :title="$t('detail.zoomIn')"><ZoomIn :size="18" /></button>
             <button class="btn-icon" @click="handleToggleZoom" :title="zoomModeTitle">
               <Maximize v-if="state.zoomMode.value === 'auto'" :size="18" />
               <span v-else-if="state.zoomMode.value === 'original'" style="font-size: 12px; font-weight: 700;">1:1</span>
@@ -251,6 +254,15 @@ watch(() => media.detailItem, () => {
   state.resetZoom()
   state.isPlayingLive.value = false
   state.liveVideoSrc.value  = null
+})
+
+const isZoomChanged = ref(false)
+let zoomHighlightTimer: ReturnType<typeof setTimeout> | null = null
+
+watch(() => state.scale.value, () => {
+  isZoomChanged.value = true
+  if (zoomHighlightTimer) clearTimeout(zoomHighlightTimer)
+  zoomHighlightTimer = setTimeout(() => { isZoomChanged.value = false }, 2000)
 })
 
 // ── Keyboard shortcuts ─────────────────────────────────────────────────────
@@ -442,6 +454,18 @@ async function toggleLive() {
 }
 .detail-controls .btn-icon:hover { color: #fff; background: rgba(255,255,255,0.12); }
 .detail-controls .btn-icon.active { color: var(--color-accent); }
+.zoom-percentage {
+  font-variant-numeric: tabular-nums; /* 等宽数字避免抖动 */
+  min-width: 48px;
+  text-align: center;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+  transition: color 0.3s ease;
+  user-select: none;
+}
+.zoom-percentage.zoom-highlight {
+  color: #fff;
+}
 .detail-controls__center {
   flex: 1;
   text-align: center;

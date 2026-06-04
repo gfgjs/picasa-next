@@ -96,7 +96,17 @@
     <section class="sidebar__section sidebar__section--tree">
       <div class="sidebar__section-label">
         <span>{{ $t('sidebar.folders') }}</span>
-        <button class="btn-icon" :title="$t('sidebar.addFolder')" @click="addRoot"><FolderPlus :size="16" /></button>
+        <div style="display: flex; align-items: center; gap: 4px;">
+          <button
+            class="sidebar-show-all-btn"
+            :class="{ active: ui.activeSmartAlbum === 'all' && !ui.activeDirectoryId }"
+            @click="showAll"
+            :title="$t('sidebar.showAllTitle')"
+          >
+            {{ $t('sidebar.showAll') }}
+          </button>
+          <button class="btn-icon" :title="$t('sidebar.addFolder')" @click="addRoot"><FolderPlus :size="16" /></button>
+        </div>
       </div>
 
       <div v-if="folderTree.nodes.value.length === 0 && !scan.hasScanRoots" class="sidebar__empty">
@@ -251,6 +261,11 @@ function handleSmartAlbumClick(albumId: string) {
   if (route.path !== '/') {
     router.push('/')
   }
+}
+
+function showAll() {
+  ui.setSmartAlbum('all')
+  ui.setActiveDirectory(null)
 }
 
 // ── Thumbnail Gen Controls ──────────────────────────────────────────────────
@@ -461,6 +476,25 @@ onMounted(async () => {
   background: var(--color-border);
   margin: var(--spacing-xs) var(--spacing-md);
   flex-shrink: 0;
+}
+.sidebar-show-all-btn {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  border: 1px solid var(--color-border);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+.sidebar-show-all-btn:hover {
+  background: var(--color-sidebar-hover-bg, var(--color-bg-hover));
+  color: var(--color-text-primary);
+}
+.sidebar-show-all-btn.active {
+  background: var(--color-accent);
+  color: #fff;
+  border-color: var(--color-accent);
 }
 
 /* ── Nav items ────────────────────────────────────────────────────────── */

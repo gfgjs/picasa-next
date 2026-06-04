@@ -42,10 +42,11 @@ export function useJustifiedLayout(containerWidthRef: () => number) {
     }
 
 
+    const GRID_PADDING_X = 24 // 左右各 12px | 12px each side
     await media.computeLayout({
       directoryId,
       filters,
-      containerWidth: cw,
+      containerWidth: cw - GRID_PADDING_X,
       rowHeight:      DEFAULTS.GRID_ROW_HEIGHT,
       gap:            DEFAULTS.GRID_GAP,
     })

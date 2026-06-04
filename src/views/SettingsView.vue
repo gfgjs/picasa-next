@@ -345,7 +345,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { invoke } from '@tauri-apps/api/core'
 import { useUiStore } from '../stores/uiStore'
@@ -445,7 +445,17 @@ onMounted(async () => {
   } catch (e) {
     console.error('Failed to get config:', e)
   }
+
+  document.addEventListener('keydown', onKeyDown)
 })
+
+onUnmounted(() => {
+  document.removeEventListener('keydown', onKeyDown)
+})
+
+function onKeyDown(e: KeyboardEvent) {
+  if (e.key === 'Escape') router.push('/')
+}
 
 async function saveConfig(key: string, value: string) {
   try {
@@ -624,6 +634,12 @@ function closeSettings() {
 }
 
 .settings-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: color-mix(in srgb, var(--color-bg-primary) 85%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   display: flex;
   justify-content: space-between;
   align-items: center;

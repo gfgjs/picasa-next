@@ -7,6 +7,8 @@ export default {
     videos: 'Videos',
     livePhotos: 'Live Photos',
     folders: 'Folders',
+    showAll: 'All',
+    showAllTitle: 'Show all folders content',
     loading: 'Loading...',
     noFolders: 'No Folders',
     addFolder: 'Add Folder',

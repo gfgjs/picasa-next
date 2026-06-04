@@ -71,9 +71,11 @@
               :thumbhash="item.thumbhash"
               :file-format="item.fileFormat"
               :file-size="item.fileSize"
+              :is-favorited="item.isFavorited"
               :cache-dir="cacheDir"
               @request-thumb="onRequestThumb"
               @cancel-thumb="onCancelThumb"
+              @favorite="handleFavorite"
             />
           </div>
         </template>
@@ -269,6 +271,27 @@ async function onRequestThumb(id: number) {
   }
 }
 
+async function handleFavorite(itemId: number) {
+  // Toggle favorite and get new state | 切换收藏并获取新状态
+  const newValue = await media.toggleFavorite(itemId)
+  // Patch item in visibleRows for instant feedback | 修补可见行中的项以即时反馈
+  for (const row of visibleRows.value) {
+    if ((row as any).items) {
+      const item = (row as any).items.find((it: any) => it.id === itemId)
+      if (item) {
+        item.isFavorited = newValue
+        break
+      }
+    }
+  }
+  // In favorites view, recompute layout to remove unfavorited item
+  // 在收藏视图中，重新计算布局以移除取消收藏的项
+  if (ui.activeSmartAlbum === 'favorites') {
+    await compute()
+    updateVisible()
+  }
+}
+
 onBeforeUnmount(() => {
   resizeObserver?.disconnect()
 })
@@ -363,7 +386,7 @@ watch(
   height: 100%;
   overflow-y: scroll;
   overflow-x: hidden;
-  padding: 0;
+  padding: 0 12px;
   position: relative;
   overflow-anchor: none;
 }

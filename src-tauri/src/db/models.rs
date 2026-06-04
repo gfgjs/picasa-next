@@ -109,6 +109,7 @@ pub struct LayoutItem {
     pub thumb_status:  i64,
     pub thumb_path:    Option<String>,
     pub thumbhash:     Option<Vec<u8>>,
+    pub is_favorited:  bool,
 }
 
 // ── Image meta ───────────────────────────────────────────────────────────────

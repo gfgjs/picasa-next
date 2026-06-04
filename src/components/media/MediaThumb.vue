@@ -60,8 +60,8 @@
       <!-- Selection checkbox -->
       <!-- 选择复选框 -->
       <div
-        v-if="isSelected || isSelectionMode"
         class="media-thumb__checkbox"
+        :class="{ visible: isSelected || isSelectionMode }"
         @click.stop="emit('select', id)"
       >
         <div class="checkbox" :class="{ checked: isSelected }">
@@ -401,6 +401,10 @@ onBeforeUnmount(() => {
   opacity: 0;
   pointer-events: auto;
   transition: opacity var(--transition-fast);
+}
+.media-thumb:hover .media-thumb__checkbox,
+.media-thumb__checkbox.visible {
+  opacity: 1;
 }
 .checkbox {
   width: 20px;

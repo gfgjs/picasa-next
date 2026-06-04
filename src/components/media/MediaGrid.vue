@@ -211,9 +211,14 @@ onMounted(async () => {
   // Read container width immediately
   // 立即读取容器宽度
   if (gridRef.value) {
-    // clientWidth includes padding, but we need the inner content box for layout.
     // clientWidth 包含 padding，但布局计算需要的是内部内容区域宽度。
-    containerWidth.value = gridRef.value.clientWidth - 24
+    // 左侧 padding = var(--scrollbar-width) + 8px
+    // 右侧 padding = 8px
+    // 所以总 padding = var(--scrollbar-width) + 16px
+    const style = getComputedStyle(document.documentElement)
+    const swStr = style.getPropertyValue('--scrollbar-width').trim().replace('px', '')
+    const sw = parseInt(swStr) || 6
+    containerWidth.value = gridRef.value.clientWidth - (sw + 16)
   } else {
     console.warn('[MediaGrid] onMounted: gridRef is null!')
   }
@@ -388,7 +393,8 @@ watch(
   height: 100%;
   overflow-y: scroll;
   overflow-x: hidden;
-  padding: 0 12px;
+  padding-left: calc(var(--scrollbar-width, 6px) + 8px);
+  padding-right: 8px;
   position: relative;
   overflow-anchor: none;
 }

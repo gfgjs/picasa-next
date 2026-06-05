@@ -1134,11 +1134,22 @@ pub fn count_pending_ai_items(conn: &Connection) -> Result<i64> {
     .map_err(AppError::from)
 }
 
-/// Count analysed AI items (status=2).
-/// 统计已分析的 AI 项数量（status=2）。
+/// Count analysed AI items (status=2 or 3).
+/// 统计已分析的 AI 项数量（status=2 或 3）。
 pub fn count_analyzed_ai_items(conn: &Connection) -> Result<i64> {
     conn.query_row(
-        "SELECT COUNT(*) FROM media_items WHERE ai_status=2 AND is_deleted=0 AND media_type='image'",
+        "SELECT COUNT(*) FROM media_items WHERE ai_status IN (2, 3) AND is_deleted=0 AND media_type='image'",
+        [],
+        |row| row.get(0),
+    )
+    .map_err(AppError::from)
+}
+
+/// Count total AI items.
+/// 统计所有的 AI 项数量。
+pub fn count_total_ai_items(conn: &Connection) -> Result<i64> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM media_items WHERE is_deleted=0 AND media_type='image'",
         [],
         |row| row.get(0),
     )

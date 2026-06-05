@@ -300,7 +300,7 @@
 /* ── Number Input ────────────────────────────────────────────── */
 
 .input-number {
-  width: 72px;
+  width: 120px;
   height: var(--input-height);
   padding: 0 10px;
   border-radius: var(--radius-md);

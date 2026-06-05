@@ -14,7 +14,7 @@ use crate::ai::pipeline::start_ai_pipeline;
 use crate::ai::search::semantic_search;
 use crate::db::models::AiStatusSummary;
 use crate::db::queries::{
-    count_analyzed_ai_items, count_pending_ai_items, get_config, reset_ai_embeddings, set_config,
+    count_analyzed_ai_items, count_total_ai_items, get_config, reset_ai_embeddings, set_config,
 };
 use crate::error::{AppError, Result};
 use crate::state::AppState;
@@ -160,10 +160,9 @@ pub async fn get_ai_status(
             .unwrap_or_default()
             .unwrap_or_default();
 
-        let total_items    = count_pending_ai_items(&conn).unwrap_or(0)
-            + count_analyzed_ai_items(&conn).unwrap_or(0);
+        let total_items    = count_total_ai_items(&conn).unwrap_or(0);
         let analyzed_items = count_analyzed_ai_items(&conn).unwrap_or(0);
-        let pending_items  = count_pending_ai_items(&conn).unwrap_or(0);
+        let pending_items  = total_items.saturating_sub(analyzed_items);
 
         let clip_loaded = {
             let guard = state.ai_engine.read().unwrap();

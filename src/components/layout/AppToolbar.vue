@@ -131,7 +131,7 @@
       >
         <option value="datetime">{{ $t('toolbar.sortByTime') }}</option>
         <option value="filename">{{ $t('toolbar.sortByName') }}</option>
-        <option v-if="ai.isSemanticMode" value="similarity">按相似度</option>
+        <option v-if="ai.isSemanticMode" value="similarity">{{ $t('toolbar.sortBySimilarity') }}</option>
       </select>
 
       <!-- Asc/Desc toggle -->

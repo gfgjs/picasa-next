@@ -157,6 +157,21 @@
 
         <div class="settings-card__item">
           <div class="settings-card__info">
+            <div class="settings-card__label">{{ $t('settings.thumbCacheMaxMb') || '缩略图缓存上限 (MB)' }}</div>
+            <div class="settings-card__desc">{{ $t('settings.thumbCacheDesc') || '超出此限制时，将自动清理最旧的缓存文件。' }}</div>
+          </div>
+          <input
+            type="number"
+            v-model.number="thumbCacheMaxMb"
+            min="100"
+            max="100000"
+            class="input-number"
+            @change="saveConfig('thumb_cache_max_mb', thumbCacheMaxMb.toString())"
+          />
+        </div>
+
+        <div class="settings-card__item">
+          <div class="settings-card__info">
             <div class="settings-card__label">{{ $t('settings.timelineScrollWidth') }}</div>
             <div class="settings-card__desc">{{ $t('settings.timelineScrollDesc') }}</div>
           </div>
@@ -374,6 +389,7 @@ const ai = useAiStore()
 const { t } = useI18n()
 
 const thumbSkipMaxKb = ref(200)
+const thumbCacheMaxMb = ref(1024)
 const currentThumbTier = ref<number>(240)
 const thumbCacheDir = ref('')
 const logDir = ref('')
@@ -400,6 +416,9 @@ onMounted(async () => {
   try {
     const val1 = await invoke<string | null>('get_app_config', { key: 'thumb_skip_max_kb' })
     if (val1) thumbSkipMaxKb.value = parseInt(val1, 10)
+
+    const cacheVal = await invoke<string | null>('get_app_config', { key: 'thumb_cache_max_mb' })
+    if (cacheVal) thumbCacheMaxMb.value = parseInt(cacheVal, 10)
 
     const strat = await invoke<string | null>('get_app_config', { key: 'thumb_strategy' })
     if (strat) {
@@ -699,7 +718,7 @@ function closeSettings() {
 
 .settings-content {
   padding: var(--spacing-lg) var(--spacing-xl);
-  max-width: 640px;
+  max-width: 860px;
   margin: 0 auto;
   width: 100%;
   display: flex;

@@ -44,7 +44,7 @@
                 <span class="sidebar__nav-label">全量生成缩略图</span>
               </div>
               <button class="btn-icon" @click="toggleThumbGen" :title="scan.thumbGenProgress.isRunning ? '停止生成' : '开始生成'">
-                <Square v-if="scan.thumbGenProgress.isRunning" :size="14" />
+                <Square v-if="scan.thumbGenProgress.isRunning" :size="14" color="var(--color-error)" fill="var(--color-error)" />
                 <Play v-else :size="14" />
               </button>
             </div>
@@ -68,7 +68,7 @@
                 <span class="sidebar__nav-label">全量 AI 分析</span>
               </div>
               <button class="btn-icon" @click="toggleAiAnalysis" :disabled="isAiInitialising" :title="ai.status.isAnalyzing ? '停止分析' : '开始分析'">
-                <Square v-if="ai.status.isAnalyzing" :size="14" />
+                <Square v-if="ai.status.isAnalyzing" :size="14" color="var(--color-error)" fill="var(--color-error)" />
                 <RefreshCw v-else-if="isAiInitialising" :size="14" class="spinning" style="animation: spin 1s linear infinite;" />
                 <Play v-else :size="14" />
               </button>
@@ -153,7 +153,7 @@
               @click="toggleScan(root.id)"
               :title="scan.getProgress(root.id)?.isRunning ? $t('sidebar.stopScan') : $t('sidebar.rescan')"
             >
-              <Square v-if="scan.getProgress(root.id)?.isRunning" :size="14" />
+              <Square v-if="scan.getProgress(root.id)?.isRunning" :size="14" color="var(--color-error)" fill="var(--color-error)" />
               <RefreshCw v-else :size="14" />
             </button>
             <button

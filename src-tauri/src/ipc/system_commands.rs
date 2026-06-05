@@ -173,3 +173,22 @@ pub async fn set_window_theme(
     }
     Ok(())
 }
+
+/// Clear all log files.
+/// 清除所有日志文件。
+#[tauri::command]
+pub async fn clear_logs(state: State<'_, Arc<AppState>>) -> Result<()> {
+    let log_dir = &state.log_dir;
+    if log_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(log_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() && path.extension().map_or(false, |ext| ext == "log") {
+                    let _ = std::fs::remove_file(path);
+                }
+            }
+        }
+    }
+    tracing::info!("Logs cleared by user | 用户清除了日志文件");
+    Ok(())
+}

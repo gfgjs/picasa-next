@@ -364,6 +364,16 @@
             <RotateCcw :size="14" /> {{ $t('settings.clearBrowserCacheBtn') }}
           </button>
         </div>
+
+        <div class="settings-card__item">
+          <div class="settings-card__info">
+            <div class="settings-card__label">{{ $t('settings.clearLogs') || '清除日志' }}</div>
+            <div class="settings-card__desc">{{ $t('settings.clearLogsDesc') || '删除所有存储的日志文件' }}</div>
+          </div>
+          <button class="btn btn-danger" @click="clearLogs">
+            <RotateCcw :size="14" /> {{ $t('settings.clearLogsBtn') || '清除' }}
+          </button>
+        </div>
       </div>
     </main>
   </div>
@@ -567,7 +577,7 @@ async function openDirectory(path: string) {
 
 async function saveLogLevel() {
   await saveConfig('log_level', logLevel.value)
-  ui.addToast('success', '日志级别已修改，重启应用后生效')
+  // ui.addToast('success', '日志级别已修改，重启应用后生效')
 }
 
 async function saveScrollbarWidth() {
@@ -650,6 +660,15 @@ async function clearSettings() {
     window.location.reload()
   } catch (e) {
     ui.addToast('error', `清除设置失败: ${e}`)
+  }
+}
+
+async function clearLogs() {
+  try {
+    await invoke('clear_logs')
+    ui.addToast('success', t('settings.clearLogsSuccess') || '日志文件已清除')
+  } catch (e) {
+    ui.addToast('error', `清除日志失败: ${e}`)
   }
 }
 

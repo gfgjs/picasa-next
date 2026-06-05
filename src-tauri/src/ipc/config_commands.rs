@@ -10,6 +10,10 @@ use tauri::State;
 use crate::db::queries::{get_config, set_config};
 use crate::error::{AppError, Result};
 use crate::state::AppState;
+use tracing_subscriber::{reload::Handle, EnvFilter, Registry};
+use std::sync::OnceLock;
+
+pub static LOG_RELOAD: OnceLock<Handle<EnvFilter, Registry>> = OnceLock::new();
 
 /// Get a configuration value by key.
 /// 根据键获取配置值。
@@ -102,6 +106,15 @@ pub async fn set_app_config(key: String, value: String, state: State<'_, Arc<App
     } else if key == "gpu_engine" {
         let mut config = state.thumb_config.write().unwrap();
         config.gpu_engine = value;
+    } else if key == "log_level" {
+        if let Some(handle) = LOG_RELOAD.get() {
+            if let Ok(filter) = EnvFilter::try_new(&value) {
+                if let Err(e) = handle.modify(|f| *f = filter) {
+                    tracing::warn!("Failed to reload log level: {}", e);
+                }
+            }
+        }
+        tracing::info!("Log level dynamically updated to: {}", value);
     }
 
     // When skip threshold or strategy changes, items that were previously

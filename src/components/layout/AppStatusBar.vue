@@ -8,8 +8,8 @@
       <span class="spinner" />
       {{ $t('settings.genStatusRunning', { generated: scan.thumbGenProgress.generated, total: scan.thumbGenProgress.total }) }}
       <span v-if="scan.thumbGenProgress.currentItem" style="opacity: 0.8; max-width: 150px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: inline-block;">({{ scan.thumbGenProgress.currentItem }})</span>
-      <button @click="scan.stopFullThumbnailGeneration()" class="statusbar__stop-btn" title="停止生成" style="background: none; border: none; cursor: pointer; color: inherit; padding: 2px; display: flex; align-items: center; border-radius: 4px; opacity: 0.8;">
-        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg>
+      <button @click="scan.stopFullThumbnailGeneration()" class="statusbar__stop-btn" title="停止生成" style="background: none; border: none; cursor: pointer; color: var(--color-error); padding: 2px; display: flex; align-items: center; border-radius: 4px; opacity: 0.8;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg>
       </button>
     </span>
     <span v-else-if="scan.autoThumbInFlight > 0" class="statusbar__scanning" title="正在生成视口缩略图" style="cursor: help;">

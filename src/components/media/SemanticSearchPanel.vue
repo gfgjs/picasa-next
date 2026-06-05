@@ -53,8 +53,9 @@
             v-else-if="ai.status.isAnalyzing"
             class="semantic-panel__btn semantic-panel__btn--danger"
             @click="ai.stopAnalysis()"
+            style="color: var(--color-error); border-color: var(--color-error);"
           >
-            <Square :size="13" />
+            <Square :size="13" color="currentColor" fill="currentColor" />
             停止
           </button>
           <!-- Rebuild -->

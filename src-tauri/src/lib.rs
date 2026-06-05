@@ -189,25 +189,25 @@ pub fn run() {
             let (non_blocking, guard) = tracing_appender::non_blocking(appender);
             Box::leak(Box::new(guard));
 
-            let env_filter_term = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&log_level));
-            let env_filter_file = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&log_level));
+            let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&log_level));
+            let (filter, reload_handle) = tracing_subscriber::reload::Layer::new(env_filter);
+            let _ = crate::ipc::config_commands::LOG_RELOAD.set(reload_handle);
 
             // Use Local time for log statements | 使用本地时间格式化日志
             let timer = tracing_subscriber::fmt::time::ChronoLocal::rfc_3339();
 
             tracing_subscriber::registry()
+                .with(filter)
                 .with(
                     tracing_subscriber::fmt::layer()
                         .with_timer(timer.clone())
                         .with_ansi(true)
-                        .with_filter(env_filter_term)
                 )
                 .with(
                     tracing_subscriber::fmt::layer()
                         .with_timer(timer)
                         .with_writer(non_blocking)
                         .with_ansi(false)
-                        .with_filter(env_filter_file)
                 )
                 .init();
 
@@ -341,6 +341,7 @@ pub fn run() {
             ipc::system_commands::move_to_trash,
             ipc::system_commands::close_splashscreen,
             ipc::system_commands::set_window_theme,
+            ipc::system_commands::clear_logs,
             // AI
             // AI
             ipc::ai_commands::detect_ai_provider,

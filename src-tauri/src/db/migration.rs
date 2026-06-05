@@ -71,7 +71,6 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
 
     if version < 3 {
         info!("Applying migration → v3 (AI search results) | 正在应用数据库迁移 → v3（AI 搜索结果）");
-        crate::db::schema::SCHEMA_V3; // ensure it's imported or use direct access
         conn.execute_batch(crate::db::schema::SCHEMA_V3)
             .map_err(|e| AppError::Db(format!("Migration v3 failed: {e}")))?;
         write_version(conn, 3)?;

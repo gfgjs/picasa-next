@@ -12,7 +12,7 @@ use crate::ai::clip::MODEL_NAME;
 use crate::ai::engine::AiEnginePool;
 use crate::ai::pipeline::start_ai_pipeline;
 use crate::ai::search::semantic_search;
-use crate::db::models::{AiStatusSummary, SemanticSearchResult};
+use crate::db::models::AiStatusSummary;
 use crate::db::queries::{
     count_analyzed_ai_items, count_pending_ai_items, get_config, reset_ai_embeddings, set_config,
 };

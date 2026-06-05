@@ -66,3 +66,67 @@ pub fn ensure_thumb_dir(cache_dir: &Path, size: u32, cache_key: i64) -> std::io:
     }
     Ok(())
 }
+
+/// Enforce the thumbnail cache limit by LRU.
+/// 强制执行缩略图缓存大小限制 (LRU)。
+pub fn enforce_cache_limit(cache_dir: &std::path::Path, max_size_mb: u64) {
+    let max_size_bytes = max_size_mb.saturating_mul(1024 * 1024);
+    let target_size_bytes = (max_size_bytes as f64 * 0.8) as u64;
+
+    let mut total_size = 0;
+    let mut files: Vec<(std::path::PathBuf, std::time::SystemTime, u64)> = Vec::new();
+
+    let thumb_dir = cache_dir.join("thumbnails");
+    if !thumb_dir.exists() {
+        return;
+    }
+
+    // Use walkdir to iterate all files | 使用 walkdir 遍历所有文件
+    for entry in walkdir::WalkDir::new(&thumb_dir).into_iter().filter_map(|e| e.ok()) {
+        if entry.file_type().is_file() {
+            if let Ok(metadata) = entry.metadata() {
+                let size = metadata.len();
+                total_size += size;
+                if let Ok(modified) = metadata.modified() {
+                    files.push((entry.path().to_path_buf(), modified, size));
+                }
+            }
+        }
+    }
+
+    if total_size <= max_size_bytes {
+        tracing::info!(
+            "Cache size {} MB is within limit {} MB | 缓存大小 {} MB 在限制 {} MB 内",
+            total_size / 1024 / 1024, max_size_mb, total_size / 1024 / 1024, max_size_mb
+        );
+        return;
+    }
+
+    tracing::info!(
+        "Cache size {} MB exceeds limit {} MB, starting LRU cleanup... | 缓存大小 {} MB 超过限制 {} MB，开始 LRU 清理...",
+        total_size / 1024 / 1024, max_size_mb, total_size / 1024 / 1024, max_size_mb
+    );
+
+    // Sort ascending by modified time (oldest first) | 按修改时间升序排序（最旧的在前）
+    files.sort_by_key(|&(_, modified, _)| modified);
+
+    let mut freed = 0;
+    let mut deleted_count = 0;
+
+    for (path, _, size) in files {
+        if total_size.saturating_sub(freed) <= target_size_bytes {
+            break;
+        }
+        if let Err(e) = std::fs::remove_file(&path) {
+            tracing::warn!("Failed to delete cache file {:?} | 无法删除缓存文件 {:?}: {}", path, path, e);
+        } else {
+            freed += size;
+            deleted_count += 1;
+        }
+    }
+
+    tracing::info!(
+        "Cache cleanup finished, deleted {} files, freed {} MB | 缓存清理完成，删除 {} 个文件，释放了 {} MB",
+        deleted_count, freed / 1024 / 1024, deleted_count, freed / 1024 / 1024
+    );
+}

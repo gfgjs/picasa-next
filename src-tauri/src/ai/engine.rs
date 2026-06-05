@@ -139,13 +139,22 @@ impl AiEnginePool {
 
         // Fallback to CPU if GPU failed to load the image encoder
         if clip_image_session.is_none() && provider_info.provider != AiProvider::Cpu {
-            tracing::warn!("GPU Execution Provider failed to initialize, falling back to CPU.");
+            tracing::warn!("GPU acceleration failed, falling back to CPU... | GPU 加速失败，正在回退至 CPU...");
             provider_info.provider = AiProvider::Cpu;
             provider_info.gpu_name = String::new();
             clip_image_session = load_session(&image_path, &AiProvider::Cpu, "CLIP image encoder (CPU) | CLIP 图像编码器 (CPU)");
         }
 
-        let clip_text_session = load_session(&text_path, &provider_info.provider, "CLIP text encoder | CLIP 文本编码器");
+        let mut clip_text_session = load_session(&text_path, &provider_info.provider, "CLIP text encoder | CLIP 文本编码器");
+
+        // Fallback to CPU if GPU failed to load the text encoder
+        if clip_text_session.is_none() && provider_info.provider != AiProvider::Cpu {
+            tracing::warn!("GPU acceleration failed, falling back to CPU... | GPU 加速失败，正在回退至 CPU...");
+            provider_info.provider = AiProvider::Cpu;
+            provider_info.gpu_name = String::new();
+            clip_image_session = load_session(&image_path, &AiProvider::Cpu, "CLIP image encoder (CPU) | CLIP 图像编码器 (CPU)");
+            clip_text_session = load_session(&text_path, &AiProvider::Cpu, "CLIP text encoder (CPU) | CLIP 文本编码器 (CPU)");
+        }
 
         info!(
             "AI provider ready: {} ({}) | AI 提供者就绪: {} ({})",

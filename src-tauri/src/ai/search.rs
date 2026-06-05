@@ -10,8 +10,6 @@
 
 use std::sync::Arc;
 
-use r2d2::PooledConnection;
-use r2d2_sqlite::SqliteConnectionManager;
 use tracing::{debug, info};
 
 use crate::ai::clip::{bytes_to_embedding, encode_text, ClipTokenizer, MODEL_NAME};

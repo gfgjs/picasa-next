@@ -114,7 +114,7 @@ pub fn run() {
 
             // ── Read persisted config ─────────────────────────────────────
             // ── 读取持久化配置 ─────────────────────────────────────
-            let (thumb_size, thumb_skip_max_kb, thumb_strategy, gpu_engine, custom_cache_dir, log_level, custom_log_dir) = {
+            let (thumb_size, thumb_skip_max_kb, thumb_strategy, gpu_engine, custom_cache_dir, log_level, custom_log_dir, thumb_cache_max_mb) = {
                 let pool = db_read_pool.get().expect("Pool error");
                 let size: u32 = get_config(&pool, "thumb_size")
                     .ok()
@@ -144,7 +144,12 @@ pub fn run() {
                 let l_dir: Option<String> = get_config(&pool, "log_dir")
                     .ok()
                     .flatten();
-                (size, skip, strategy, gpu_eng, cache_dir, lvl, l_dir)
+                let max_mb: u64 = get_config(&pool, "thumb_cache_max_mb")
+                    .ok()
+                    .flatten()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(1024);
+                (size, skip, strategy, gpu_eng, cache_dir, lvl, l_dir, max_mb)
             };
 
             let cache_dir = custom_cache_dir
@@ -211,7 +216,8 @@ pub fn run() {
 
             // ── Build AppState ─────────────────────────────────────────────
             // ── 构建 AppState ─────────────────────────────────────────────
-            let app_state = AppState::new(
+            let cache_dir_for_task = cache_dir.clone();
+            let app_state = Arc::new(AppState::new(
                 db_writer,
                 db_read_pool,
                 cache_dir,
@@ -220,7 +226,7 @@ pub fn run() {
                 thumb_skip_max_kb,
                 thumb_strategy,
                 gpu_engine,
-            );
+            ));
 
             // ── Pre-warm one read-pool connection ─────────────────────────────
             // Eagerly acquire (and immediately release) one read connection so the pool
@@ -234,8 +240,35 @@ pub fn run() {
             // 每次调用可节省约 50-100ms。
             drop(app_state.db_read_pool.get());
 
-            app.manage(Arc::new(app_state));
+            let app_state_for_task = app_state.clone();
+            app.manage(app_state);
             info!("AppState initialised | 应用状态 (AppState) 初始化完成");
+
+            // ── Background Tasks ──────────────────────────────────────────
+            // ── 后台任务 ──────────────────────────────────────────
+            tokio::spawn(async move {
+                // Delay first run by 3 minutes so it doesn't block cold start | 延迟 3 分钟执行，避免影响冷启动
+                tokio::time::sleep(std::time::Duration::from_secs(3 * 60)).await;
+                loop {
+                    tracing::info!("Running PRAGMA optimize for database | 正在执行数据库碎片优化");
+                    if let Ok(conn) = app_state_for_task.db_writer.lock() {
+                        if let Err(e) = conn.execute_batch("PRAGMA optimize;") {
+                            tracing::warn!("Failed to run PRAGMA optimize | 执行数据库碎片优化失败: {}", e);
+                        }
+                    } else {
+                        tracing::warn!("Failed to lock db_writer for PRAGMA optimize | 无法获取写入锁进行碎片优化");
+                    }
+                    // Run every 24 hours | 每 24 小时执行一次
+                    tokio::time::sleep(std::time::Duration::from_secs(24 * 3600)).await;
+                }
+            });
+
+            let cache_dir_clone = cache_dir_for_task;
+            tokio::spawn(async move {
+                // Delay cache enforcement by 1 minute | 延迟 1 分钟执行缓存清理
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                crate::thumbnail::cache::enforce_cache_limit(&cache_dir_clone, thumb_cache_max_mb);
+            });
 
             // Force-hide the main window regardless of what tauri-plugin-window-state
             // may have restored from the previous session (it saves visible:true after

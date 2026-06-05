@@ -18,7 +18,7 @@ use crate::error::{AppError, Result};
 
 /// Latest schema version supported by this binary.
 /// 此二进制文件支持的最新模式版本。
-const CURRENT_VERSION: u32 = 2;
+const CURRENT_VERSION: u32 = 3;
 
 /// Read the current schema version from the database.
 /// 从数据库读取当前的模式版本。
@@ -69,9 +69,18 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
         info!("Migration v2 complete | v2 数据库迁移完成");
     }
 
+    if version < 3 {
+        info!("Applying migration → v3 (AI search results) | 正在应用数据库迁移 → v3（AI 搜索结果）");
+        crate::db::schema::SCHEMA_V3; // ensure it's imported or use direct access
+        conn.execute_batch(crate::db::schema::SCHEMA_V3)
+            .map_err(|e| AppError::Db(format!("Migration v3 failed: {e}")))?;
+        write_version(conn, 3)?;
+        info!("Migration v3 complete | v3 数据库迁移完成");
+    }
+
     // Future migrations follow the same pattern:
     // 未来的迁移遵循相同的模式：
-    // if version < 3 {
+    // if version < 4 {
     //     conn.execute_batch(SCHEMA_V3)?;
     //     write_version(conn, 3)?;
     // }

@@ -136,14 +136,14 @@ export const useUiStore = defineStore('ui', () => {
   // ── Group and sort settings ──────────────────────────────────────────────
   // ── 分组和排序设置 ──────────────────────────────────────────────
   const groupBy = ref<'date' | 'folder' | 'none'>('date')
-  const sortWithinGroup = ref<'datetime' | 'filename'>('datetime')
+  const sortWithinGroup = ref<'datetime' | 'filename' | 'similarity'>('datetime')
 
   function setGroupBy(mode: 'date' | 'folder' | 'none') {
     groupBy.value = mode
     invoke(IPC.SET_APP_CONFIG, { key: 'group_by', value: mode }).catch(console.error)
   }
 
-  function setSortWithinGroup(sort: 'datetime' | 'filename') {
+  function setSortWithinGroup(sort: 'datetime' | 'filename' | 'similarity') {
     sortWithinGroup.value = sort
     invoke(IPC.SET_APP_CONFIG, { key: 'sort_within_group', value: sort }).catch(console.error)
   }

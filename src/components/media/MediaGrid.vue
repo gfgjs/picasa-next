@@ -74,6 +74,7 @@
               :thumbhash="item.thumbhash"
               :file-format="item.fileFormat"
               :file-size="item.fileSize"
+              :similarity="item.similarity"
               :is-favorited="item.isFavorited"
               :is-selected="selection.isSelected(item.id)"
               :is-selection-mode="selection.isSelectionMode.value"
@@ -539,12 +540,16 @@ watch(() => ui.pendingScrollLabel, async (label) => {
 <style scoped>
 .media-grid-wrapper {
   position: relative;
-  height: 100%;
   width: 100%;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .media-grid {
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   overflow-y: scroll;
   overflow-x: hidden;
   padding-left: var(--scrollbar-width, 6px);

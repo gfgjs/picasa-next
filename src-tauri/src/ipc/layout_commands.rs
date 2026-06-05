@@ -62,6 +62,7 @@ pub async fn compute_layout(
             total_rows: 0,
             total_height: 0.0,
             layout_version: version,
+            total_items: 0,
         });
     }
 
@@ -88,6 +89,7 @@ pub async fn compute_layout(
         total_rows:     get_summary(&state.layout_cache).map(|s| s.total_rows).unwrap_or(0),
         total_height,
         layout_version: version,
+        total_items:    get_summary(&state.layout_cache).map(|s| s.total_items).unwrap_or(0),
     })
 }
 

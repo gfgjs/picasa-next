@@ -193,11 +193,11 @@ pub async fn semantic_search_cmd(
     query: String,
     limit: Option<usize>,
     state: State<'_, Arc<AppState>>,
-) -> std::result::Result<Vec<SemanticSearchResult>, String> {
+) -> std::result::Result<usize, String> {
     let state = Arc::clone(&state);
     let top_k = limit.unwrap_or(50).min(1000);
 
-    tokio::task::spawn_blocking(move || -> std::result::Result<Vec<SemanticSearchResult>, String> {
+    tokio::task::spawn_blocking(move || -> std::result::Result<usize, String> {
         // Ensure engine is ready
         // 确保引擎就绪
         ensure_engine_initialised(&state).map_err(|e| e.to_string())?;
@@ -208,12 +208,12 @@ pub async fn semantic_search_cmd(
         let text_session = engine.clip_text_session.as_ref()
             .ok_or_else(|| "Text encoder not loaded | 文本编码器未加载".to_string())?;
 
-        let conn = state.db_read_pool.get().map_err(|e| e.to_string())?;
+        let mut conn = state.db_writer.lock().unwrap();
 
         // Use cached tokenizer if available, otherwise load from disk.
         // 使用缓存的分词器，如果没有则从磁盘加载。
         if let Some(tokenizer) = engine.clip_tokenizer.as_ref() {
-            semantic_search(&conn, text_session, tokenizer, &query, top_k)
+            semantic_search(&mut conn, text_session, tokenizer, &query, top_k)
                 .map_err(|e| e.to_string())
         } else {
             // Fallback: load tokenizer from disk (happens if vocab.txt wasn't present at init time)
@@ -222,7 +222,7 @@ pub async fn semantic_search_cmd(
             let vocab_path = models.join("vocab.txt");
             let tokenizer = crate::ai::clip::ClipTokenizer::from_vocab(&vocab_path)
                 .map_err(|e| e.to_string())?;
-            semantic_search(&conn, text_session, &tokenizer, &query, top_k)
+            semantic_search(&mut conn, text_session, &tokenizer, &query, top_k)
                 .map_err(|e| e.to_string())
         }
     })

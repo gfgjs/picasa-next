@@ -2,7 +2,10 @@
   <!-- Semantic search results overlay panel -->
   <!-- 语义搜索结果覆盖面板 -->
   <Transition name="semantic-panel">
-    <div v-if="ai.isSemanticMode" class="semantic-panel" role="region" aria-label="AI 语义搜索结果">
+    <div v-if="ai.isSemanticMode" 
+         class="semantic-panel" 
+         :class="{ 'semantic-panel--has-results': ai.semanticQuery && !ai.isSearching && (media.layoutSummary?.totalItems || 0) > 0 }"
+         role="region" aria-label="AI 语义搜索结果">
 
       <!-- Header -->
       <div class="semantic-panel__header">
@@ -88,106 +91,64 @@
         <span>语义分析中…</span>
       </div>
 
-      <!-- No results -->
-      <!-- 无结果 -->
-      <div v-else-if="ai.semanticResults.length === 0 && ai.semanticQuery" class="semantic-panel__empty">
-        <Search :size="32" class="semantic-panel__empty-icon" />
-        <p>未找到匹配的图片</p>
-        <p class="semantic-panel__hint">尝试换一种描述方式，或先完成 AI 分析（{{ ai.status.analyzedItems }}/{{ ai.status.totalItems }} 张）</p>
-      </div>
-
-      <!-- Results grid -->
-      <!-- 结果网格 -->
-      <div v-else class="semantic-panel__results" ref="semanticResultsOuterRef">
+      <!-- Results state (query exists, not searching) -->
+      <!-- 结果状态（存在查询，非搜索中） -->
+      <template v-else-if="ai.semanticQuery">
+        <!-- Results meta (ALWAYS shown if we have a query, so slider is available) -->
         <div class="semantic-panel__results-meta">
-          <span>找到 {{ ai.visibleSemanticResults.length }} 张相关图片</span>
-          <div class="threshold-slider" v-if="ai.semanticResults.length > 0">
-            <label>相似度 &ge; {{ (ai.similarityThreshold * 100).toFixed(0) }}%</label>
-            <input type="range" min="0.1" max="0.5" step="0.01" v-model.number="ai.similarityThreshold" />
+          <span class="semantic-panel__results-count">找到 {{ media.layoutSummary?.totalItems || 0 }} 张相关图片</span>
+          <div class="threshold-slider">
+            <label>相似度 &ge; {{ (localThreshold * 100).toFixed(0) }}%</label>
+            <input type="range" min="0.1" max="0.5" step="0.01" :value="localThreshold" @input="onSliderInput" @change="onSliderChange" />
           </div>
         </div>
-        <div
-          v-if="layoutItems.length > 0"
-          ref="resultsContainerRef"
-          class="search-results-justified"
-          :style="{ height: layoutTotalHeight + 'px', position: 'relative', width: '100%' }"
-        >
-          <div
-            v-for="item in layoutItems"
-            :key="item.id"
-            class="search-result-positioned"
-            :style="{
-              position: 'absolute',
-              left: item.x + 'px',
-              top: item.y + 'px',
-              width: item.w + 'px',
-              height: item.h + 'px',
-              transition: 'all 0.3s ease'
-            }"
-          >
-            <SemanticResultCard
-              :item="getResultById(item.id)!"
-              :cache-dir="cacheDir"
-              :is-selected="selection.isSelected(item.id)"
-              :is-selection-mode="selection.isSelectionMode.value"
-              @click="(i, e) => handleCardClick(i, e)"
-              @select="(i) => selection.toggleSelect(i.id)"
-              @pointerdown="selection.onPointerDown(item.id, $event)"
-            />
-          </div>
-        </div>
-      </div>
 
-      <!-- Selection toolbar -->
-      <SelectionToolbar
-        @batch-favorite="batchFavorite"
-        @batch-unfavorite="batchUnfavorite"
-        @batch-delete="batchDelete"
-        @select-all="selection.selectAll(getAllVisibleItemIds())"
-        @invert-selection="selection.invertSelection(getAllVisibleItemIds())"
-      />
+        <!-- Empty state (shown if 0 items) -->
+        <div v-if="(media.layoutSummary?.totalItems || 0) === 0" class="semantic-panel__empty">
+          <Search :size="32" class="semantic-panel__empty-icon" />
+          <p>未找到匹配的图片</p>
+          <p class="semantic-panel__hint">尝试换一种描述方式，或降低相似度阈值</p>
+        </div>
+      </template>
+
     </div>
   </Transition>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { ref, watch } from 'vue'
 import { Sparkles, Zap, Square, RefreshCw, AlertCircle, Search } from '@lucide/vue'
-import { appDataDir, join } from '@tauri-apps/api/path'
-import { invoke } from '@tauri-apps/api/core'
-import { useI18n } from 'vue-i18n'
 import { useAiStore } from '../../stores/aiStore'
-import { useUiStore } from '../../stores/uiStore'
-import { useSelection } from '../../composables/useSelection'
 import { useMediaStore } from '../../stores/mediaStore'
-import SemanticResultCard from './SemanticResultCard.vue'
-import SelectionToolbar from './SelectionToolbar.vue'
-import type { SemanticSearchResult } from '../../types/ai'
-import { computeJustifiedLayout, type PositionedItem } from '../../utils/justifiedLayout'
-import { watch } from 'vue'
-
-const emit = defineEmits<{
-  (e: 'item-click', item: SemanticSearchResult): void
-}>()
 
 const ai = useAiStore()
-const ui = useUiStore()
-const { t } = useI18n()
-const selection = useSelection()
 const media = useMediaStore()
 const isInitialising = ref(false)
 
-// Resolve cache directory (same logic as MediaGrid.vue)
-// 解析缓存目录（与 MediaGrid.vue 相同逻辑）
-const cacheDir = ref('')
-onMounted(async () => {
-  try {
-    const dir = await appDataDir()
-    cacheDir.value = (await join(dir, 'cache')).replace(/\\/g, '/')
-  } catch (e) {
-    console.warn('[SemanticSearchPanel] Failed to resolve cacheDir:', e)
-  }
+// Debounce logic for the slider
+const localThreshold = ref(ai.similarityThreshold)
+let sliderTimeout: ReturnType<typeof setTimeout> | null = null
+
+watch(() => ai.similarityThreshold, (val) => {
+  localThreshold.value = val
 })
+
+function onSliderInput(e: Event) {
+  const val = parseFloat((e.target as HTMLInputElement).value)
+  localThreshold.value = val
+
+  if (sliderTimeout) clearTimeout(sliderTimeout)
+  sliderTimeout = setTimeout(() => {
+    ai.similarityThreshold = val
+  }, 300) // 300ms debounce
+}
+
+function onSliderChange(e: Event) {
+  const val = parseFloat((e.target as HTMLInputElement).value)
+  localThreshold.value = val
+  if (sliderTimeout) clearTimeout(sliderTimeout)
+  ai.similarityThreshold = val
+}
 
 async function initAndStart() {
   isInitialising.value = true
@@ -197,147 +158,6 @@ async function initAndStart() {
   } finally {
     isInitialising.value = false
   }
-}
-
-// ── Justified Layout ─────────────────────────────────────────────────────
-const resultsContainerRef = ref<HTMLElement | null>(null)
-const containerWidth = ref(0)
-const layoutItems = ref<PositionedItem[]>([])
-const layoutTotalHeight = ref(0)
-let resizeObserver: ResizeObserver | null = null
-
-function updateLayout() {
-  if (containerWidth.value <= 0 || ai.visibleSemanticResults.length === 0) {
-    layoutItems.value = []
-    layoutTotalHeight.value = 0
-    return
-  }
-  const result = computeJustifiedLayout(
-    ai.visibleSemanticResults,
-    containerWidth.value,
-    180, // targetRowHeight
-    8    // gap
-  )
-  layoutItems.value = result.items
-  layoutTotalHeight.value = result.totalHeight
-}
-
-onMounted(() => {
-  resizeObserver = new ResizeObserver((entries) => {
-    const w = entries[0].contentRect.width
-    if (w > 0 && Math.abs(w - containerWidth.value) > 1) {
-      containerWidth.value = w
-      updateLayout()
-    }
-  })
-  
-  // Observe a parent element of the layout if we want, or the results wrapper.
-  // We'll observe the results parent meta div or we can watch the panel itself.
-  // Since resultsContainerRef might not exist initially, we should observe the document or wait.
-})
-
-// Use a ref for the outer container so we can measure its width even if it's empty
-const semanticResultsOuterRef = ref<HTMLElement | null>(null)
-
-watch([() => ai.visibleSemanticResults, () => ai.similarityThreshold], () => {
-  updateLayout()
-}, { deep: true })
-
-onMounted(() => {
-  if (resizeObserver && semanticResultsOuterRef.value) {
-    resizeObserver.observe(semanticResultsOuterRef.value)
-  }
-})
-
-watch(semanticResultsOuterRef, (el) => {
-  if (resizeObserver) {
-    resizeObserver.disconnect()
-    if (el) {
-      resizeObserver.observe(el)
-      // trigger immediate layout
-      containerWidth.value = el.clientWidth || 0
-      updateLayout()
-    }
-  }
-})
-
-function getResultById(id: number): SemanticSearchResult | undefined {
-  return ai.visibleSemanticResults.find(r => r.id === id)
-}
-
-// ── Detail & Selection ───────────────────────────────────────────────────
-
-function getAllVisibleItemIds(): number[] {
-  return ai.visibleSemanticResults.map(i => i.id)
-}
-
-function handleCardClick(item: SemanticSearchResult, event: MouseEvent) {
-  if (selection.wasDrag()) return
-
-  if (event.ctrlKey || event.metaKey) {
-    selection.toggleSelect(item.id)
-    return
-  }
-
-  if (selection.isSelectionMode.value && event.shiftKey) {
-    selection.selectRange(selection.lastClickedId.value, item.id, getAllVisibleItemIds())
-    return
-  }
-
-  emit('item-click', item)
-}
-
-function onKeyDown(e: KeyboardEvent) {
-  selection.onKeyDown(e, getAllVisibleItemIds)
-}
-
-onMounted(() => document.addEventListener('keydown', onKeyDown))
-onBeforeUnmount(() => document.removeEventListener('keydown', onKeyDown))
-
-// ── Batch Actions ────────────────────────────────────────────────────────
-
-async function batchFavorite() {
-  const ids = Array.from(selection.selectedIds.value)
-  if (ids.length === 0) return
-  await invoke('batch_toggle_favorite', { itemIds: ids, value: true })
-  
-  // Update visible items
-  for (const item of ai.visibleSemanticResults) {
-    if (selection.isSelected(item.id)) {
-      // It's possible SemanticSearchResult doesn't have isFavorited, but if it did, we'd update it here.
-    }
-  }
-  await media.loadStats()
-  
-  if (typeof (ui as any).showToast === 'function') {
-    ;(ui as any).showToast(t('selection.favorited', { count: ids.length }))
-  }
-  selection.clearSelection()
-}
-
-async function batchUnfavorite() {
-  const ids = Array.from(selection.selectedIds.value)
-  if (ids.length === 0) return
-  await invoke('batch_toggle_favorite', { itemIds: ids, value: false })
-  await media.loadStats()
-  if (typeof (ui as any).showToast === 'function') {
-    ;(ui as any).showToast(`已取消收藏 ${ids.length} 项`)
-  }
-  selection.clearSelection()
-}
-
-async function batchDelete() {
-  const ids = Array.from(selection.selectedIds.value)
-  if (ids.length === 0) return
-  await invoke('soft_delete_items', { itemIds: ids })
-  
-  // Update local results view
-  ai.semanticResults = ai.semanticResults.filter(item => !selection.isSelected(item.id))
-  
-  if (typeof (ui as any).showToast === 'function') {
-    ;(ui as any).showToast(t('selection.deleted', { count: ids.length }))
-  }
-  selection.clearSelection()
 }
 </script>
 
@@ -351,6 +171,13 @@ async function batchDelete() {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  pointer-events: auto;
+}
+
+.semantic-panel--has-results {
+  position: relative;
+  inset: auto;
+  flex: 0 0 auto;
 }
 
 /* Transition */
@@ -373,6 +200,7 @@ async function batchDelete() {
   border-bottom: 1px solid var(--color-border);
   background: var(--color-bg-surface);
   flex-shrink: 0;
+  pointer-events: auto;
 }
 
 .semantic-panel__title {
@@ -484,6 +312,7 @@ async function batchDelete() {
   font-size: var(--font-size-sm);
   background: color-mix(in srgb, hsl(0 70% 60%) 8%, transparent);
   border-bottom: 1px solid color-mix(in srgb, hsl(0 70% 60%) 20%, transparent);
+  pointer-events: auto;
 }
 
 .semantic-panel__empty,
@@ -498,6 +327,8 @@ async function batchDelete() {
   font-size: var(--font-size-sm);
   text-align: center;
   padding: var(--spacing-xl);
+  pointer-events: auto;
+  background: var(--color-bg-primary);
 }
 .semantic-panel__empty-icon {
   opacity: 0.25;
@@ -518,22 +349,20 @@ async function batchDelete() {
   animation: spin 0.8s linear infinite;
 }
 
-/* ── Results ─────────────────────────────────────────────────────────────── */
-.semantic-panel__results {
-  flex: 1;
-  overflow-y: auto;
-  padding: var(--spacing-md);
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-md);
-}
+/* ── Results meta ────────────────────────────────────────────────────────── */
 .semantic-panel__results-meta {
+  padding: 10px var(--spacing-md);
+  background: var(--color-bg-primary);
+  border-bottom: 1px solid var(--color-border);
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  font-size: var(--font-size-xs);
-  color: var(--color-text-tertiary);
-  padding: 0 4px;
+  justify-content: space-between;
+  pointer-events: auto;
+}
+.semantic-panel__results-count {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  font-weight: 500;
 }
 .threshold-slider {
   display: flex;
@@ -543,15 +372,5 @@ async function batchDelete() {
 .threshold-slider label {
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
-}
-.search-results-justified {
-  /* wrapper for absolute elements */
-  margin-top: 8px;
-}
-.search-result-positioned {
-  /* Ensure the hovered element sits above the others */
-}
-.search-result-positioned:hover {
-  z-index: 10;
 }
 </style>

@@ -121,16 +121,17 @@
         <option value="none">{{ $t('toolbar.noGroup') }}</option>
       </select>
 
-      <!-- Sort within group (visible only for folder grouping) -->
-      <!-- 组内排序（仅在文件夹分组时可见） -->
+      <!-- Sort within group (visible only for folder grouping or AI mode) -->
+      <!-- 组内排序（仅在文件夹分组或 AI 搜索时可见） -->
       <select
-        v-if="ui.groupBy === 'folder'"
+        v-if="ui.groupBy === 'folder' || ai.isSemanticMode"
         class="toolbar__select"
         :value="ui.sortWithinGroup"
         @change="onSortWithinGroupChange"
       >
         <option value="datetime">{{ $t('toolbar.sortByTime') }}</option>
         <option value="filename">{{ $t('toolbar.sortByName') }}</option>
+        <option v-if="ai.isSemanticMode" value="similarity">按相似度</option>
       </select>
 
       <!-- Asc/Desc toggle -->
@@ -229,7 +230,7 @@ function onGroupByChange(e: Event) {
 }
 
 function onSortWithinGroupChange(e: Event) {
-  const value = (e.target as HTMLSelectElement).value as 'datetime' | 'filename'
+  const value = (e.target as HTMLSelectElement).value as 'datetime' | 'filename' | 'similarity'
   ui.setSortWithinGroup(value)
 }
 </script>

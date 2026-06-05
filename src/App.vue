@@ -13,7 +13,7 @@
 
     <!-- Default slot: media content OR semantic search panel -->
     <!-- 默认插槽：媒体内容或语义搜索面板 -->
-    <SemanticSearchPanel v-show="route.path === '/'" @item-click="onSemanticItemClick" />
+    <SemanticSearchPanel v-show="route.path === '/'" />
     <RouterView />
 
     <template #statusbar>
@@ -56,13 +56,6 @@ const ui = useUiStore()
 const ai = useAiStore()
 const media = useMediaStore()
 const route = useRoute()
-
-function onSemanticItemClick(item: SemanticSearchResult) {
-  // Open the detail overlay for the clicked semantic search result.
-  // 为点击的语义搜索结果打开详情视图。
-  const allIds = ai.semanticResults.map(r => r.id)
-  media.openDetailFromSearch(item.id, allIds)
-}
 
 // Init theme
 // 初始化主题

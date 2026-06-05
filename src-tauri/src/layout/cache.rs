@@ -22,6 +22,7 @@ pub struct LayoutSummary {
     pub total_rows:   usize,
     pub total_height: f64,
     pub layout_version: u64,
+    pub total_items:  usize,
 }
 
 /// Data stored in the in-memory layout cache.
@@ -30,6 +31,7 @@ pub struct LayoutCacheData {
     pub rows:           Vec<LayoutRow>,
     pub total_height:   f64,
     pub layout_version: u64,
+    pub total_items:    usize,
 }
 
 /// The layout cache — stored behind an `RwLock` in `AppState`.
@@ -46,11 +48,16 @@ pub fn new_layout_cache() -> LayoutCache {
 /// 存储新的布局，自动递增版本号。
 pub fn store_layout(cache: &LayoutCache, rows: Vec<LayoutRow>, total_height: f64) -> u64 {
     let version = LAYOUT_VERSION_COUNTER.fetch_add(1, Ordering::SeqCst) + 1;
+    let total_items = rows.iter().map(|r| match r {
+        LayoutRow::Normal { items, .. } => items.len(),
+        _ => 0,
+    }).sum();
     let mut guard = cache.write().unwrap();
     *guard = Some(LayoutCacheData {
         rows,
         total_height,
         layout_version: version,
+        total_items,
     });
     version
 }
@@ -120,6 +127,7 @@ pub fn get_summary(cache: &LayoutCache) -> Option<LayoutSummary> {
         total_rows:     data.rows.len(),
         total_height:   data.total_height,
         layout_version: data.layout_version,
+        total_items:    data.total_items,
     })
 }
 

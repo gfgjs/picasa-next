@@ -15,6 +15,7 @@ export interface LayoutRowItem {
   thumbStatus: number
   thumbPath:   string | null
   thumbhash:   number[] | null
+  similarity?: number
 }
 
 export interface LayoutRowNormal {
@@ -37,4 +38,5 @@ export interface LayoutSummary {
   totalRows:     number
   totalHeight:   number
   layoutVersion: number
+  totalItems:    number
 }

@@ -113,6 +113,7 @@ pub struct LayoutItem {
     pub dir_path:      Option<String>,
     pub dir_name:      Option<String>,
     pub file_name:     String,
+    pub similarity:    Option<f64>,
 }
 
 // ── Image meta ───────────────────────────────────────────────────────────────
@@ -200,6 +201,8 @@ pub struct MediaFilter {
     pub directory_id:     Option<i64>,
     pub search_query:     Option<String>,
     pub search_scope:     Option<String>,
+    pub ai_search:        Option<bool>,
+    pub ai_threshold:     Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -5,6 +5,8 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { useMediaStore } from './mediaStore'
+import { useUiStore } from './uiStore'
 import type { AiStatusSummary, SemanticSearchResult, SearchMode } from '../types/ai'
 
 export const useAiStore = defineStore('ai', () => {
@@ -21,7 +23,7 @@ export const useAiStore = defineStore('ai', () => {
 
   const searchMode = ref<SearchMode>('filename')
   const semanticQuery = ref('')
-  const semanticResults = ref<SemanticSearchResult[]>([])
+  const matchCount = ref(0)
   const similarityThreshold = ref(0.20)
   const isSearching = ref(false)
   const searchError = ref<string | null>(null)
@@ -47,10 +49,6 @@ export const useAiStore = defineStore('ai', () => {
   })
 
   const isSemanticMode = computed(() => searchMode.value === 'semantic')
-
-  const visibleSemanticResults = computed(() => {
-    return semanticResults.value.filter(r => r.similarity >= similarityThreshold.value)
-  })
 
   // ── Actions ───────────────────────────────────────────────────────────────
 
@@ -81,7 +79,6 @@ export const useAiStore = defineStore('ai', () => {
       status.value.isAnalyzing = true
       // Embeddings are reset server-side — clear stale search results immediately
       // 服务端已重置嵌入向量，立即清除前端过时的搜索结果
-      semanticResults.value = []
       searchError.value = null
       startStatusPolling()
     } catch (e) {
@@ -105,7 +102,6 @@ export const useAiStore = defineStore('ai', () => {
   async function rebuildEmbeddings() {
     try {
       await invoke('rebuild_embeddings')
-      semanticResults.value = []
       await fetchStatus()
     } catch (e) {
       console.error('[AI] Rebuild embeddings error | 重建嵌入向量错误:', e)
@@ -113,9 +109,10 @@ export const useAiStore = defineStore('ai', () => {
   }
 
   /** Run a semantic search query | 运行语义搜索查询 */
-  async function runSemanticSearch(query: string, limit = 50) {
+  async function runSemanticSearch(query: string, limit = 1000) {
     if (!query.trim()) {
-      semanticResults.value = []
+      semanticQuery.value = ''
+      useMediaStore().invalidateLayout()
       return
     }
 
@@ -124,15 +121,16 @@ export const useAiStore = defineStore('ai', () => {
     semanticQuery.value = query
 
     try {
-      // Fetch up to 500 results from backend to allow frontend filtering
-      const results = await invoke<SemanticSearchResult[]>('semantic_search_cmd', {
+      const count = await invoke<number>('semantic_search_cmd', {
         query,
-        limit: 500,
+        limit,
       })
-      semanticResults.value = results
+      matchCount.value = count
+      // The results are stored in the ai_search_results table in DB.
+      // We just need to invalidate the layout so MediaGrid reloads.
+      useMediaStore().invalidateLayout()
     } catch (e) {
       searchError.value = String(e)
-      semanticResults.value = []
     } finally {
       isSearching.value = false
     }
@@ -141,14 +139,39 @@ export const useAiStore = defineStore('ai', () => {
   /** Toggle between filename and semantic search modes | 在文件名和语义搜索模式之间切换 */
   function toggleSearchMode() {
     searchMode.value = searchMode.value === 'filename' ? 'semantic' : 'filename'
-    semanticResults.value = []
+    const ui = useUiStore()
+    
+    if (searchMode.value === 'semantic') {
+      if (ui.sortWithinGroup !== 'similarity') {
+        ui.setSortWithinGroup('similarity')
+      }
+      ui.searchQuery = ''
+    } else {
+      if (ui.sortWithinGroup === 'similarity') {
+        ui.setSortWithinGroup('datetime')
+      }
+      semanticQuery.value = ''
+    }
+    
     searchError.value = null
+    useMediaStore().invalidateLayout()
   }
 
   function setSearchMode(mode: SearchMode) {
     searchMode.value = mode
-    if (mode === 'filename') {
-      semanticResults.value = []
+    const ui = useUiStore()
+    
+    if (mode === 'semantic') {
+      if (ui.sortWithinGroup !== 'similarity') {
+        ui.setSortWithinGroup('similarity')
+      }
+      ui.searchQuery = ''
+    } else {
+      if (ui.sortWithinGroup === 'similarity') {
+        ui.setSortWithinGroup('datetime')
+      }
+      semanticQuery.value = ''
+      useMediaStore().invalidateLayout()
     }
   }
 
@@ -201,15 +224,14 @@ export const useAiStore = defineStore('ai', () => {
     status,
     searchMode,
     semanticQuery,
-    semanticResults,
     similarityThreshold,
     isSearching,
     searchError,
+    matchCount,
     // computed
     analyzeProgress,
     providerLabel,
     isSemanticMode,
-    visibleSemanticResults,
     // actions
     fetchStatus,
     initEngine,

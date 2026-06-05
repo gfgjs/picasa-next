@@ -129,4 +129,8 @@ export interface MediaFilter {
   minRating?:     number | null
   dateRange?:     DateRange | null
   livePhotoOnly?: boolean | null
+  searchQuery?:   string | null
+  searchScope?:   string | null
+  aiSearch?:      boolean | null
+  aiThreshold?:   number | null
 }

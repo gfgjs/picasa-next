@@ -6,6 +6,7 @@ import { ref, watch, onBeforeUnmount } from 'vue'
 import { useMediaStore } from '../stores/mediaStore'
 import { useFilterStore } from '../stores/filterStore'
 import { useUiStore } from '../stores/uiStore'
+import { useAiStore } from '../stores/aiStore'
 import { DEFAULTS } from '../constants/defaults'
 import type { LayoutRow } from '../types/layout'
 
@@ -13,6 +14,7 @@ export function useJustifiedLayout(containerWidthRef: () => number) {
   const media  = useMediaStore()
   const filter = useFilterStore()
   const ui     = useUiStore()
+  const ai     = useAiStore()
 
   let resizeTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -46,6 +48,12 @@ export function useJustifiedLayout(containerWidthRef: () => number) {
       ;(filters as any).searchQuery = ui.searchQuery.trim()
       ;(filters as any).searchScope = ui.searchScope
     }
+
+    if (ai.isSemanticMode) {
+      ;(filters as any).aiSearch = true
+      ;(filters as any).aiThreshold = ai.similarityThreshold
+    }
+
     await media.computeLayout({
       directoryId,
       filters,
@@ -85,6 +93,8 @@ export function useJustifiedLayout(containerWidthRef: () => number) {
       () => ui.groupBy,
       () => ui.sortWithinGroup,
       () => ui.sortOrder,
+      () => ai.isSemanticMode,
+      () => ai.similarityThreshold,
     ],
     () => compute(),
     { deep: true }

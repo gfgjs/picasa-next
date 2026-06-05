@@ -80,6 +80,7 @@ fn map_layout_item(row: &Row<'_>) -> rusqlite::Result<LayoutItem> {
         dir_path:      row.get(13)?,
         dir_name:      row.get(14)?,
         file_name:     row.get(15)?,
+        similarity:    row.get(16)?,
     })
 }
 
@@ -400,10 +401,16 @@ pub fn query_layout_items(
     let mut sql = String::from(
         "SELECT m.id, m.width, m.height, m.file_size, m.sort_datetime, m.file_format, m.media_type, m.is_live_photo,
                 m.duration_ms, m.thumb_status, m.thumb_path, m.thumbhash, m.is_favorited,
-                d.rel_path as dir_path, d.name as dir_name, m.file_name
-         FROM media_items m
-         JOIN directories d ON m.directory_id = d.id"
+                d.rel_path as dir_path, d.name as dir_name, m.file_name, "
     );
+
+    if filter.ai_search == Some(true) {
+        sql.push_str("ai.similarity\n");
+    } else {
+        sql.push_str("NULL as similarity\n");
+    }
+
+    sql.push_str("         FROM media_items m\n         JOIN directories d ON m.directory_id = d.id");
 
     let mut needs_meta_join = false;
     if let Some(ref q) = filter.search_query {
@@ -419,10 +426,23 @@ pub fn query_layout_items(
         sql.push_str("\n         LEFT JOIN image_meta im ON m.id = im.item_id");
     }
 
+    if filter.ai_search == Some(true) {
+        sql.push_str("\n         JOIN ai_search_results ai ON m.id = ai.file_id");
+    }
+
     sql.push_str("\n         WHERE m.is_deleted=0 AND m.companion_of IS NULL");
 
     let mut param_idx = 0usize;
     let mut extras: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+    if filter.ai_search == Some(true) {
+        if let Some(threshold) = filter.ai_threshold {
+            param_idx += 1;
+            // Match the frontend's visual rounding (e.g. Math.round(similarity * 100))
+            sql.push_str(&format!(" AND ROUND(ai.similarity * 100.0) >= ?{param_idx}"));
+            extras.push(Box::new((threshold * 100.0).round()));
+        }
+    }
 
     if let Some(dir_id) = filter.directory_id {
         param_idx += 1;
@@ -544,13 +564,26 @@ pub fn query_layout_items(
     };
 
     if group_by == Some("folder") {
-        if sort_within == Some("filename") {
+        if sort_within == Some("similarity") && filter.ai_search == Some(true) {
+            sql.push_str(&format!(" ORDER BY d.rel_path ASC, ai.similarity {}", order_dir));
+        } else if sort_within == Some("filename") {
             sql.push_str(&format!(" ORDER BY d.rel_path ASC, m.file_name COLLATE NATURAL_CMP {}", order_dir));
         } else {
             sql.push_str(&format!(" ORDER BY d.rel_path ASC, m.sort_datetime {}", order_dir));
         }
+    } else if group_by == Some("date") {
+        let date_expr = "date(m.sort_datetime, 'unixepoch', 'localtime')";
+        if sort_within == Some("similarity") && filter.ai_search == Some(true) {
+            sql.push_str(&format!(" ORDER BY {} {}, ai.similarity {}", date_expr, order_dir, order_dir));
+        } else if sort_within == Some("filename") {
+            sql.push_str(&format!(" ORDER BY {} {}, m.file_name COLLATE NATURAL_CMP {}", date_expr, order_dir, order_dir));
+        } else {
+            sql.push_str(&format!(" ORDER BY m.sort_datetime {}", order_dir));
+        }
     } else {
-        if sort_within == Some("filename") {
+        if sort_within == Some("similarity") && filter.ai_search == Some(true) {
+            sql.push_str(&format!(" ORDER BY ai.similarity {}", order_dir));
+        } else if sort_within == Some("filename") {
             sql.push_str(&format!(" ORDER BY m.file_name COLLATE NATURAL_CMP {}", order_dir));
         } else {
             sql.push_str(&format!(" ORDER BY m.sort_datetime {}", order_dir));

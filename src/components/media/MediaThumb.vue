@@ -39,12 +39,13 @@
     <div class="media-thumb__overlays">
       <!-- Source / Thumb indicator -->
       <!-- 源文件 / 缩略图 指示器 -->
-      <span v-if="isLoaded && thumbStatus === 3" class="badge badge-source" title="直接渲染原图">ORIG</span>
-      <span v-if="isLoaded && thumbStatus === 1" class="badge badge-thumb" title="渲染缩略图">THUMB</span>
+      <span v-if="similarity == null && isLoaded && thumbStatus === 3" class="badge badge-source" title="直接渲染原图">ORIG</span>
+      <span v-if="similarity == null && isLoaded && thumbStatus === 1" class="badge badge-thumb" title="渲染缩略图">THUMB</span>
       
       <!-- Top Left Badges (Size + Live) -->
       <div class="media-thumb__top-left">
-        <span v-if="fileSize" class="badge badge-size">{{ formatFileSize(fileSize) }}</span>
+        <span v-if="similarity == null && fileSize" class="badge badge-size">{{ formatFileSize(fileSize) }}</span>
+        <span v-if="similarity != null" class="badge badge-similarity">{{ Math.round(similarity * 100) }}%</span>
         <span v-if="isLivePhoto" class="badge badge-live">LIVE</span>
       </div>
 
@@ -97,6 +98,7 @@ interface Props {
   thumbhash?:      number[] | null
   fileFormat?:     string
   fileSize?:       number
+  similarity?:     number
   isFavorited?:    boolean
   isSelected?:     boolean
   isSelectionMode?: boolean
@@ -363,6 +365,13 @@ onBeforeUnmount(() => {
 .badge-size {
   position: static;
   background: rgba(0, 0, 0, 0.4);
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+.badge-similarity {
+  position: static;
+  background: rgba(138, 43, 226, 0.85); /* Purple for AI */
   color: #fff;
   font-family: var(--font-mono);
   font-size: 9px;

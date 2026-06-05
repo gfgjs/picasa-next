@@ -74,6 +74,7 @@ pub struct LayoutRowItem {
     pub thumb_status:  i64,
     pub thumb_path:    Option<String>,
     pub thumbhash:     Option<Vec<u8>>,
+    pub similarity:    Option<f64>,
 }
 
 // ── Layout parameters ─────────────────────────────────────────────────────────
@@ -217,6 +218,7 @@ pub fn compute_justified_layout(items: &[LayoutItem], params: &LayoutParams) -> 
                 thumb_status:  item.thumb_status,
                 thumb_path:    item.thumb_path.clone(),
                 thumbhash:     item.thumbhash.clone(),
+                similarity:    item.similarity,
             });
 
             x += item_w + params.gap;

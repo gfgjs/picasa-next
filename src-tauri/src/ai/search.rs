@@ -15,21 +15,20 @@ use r2d2_sqlite::SqliteConnectionManager;
 use tracing::{debug, info};
 
 use crate::ai::clip::{bytes_to_embedding, encode_text, ClipTokenizer, MODEL_NAME};
-use crate::db::models::SemanticSearchResult;
-use crate::db::queries::{get_all_embeddings, get_search_results_by_ids};
-use crate::error::Result;
+use crate::db::queries::get_all_embeddings;
+use crate::error::{AppError, Result};
 
 /// Perform semantic search: encode the query, compare against all stored
 /// embeddings, return top-K results with similarity scores.
 ///
 /// 执行语义搜索：编码查询，与所有存储的嵌入向量比较，返回带相似度分数的 Top-K 结果。
 pub fn semantic_search(
-    conn: &PooledConnection<SqliteConnectionManager>,
+    conn: &mut rusqlite::Connection,
     text_session: &Arc<std::sync::Mutex<ort::session::Session>>,
     tokenizer: &ClipTokenizer,
     query: &str,
     top_k: usize,
-) -> Result<Vec<SemanticSearchResult>> {
+) -> Result<usize> {
     info!("Semantic search started | 语义搜索开始: {:?}", query);
 
     // 1. Encode the text query into a 512-d unit vector
@@ -46,7 +45,11 @@ pub fn semantic_search(
     );
 
     if all_embeddings.is_empty() {
-        return Ok(vec![]);
+        // Clear previous results
+        let tx = conn.transaction().map_err(AppError::from)?;
+        tx.execute("DELETE FROM ai_search_results", []).map_err(AppError::from)?;
+        tx.commit().map_err(AppError::from)?;
+        return Ok(0);
     }
 
     // 3. Compute cosine similarity for every embedding
@@ -71,38 +74,21 @@ pub fn semantic_search(
         scored.len()
     );
 
-    // 5. Fetch full thumbnail/media info for the top-K IDs
-    // 5. 获取前 K 个 ID 的完整缩略图/媒体信息
-    let ids: Vec<i64> = scored.iter().map(|(id, _)| *id).collect();
-    let sim_map: std::collections::HashMap<i64, f32> = scored.into_iter().collect();
+    // 5. Store the results in the ai_search_results table
+    // 5. 将结果存入 ai_search_results 表
+    let tx = conn.transaction().map_err(AppError::from)?;
+    tx.execute("DELETE FROM ai_search_results", []).map_err(AppError::from)?;
 
-    let items = get_search_results_by_ids(conn, &ids)?;
+    {
+        let mut stmt = tx.prepare("INSERT INTO ai_search_results (file_id, similarity) VALUES (?1, ?2)").map_err(AppError::from)?;
+        for (id, sim) in &scored {
+            stmt.execute(rusqlite::params![id, sim]).map_err(AppError::from)?;
+        }
+    }
 
-    // Merge similarity scores into results, preserving ranking order
-    // 将相似度分数合并到结果中，保持排名顺序
-    let mut results: Vec<SemanticSearchResult> = items
-        .into_iter()
-        .map(|item| {
-            let similarity = sim_map.get(&item.id).copied().unwrap_or(0.0);
-            SemanticSearchResult {
-                id:           item.id,
-                file_name:    item.file_name,
-                media_type:   item.media_type,
-                width:        item.width,
-                height:       item.height,
-                thumb_path:   item.thumb_path,
-                thumbhash:    item.thumbhash,
-                thumb_status: item.thumb_status,
-                similarity,
-            }
-        })
-        .collect();
+    tx.commit().map_err(AppError::from)?;
 
-    // Re-sort by similarity (DB query may not preserve order)
-    // 重新按相似度排序（DB 查询可能不保留顺序）
-    results.sort_unstable_by(|a, b| b.similarity.partial_cmp(&a.similarity).unwrap_or(std::cmp::Ordering::Equal));
-
-    Ok(results)
+    Ok(scored.len())
 }
 
 /// Cosine similarity between two pre-normalised unit vectors.

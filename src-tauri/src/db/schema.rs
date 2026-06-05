@@ -242,3 +242,14 @@ INSERT OR IGNORE INTO app_config (key, value) VALUES
     ('ai_auto_analyze', '1'),
     ('clip_model',      'cn-clip-vit-b16');
 ";
+
+/// DDL deltas for schema version 3 — AI search results.
+/// 模式版本 3 的 DDL 增量 — AI 搜索结果。
+pub const SCHEMA_V3: &str = "
+-- ── ai_search_results ─────────────────────────────────────────────────────────
+-- ── AI 搜索结果临时表（持久化存储会话数据） ──────────────────────────────────
+CREATE TABLE IF NOT EXISTS ai_search_results (
+    file_id    INTEGER PRIMARY KEY REFERENCES media_items(id) ON DELETE CASCADE,
+    similarity REAL NOT NULL
+);
+";

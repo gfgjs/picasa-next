@@ -29,10 +29,15 @@
           />
           <video
             v-else-if="detail.mediaType === 'video'"
+            ref="videoRef"
             :src="absPath"
             class="detail-viewer__video"
+            :class="{ 'is-dragging': state.isDragging.value }"
+            :style="{ transform: state.transform.value }"
+            draggable="false"
             controls
             autoplay
+            @loadedmetadata="updateZoomRatio"
           />
           <audio
             v-else-if="detail.mediaType === 'audio'"
@@ -225,6 +230,7 @@ const state = useMediaDetail()
 
 const viewerRef = ref<HTMLElement | null>(null)
 const imgRef = ref<HTMLImageElement | null>(null)
+const videoRef = ref<HTMLVideoElement | null>(null)
 
 const zoomModeTitle = computed(() => {
   switch (state.zoomMode.value) {
@@ -236,13 +242,24 @@ const zoomModeTitle = computed(() => {
   }
 })
 
+// 获取媒体真实宽高
+// Get media true dimensions
+function getMediaDimensions() {
+  if (imgRef.value) {
+    return { w: imgRef.value.naturalWidth, h: imgRef.value.naturalHeight }
+  }
+  if (videoRef.value) {
+    return { w: videoRef.value.videoWidth, h: videoRef.value.videoHeight }
+  }
+  return { w: 1, h: 1 }
+}
+
 function handleToggleZoom() {
-  if (!viewerRef.value || !imgRef.value) {
+  if (!viewerRef.value || (!imgRef.value && !videoRef.value)) {
     state.resetZoom()
     return
   }
-  const iw = imgRef.value.naturalWidth
-  const ih = imgRef.value.naturalHeight
+  const { w: iw, h: ih } = getMediaDimensions()
   const cw = viewerRef.value.clientWidth
   const ch = viewerRef.value.clientHeight
   if (!iw || !ih || !cw || !ch) {
@@ -263,9 +280,10 @@ watch(() => media.detailItem, () => {
 
 const zoomRatio = ref(1.0)
 function updateZoomRatio() {
-  if (!viewerRef.value || !imgRef.value) return
-  const iw = imgRef.value.naturalWidth || 1
-  const ih = imgRef.value.naturalHeight || 1
+  if (!viewerRef.value || (!imgRef.value && !videoRef.value)) return
+  const { w, h } = getMediaDimensions()
+  const iw = w || 1
+  const ih = h || 1
   const cw = viewerRef.value.clientWidth || 1
   const ch = viewerRef.value.clientHeight || 1
   const base_w = Math.min(iw, cw, ch * (iw / ih))

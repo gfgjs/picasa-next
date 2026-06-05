@@ -246,7 +246,7 @@ pub fn run() {
 
             // ── Background Tasks ──────────────────────────────────────────
             // ── 后台任务 ──────────────────────────────────────────
-            tokio::spawn(async move {
+            tauri::async_runtime::spawn(async move {
                 // Delay first run by 3 minutes so it doesn't block cold start | 延迟 3 分钟执行，避免影响冷启动
                 tokio::time::sleep(std::time::Duration::from_secs(3 * 60)).await;
                 loop {
@@ -264,7 +264,7 @@ pub fn run() {
             });
 
             let cache_dir_clone = cache_dir_for_task;
-            tokio::spawn(async move {
+            tauri::async_runtime::spawn(async move {
                 // Delay cache enforcement by 1 minute | 延迟 1 分钟执行缓存清理
                 tokio::time::sleep(std::time::Duration::from_secs(60)).await;
                 crate::thumbnail::cache::enforce_cache_limit(&cache_dir_clone, thumb_cache_max_mb);

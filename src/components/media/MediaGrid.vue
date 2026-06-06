@@ -91,34 +91,35 @@
             />
           </div>
         </template>
-      </div>
-    </div>
-    <div class="timeline-sidebar-wrapper" v-if="showTimeline">
-      <div class="timeline-sidebar">
-        <div v-if="media.totalRows > 0 && (media.layoutSummary?.separators || []).length > 0" class="mini-timeline">
-          <div 
-            v-for="sep in (media.layoutSummary?.separators || [])" 
-            :key="sep.y"
-            class="mini-timeline__node"
-            :style="{ top: `${(sep.y / Math.max(1, media.totalHeight)) * 100}%` }"
-            @click.stop="scrollToY(sep.y)"
-            :title="sep.label"
-          ></div>
-        </div>
-      </div>
-    </div>
+      </div> <!-- Close media-grid-content -->
+    </div> <!-- Close media-grid -->
+  </div> <!-- Close media-grid-wrapper -->
 
-    <button 
-      class="timeline-toggle-btn" 
-      :class="{ 'is-open': showTimeline }"
-      @click="showTimeline = !showTimeline"
-      :title="showTimeline ? '隐藏时间轴' : '显示时间轴'"
-    >
-      <ChevronRight v-if="showTimeline" :size="16" />
-      <ChevronLeft v-else :size="16" />
-    </button>
+  <div class="timeline-sidebar-wrapper" v-if="showTimeline">
+    <div class="timeline-sidebar">
+      <div v-if="media.totalRows > 0 && (media.layoutSummary?.separators || []).length > 0" class="mini-timeline">
+        <div 
+          v-for="sep in (media.layoutSummary?.separators || [])" 
+          :key="sep.y"
+          class="mini-timeline__node"
+          :style="{ top: `${(sep.y / Math.max(1, media.totalHeight)) * 100}%` }"
+          @click.stop="scrollToY(sep.y)"
+          :title="sep.label"
+        ></div>
+      </div>
+    </div>
   </div>
-  </div>
+
+  <button 
+    class="timeline-toggle-btn" 
+    :class="{ 'is-open': showTimeline }"
+    @click="showTimeline = !showTimeline"
+    :title="showTimeline ? '隐藏时间轴' : '显示时间轴'"
+  >
+    <ChevronRight v-if="showTimeline" :size="16" />
+    <ChevronLeft v-else :size="16" />
+  </button>
+</div> <!-- Close media-grid-layout -->
   
   <ContextMenu 
     :visible="ctxMenu.visible"
@@ -151,7 +152,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted, onBeforeUnmount, computed } from 'vue'
+import { ref, watch, onMounted, onBeforeUnmount, computed, markRaw } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import type { UnlistenFn } from '@tauri-apps/api/event'
@@ -168,7 +169,7 @@ import { useRequestQueue }     from '../../composables/useRequestQueue'
 import MediaThumb from './MediaThumb.vue'
 import SelectionToolbar from './SelectionToolbar.vue'
 import ContextMenu, { type ContextMenuItem } from '../common/ContextMenu.vue'
-import { ImageIcon, Heart, Trash2, X, Folder, Calendar, Copy, FolderOpen, Image as ImageIconLucide, ChevronLeft, ChevronRight } from '@lucide/vue'
+import { ImageIcon, Heart, Trash2, X, Folder, Calendar, Copy, FolderOpen, Image as ImageIconLucide, ChevronLeft, ChevronRight, Monitor } from '@lucide/vue'
 import { useSelection } from '../../composables/useSelection'
 import type { LayoutRow } from '../../types/layout'
 import { DEFAULTS, SEPARATOR_HEIGHT } from '../../constants/defaults'
@@ -229,26 +230,39 @@ async function onContextMenu(e: MouseEvent, id: number) {
   ctxMenu.value.targetId = id
   ctxMenu.value.x = e.clientX
   ctxMenu.value.y = e.clientY
-  ctxMenu.value.items = [
+
+  let item = null
+  for (const row of media.rowCache.values()) {
+    if (row.rowType === 'normal') {
+      item = row.items.find(i => i.id === id)
+      if (item) break
+    }
+  }
+
+  const items: ContextMenuItem[] = [
     {
       id: 'copy',
       label: t('contextMenu.copyImage') || '复制图片',
-      icon: Copy,
-      action: () => invoke('copy_image_to_clipboard', { id })
+      icon: markRaw(Copy),
+      action: () => invoke('copy_image_to_clipboard', { itemId: id })
     },
     {
       id: 'open_explorer',
-      label: t('contextMenu.openInExplorer') || '在资源管理器中打开',
-      icon: FolderOpen,
-      action: () => invoke(IPC.SHOW_IN_EXPLORER, { id })
-    },
-    {
+      label: t('contextMenu.showInExplorer') || '在文件夹中显示',
+      icon: markRaw(FolderOpen),
+      action: () => invoke(IPC.SHOW_IN_EXPLORER, { itemId: id })
+    }
+  ]
+
+  // --- 桌面壁纸 (Desktop Wallpaper) ---
+  if (item && item.mediaType === 'image') {
+    items.push({
       id: 'set_wallpaper',
       label: t('contextMenu.setWallpaper') || '设为壁纸',
-      icon: ImageIconLucide,
+      icon: markRaw(Monitor),
       action: async () => {
         try {
-          await invoke('set_as_wallpaper', { id })
+          await invoke('set_as_wallpaper', { itemId: id })
           if (typeof (ui as any).showToast === 'function') {
             ;(ui as any).showToast('已设为壁纸', 'success')
           }
@@ -256,8 +270,10 @@ async function onContextMenu(e: MouseEvent, id: number) {
           console.error(err)
         }
       }
-    }
-  ]
+    })
+  }
+
+  ctxMenu.value.items = items
   ctxMenu.value.visible = true
 }
 

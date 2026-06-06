@@ -197,7 +197,7 @@ export const useMediaStore = defineStore('media', () => {
       if (row.rowType === 'normal') {
         const item = row.items.find(i => i.id === id)
         if (item) {
-          item.isFavorited = newVal
+          ;(item as any).isFavorited = newVal
           break // An item only appears once
         }
       }

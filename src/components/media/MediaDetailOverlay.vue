@@ -16,6 +16,7 @@
           @wheel.prevent="onWheelHandler"
           @mousedown="state.startDrag"
           @click="onImageClick"
+          @contextmenu.prevent="onContextMenu"
         >
           <img
             v-if="detail.mediaType === 'image'"
@@ -199,26 +200,87 @@
       </div>
     </div>
   </Teleport>
+
+  <ContextMenu 
+    :visible="ctxMenu.visible"
+    :x="ctxMenu.x"
+    :y="ctxMenu.y"
+    :items="ctxMenu.items"
+    @update:visible="ctxMenu.visible = $event"
+  />
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount, markRaw } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { useI18n } from 'vue-i18n'
+import ContextMenu from '../common/ContextMenu.vue'
 import { useMediaStore } from '../../stores/mediaStore'
 import { useUiStore }    from '../../stores/uiStore'
 import { useMediaDetail } from '../../composables/useMediaDetail'
 import { formatFileSize, formatDateTime, formatFocalLength, formatAperture, formatGps } from '../../utils/format'
 import {
   X, ZoomIn, ZoomOut, Maximize, MoveHorizontal, MoveVertical,
-  Heart, FolderOpen, Info, Star, FileText
+  Heart, FolderOpen, Info, Star, FileText, Copy, Monitor
 } from '@lucide/vue'
 import { IPC } from '../../constants/ipc'
 
 const media = useMediaStore()
 const ui    = useUiStore()
 const { t } = useI18n()
+
+const ctxMenu = ref({
+  visible: false,
+  x: 0,
+  y: 0,
+  items: [] as any[]
+})
+
+function onContextMenu(e: MouseEvent) {
+  if (!detail.value) return
+  const item = detail.value
+  const id = item.id
+  const items: any[] = [
+    {
+      id: 'copy',
+      label: t('contextMenu.copyImage') || '复制图片',
+      icon: markRaw(Copy),
+      action: () => invoke('copy_image_to_clipboard', { itemId: id })
+    },
+    {
+      id: 'open_explorer',
+      label: t('contextMenu.showInExplorer') || '在文件夹中显示',
+      icon: markRaw(FolderOpen),
+      action: () => invoke(IPC.SHOW_IN_EXPLORER, { itemId: id })
+    }
+  ]
+
+  if (item.mediaType === 'image') {
+    items.push({
+      id: 'set_wallpaper',
+      label: t('contextMenu.setWallpaper') || '设为壁纸',
+      icon: markRaw(Monitor),
+      action: async () => {
+        try {
+          await invoke('set_as_wallpaper', { itemId: id })
+          if (typeof (ui as any).showToast === 'function') {
+            ;(ui as any).showToast('已设为壁纸', 'success')
+          }
+        } catch (err: any) {
+          console.error(err)
+        }
+      }
+    })
+  }
+
+  ctxMenu.value = {
+    visible: true,
+    x: e.clientX,
+    y: e.clientY,
+    items
+  }
+}
 
 const detail  = computed(() => media.detailItem!)
 const absPath = computed(() => detail.value ? convertFileSrc(detail.value.absPath) : '')

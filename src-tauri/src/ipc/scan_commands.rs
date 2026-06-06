@@ -362,7 +362,9 @@ pub async fn clear_settings(
 ) -> Result<()> {
     info!("User action: Clearing settings | 用户操作：正在清除设置");
     let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    conn.execute("DELETE FROM app_config", [])?;
+    // ONLY delete user settings, preserve system keys like schema_version
+    // 仅删除用户设置，保留如 schema_version 等系统键值，避免重启时重复执行数据库迁移导致崩溃
+    conn.execute("DELETE FROM app_config WHERE key != 'schema_version'", [])?;
     info!("clear_settings: settings wiped | 清除设置：设置项已擦除");
     Ok(())
 }

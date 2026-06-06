@@ -27,6 +27,7 @@ export const useAiStore = defineStore('ai', () => {
   const similarityThreshold = ref(0.20)
   const isSearching = ref(false)
   const searchError = ref<string | null>(null)
+  const previousGroupBy = ref<'date' | 'folder' | 'none'>('date')
 
   // Auto-refresh interval handle
   // 自动刷新间隔句柄
@@ -145,6 +146,7 @@ export const useAiStore = defineStore('ai', () => {
         ui.setSortWithinGroup('similarity')
       }
       if (ui.groupBy !== 'none') {
+        previousGroupBy.value = ui.groupBy
         ui.setGroupBy('none')
       }
       ui.searchQuery = ''
@@ -153,7 +155,7 @@ export const useAiStore = defineStore('ai', () => {
         ui.setSortWithinGroup('datetime')
       }
       if (ui.groupBy === 'none') {
-        ui.setGroupBy('date')
+        ui.setGroupBy(previousGroupBy.value)
       }
       semanticQuery.value = ''
     }
@@ -171,6 +173,7 @@ export const useAiStore = defineStore('ai', () => {
         ui.setSortWithinGroup('similarity')
       }
       if (ui.groupBy !== 'none') {
+        previousGroupBy.value = ui.groupBy
         ui.setGroupBy('none')
       }
       ui.searchQuery = ''
@@ -179,7 +182,7 @@ export const useAiStore = defineStore('ai', () => {
         ui.setSortWithinGroup('datetime')
       }
       if (ui.groupBy === 'none') {
-        ui.setGroupBy('date')
+        ui.setGroupBy(previousGroupBy.value)
       }
       semanticQuery.value = ''
       useMediaStore().invalidateLayout()

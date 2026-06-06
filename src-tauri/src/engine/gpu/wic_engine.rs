@@ -20,7 +20,7 @@ impl ImageEngine for WicEngine {
     }
 
     fn supported_formats(&self) -> &[&str] {
-        &["jpg", "jpeg", "png", "bmp", "tif", "tiff", "heic", "heif", "avif"]
+        &["jpg", "jpeg", "png", "bmp", "tif", "tiff", "heic", "heif", "avif", "webp", "gif", "ico"]
     }
 
     fn decode(&self, file_path: &Path, resize: Option<ResizeHint>) -> Result<DecodedImage, AppError> {

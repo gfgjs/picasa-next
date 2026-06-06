@@ -198,9 +198,9 @@ pub async fn batch_request_thumbnails(
             }
 
             // 方案二：多阶段流水线解耦 (Scheme 2)
-            let (decode_tx, decode_rx) = bounded(16);
-            let (encode_tx, encode_rx) = bounded(16);
-            let (result_tx, result_rx) = bounded(needs_gen.len().max(16));
+            let (decode_tx, decode_rx) = bounded(1024);
+            let (encode_tx, encode_rx) = bounded(1024);
+            let (result_tx, result_rx) = bounded(needs_gen.len().max(1024));
 
             let needs_gen_clone = needs_gen.clone();
             let state_dispatcher = state_arc.clone();
@@ -222,7 +222,9 @@ pub async fn batch_request_thumbnails(
             });
 
             let config_decode = config.clone();
-            for _ in 0..4 {
+            let cpu_cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(8);
+            let decode_threads = (cpu_cores * 2).max(4);
+            for _ in 0..decode_threads {
                 let rx = decode_rx.clone();
                 let tx = encode_tx.clone();
                 let res_tx = result_tx.clone();
@@ -248,7 +250,6 @@ pub async fn batch_request_thumbnails(
             drop(encode_tx);
 
             let config_encode = config.clone();
-            let cpu_cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(8);
             for _ in 0..cpu_cores {
                 let rx = encode_rx.clone();
                 let tx = result_tx.clone();
@@ -471,9 +472,9 @@ pub async fn start_full_thumbnail_generation(
             }
         } else {
             // 方案二：多阶段流水线解耦 (Scheme 2)
-            let (decode_tx, decode_rx) = bounded(32);
-            let (encode_tx, encode_rx) = bounded(32);
-            let (result_tx, result_rx) = bounded(100);
+            let (decode_tx, decode_rx) = bounded(1024);
+            let (encode_tx, encode_rx) = bounded(1024);
+            let (result_tx, result_rx) = bounded(1024);
 
             let state_dispatcher = state_arc.clone();
             let cancel_dispatcher = cancel_token.clone();
@@ -510,7 +511,9 @@ pub async fn start_full_thumbnail_generation(
 
             let config_decode = config.clone();
             let cancel_decode = cancel_token.clone();
-            for _ in 0..4 {
+            let cpu_cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(8);
+            let decode_threads = (cpu_cores * 2).max(4);
+            for _ in 0..decode_threads {
                 let rx = decode_rx.clone();
                 let tx = encode_tx.clone();
                 let res_tx = result_tx.clone();
@@ -537,7 +540,6 @@ pub async fn start_full_thumbnail_generation(
 
             let config_encode = config.clone();
             let cancel_encode = cancel_token.clone();
-            let cpu_cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(8);
             for _ in 0..cpu_cores {
                 let rx = encode_rx.clone();
                 let tx = result_tx.clone();

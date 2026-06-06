@@ -31,8 +31,7 @@ pub fn semantic_search(
 
     // 1. Encode the text query into a 512-d unit vector
     // 1. 将文本查询编码为 512-d 单位向量
-    let mut guard = text_session_pool.get();
-    let query_vec = encode_text(&mut *guard, tokenizer, query)?;
+    let query_vec = encode_text(text_session_pool, tokenizer, query)?;
 
     // 2. Load all embeddings from SQLite
     // 2. 从 SQLite 加载所有嵌入向量

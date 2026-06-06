@@ -289,8 +289,7 @@ fn process_task(
         }
     };
 
-    let mut guard = session_pool.get();
-    let embedding_f32 = encode_image_from_decoded(&mut *guard, &decoded)?;
+    let embedding_f32 = encode_image_from_decoded(session_pool, &decoded)?;
     Ok(embedding_to_bytes(&embedding_f32))
 }
 

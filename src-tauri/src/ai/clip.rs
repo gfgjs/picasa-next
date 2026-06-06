@@ -157,23 +157,23 @@ const STD:  [f32; 3] = [0.26862954, 0.26130258, 0.27577711];
 /// Encode a JPEG/PNG thumbnail byte slice into a 512-d unit vector.
 /// 将 JPEG/PNG 缩略图字节切片编码为 512-d 单位向量。
 pub fn encode_image_bytes(
-    session: &mut Session,
+    session_pool: &crate::ai::engine::SessionPool,
     image_bytes: &[u8],
 ) -> Result<Vec<f32>> {
     let img = image::load_from_memory(image_bytes)
         .map_err(|e| AppError::Engine(format!("Image decode failed | 图像解码失败: {e}")))?;
 
-    encode_image(session, &img)
+    encode_image(session_pool, &img)
 }
 
 /// Encode a `DynamicImage` into a 512-d unit vector.
 /// 将 `DynamicImage` 编码为 512-d 单位向量。
 pub fn encode_image(
-    session: &mut Session,
+    session_pool: &crate::ai::engine::SessionPool,
     img: &DynamicImage,
 ) -> Result<Vec<f32>> {
     let array = preprocess_image(img);
-    run_image_inference(session, array)
+    run_image_inference(session_pool, array)
 }
 
 /// Encode a pre-decoded image (RGBA u8 pixels) into a 512-d unit vector.
@@ -187,17 +187,17 @@ pub fn encode_image(
 /// 本函数仅在小图（约 336×224）上执行轻量的 CenterCrop + 归一化 + CHW 转换，
 /// 然后运行 CLIP 推理。
 pub fn encode_image_from_decoded(
-    session: &mut Session,
+    session_pool: &crate::ai::engine::SessionPool,
     decoded: &DecodedImage,
 ) -> Result<Vec<f32>> {
     let array = preprocess_decoded(decoded);
-    run_image_inference(session, array)
+    run_image_inference(session_pool, array)
 }
 
 /// Run CLIP image encoder inference on a preprocessed [1,3,224,224] f32 tensor.
 /// 在预处理后的 [1,3,224,224] f32 张量上运行 CLIP 图像编码器推理。
 fn run_image_inference(
-    session: &mut Session,
+    session_pool: &crate::ai::engine::SessionPool,
     array: Array4<f32>,
 ) -> Result<Vec<f32>> {
     let shape: [i64; 4] = [1, 3, IMG_SIZE as i64, IMG_SIZE as i64];
@@ -205,7 +205,8 @@ fn run_image_inference(
     let tensor = Tensor::from_array((shape, flat_data))
         .map_err(|e| AppError::Ai(format!("Build image tensor failed | 构建图像张量失败: {e}")))?;
 
-    let outputs = session
+    let mut guard = session_pool.get();
+    let outputs = guard
         .run(ort::inputs!["pixel_values" => tensor])
         .map_err(|e| AppError::Ai(format!("CLIP image inference failed | CLIP 图像推理失败: {e}")))?;
 
@@ -462,7 +463,7 @@ impl ClipTokenizer {
 /// Encode a text query into a 512-d unit vector using the CLIP text encoder.
 /// 使用 CLIP 文本编码器将文本查询编码为 512-d 单位向量。
 pub fn encode_text(
-    session: &mut Session,
+    session_pool: &crate::ai::engine::SessionPool,
     tokenizer: &ClipTokenizer,
     text: &str,
 ) -> Result<Vec<f32>> {
@@ -486,7 +487,8 @@ pub fn encode_text(
     let token_type_ids = Tensor::from_array((shape, types))
         .map_err(|e| AppError::Ai(e.to_string()))?;
 
-    let outputs = session
+    let mut guard = session_pool.get();
+    let outputs = guard
         .run(ort::inputs![
             "input_ids" => input_ids,
             "attention_mask" => attention_mask,

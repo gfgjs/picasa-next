@@ -142,7 +142,7 @@
               </div>
               <div class="info-row" style="flex-direction: column; align-items: flex-start; gap: 4px;">
                 <span class="info-label">完整路径</span>
-                <span class="info-value" :title="detail.absPath" style="text-align: left; white-space: normal; word-break: break-all; line-height: 1.4;">{{ detail.absPath }}</span>
+                <span class="info-value clickable-path" :title="detail.absPath" @click="showInExplorer">{{ detail.absPath }}</span>
               </div>
             </div>
 
@@ -603,6 +603,21 @@ async function toggleLive() {
 }
 .star.filled { color: #ffc107; }
 .star:hover  { color: #ffd54f; }
+
+.clickable-path {
+  text-align: left;
+  white-space: normal;
+  word-break: break-all;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: color var(--transition-fast);
+  text-decoration: underline;
+  text-decoration-color: transparent;
+}
+.clickable-path:hover {
+  color: var(--color-accent);
+  text-decoration-color: var(--color-accent);
+}
 
 /* ── Slide transition ─────────────────────────────────────────────────── */
 /* ── 滑动过渡 ─────────────────────────────────────────────────── */

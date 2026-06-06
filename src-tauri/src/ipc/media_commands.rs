@@ -217,6 +217,11 @@ pub async fn get_directory_children(
     q::get_directory_children(&pool, parent_id)
 }
 
+#[tauri::command]
+pub async fn get_directory_ancestors(id: i64, state: State<'_, Arc<AppState>>) -> Result<Vec<i64>> {
+    let pool = state.db_read_pool.get().map_err(AppError::from)?;
+    q::get_directory_ancestors(&pool, id)
+}
 // ── Helpers ───────────────────────────────────────────────────────────────────
 // ── 助手函数 ───────────────────────────────────────────────────────────────────
 

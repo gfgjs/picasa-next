@@ -63,6 +63,34 @@ export function useFolderTree() {
     }
   }
 
+  async function expandToNode(targetId: number) {
+    if (nodes.value.find(n => n.id === targetId)) {
+      scrollToNode(targetId)
+      return
+    }
+    
+    try {
+      const ancestors = await invoke<number[]>('get_directory_ancestors', { id: targetId })
+      for (const id of ancestors) {
+        if (id === targetId) continue
+        const node = nodes.value.find(n => n.id === id)
+        if (node && !node.expanded) {
+          await loadChildren(id)
+        }
+      }
+      setTimeout(() => scrollToNode(targetId), 50)
+    } catch (e) {
+      console.error('[useFolderTree] expandToNode failed:', e)
+    }
+  }
+
+  function scrollToNode(id: number) {
+    const el = document.querySelector(`[data-dir-id="${id}"]`)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    }
+  }
+
   function collapseNode(node: DirNode) {
     const descendants = getDescendantIds(node.id)
     nodes.value = nodes.value.filter(n => !descendants.has(n.id))
@@ -84,5 +112,5 @@ export function useFolderTree() {
     return set
   }
 
-  return { roots, nodes, loading, loadRoots, loadChildren, toggleNode }
+  return { roots, nodes, loading, loadRoots, loadChildren, toggleNode, expandToNode }
 }

@@ -118,6 +118,7 @@
           v-for="node in folderTree.nodes.value"
           :key="node.id"
           class="sidebar__tree-item"
+          :data-dir-id="node.id"
           :class="{
             active:    (ui.groupBy === 'folder' ? ui.scrolledDirectoryId === node.id : ui.activeDirectoryId === node.id),
             expanded:  node.expanded,
@@ -410,6 +411,17 @@ watch(() => scan.scanRoots, (roots) => {
   if (roots.length) folderTree.loadRoots(roots)
 })
 
+watch(() => ui.activeDirectoryId, (newId) => {
+  if (newId !== null) {
+    folderTree.expandToNode(newId)
+  }
+})
+
+watch(() => ui.scrolledDirectoryId, (newId) => {
+  if (ui.groupBy === 'folder' && newId !== null) {
+    folderTree.expandToNode(newId)
+  }
+})
 // ── Scan controls ──────────────────────────────────────────────────────────
 // ── 扫描控制 ──────────────────────────────────────────────────────────
 

@@ -244,6 +244,26 @@ pub fn increment_directory_media_count(conn: &Connection, dir_id: i64, delta: i6
     Ok(())
 }
 
+pub fn get_directory_ancestors(conn: &Connection, id: i64) -> Result<Vec<i64>> {
+    let mut stmt = conn.prepare(
+        "WITH RECURSIVE ancestors(id, parent_id) AS (
+            SELECT id, parent_id FROM directories WHERE id = ?1
+            UNION ALL
+            SELECT d.id, d.parent_id FROM directories d
+            JOIN ancestors a ON a.parent_id = d.id
+         )
+         SELECT id FROM ancestors;"
+    )?;
+    
+    let mut rows = stmt.query(params![id])?;
+    let mut ids = Vec::new();
+    while let Some(row) = rows.next()? {
+        ids.push(row.get::<_, i64>(0)?);
+    }
+    
+    ids.reverse();
+    Ok(ids)
+}
 // ── Media items ───────────────────────────────────────────────────────────────
 // ── 媒体项 ───────────────────────────────────────────────────────────────
 
@@ -431,7 +451,11 @@ pub fn query_layout_items(
         sql.push_str("\n         JOIN ai_search_results ai ON m.id = ai.file_id");
     }
 
-    sql.push_str("\n         WHERE m.is_deleted=0 AND m.companion_of IS NULL");
+    if filter.trashed_only == Some(true) {
+        sql.push_str("\n         WHERE m.is_deleted=1 AND m.companion_of IS NULL");
+    } else {
+        sql.push_str("\n         WHERE m.is_deleted=0 AND m.companion_of IS NULL");
+    }
 
     let mut param_idx = 0usize;
     let mut extras: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -495,6 +519,10 @@ pub fn query_layout_items(
 
     if filter.live_photo_only == Some(true) {
         sql.push_str(" AND m.is_live_photo=1");
+    }
+
+    if filter.recent_only == Some(true) {
+        sql.push_str(" AND m.created_at >= strftime('%s', 'now', '-30 days')");
     }
 
     if let Some(ref q) = filter.search_query {

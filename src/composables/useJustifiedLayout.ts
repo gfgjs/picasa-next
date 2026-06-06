@@ -41,6 +41,12 @@ export function useJustifiedLayout(containerWidthRef: () => number) {
 
     if (ui.activeSmartAlbum === 'favorites') {
       filters.favoritedOnly = true
+    } else if (ui.activeSmartAlbum === 'live-photos') {
+      ;(filters as any).livePhotoOnly = true
+    } else if (ui.activeSmartAlbum === 'recent') {
+      ;(filters as any).recentOnly = true
+    } else if (ui.activeSmartAlbum === 'trash') {
+      ;(filters as any).trashedOnly = true
     }
 
     if (ui.searchQuery && ui.searchQuery.trim() !== '') {

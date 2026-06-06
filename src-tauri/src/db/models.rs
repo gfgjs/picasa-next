@@ -204,6 +204,8 @@ pub struct MediaFilter {
     pub search_scope:     Option<String>,
     pub ai_search:        Option<bool>,
     pub ai_threshold:     Option<f64>,
+    pub trashed_only:     Option<bool>,
+    pub recent_only:      Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

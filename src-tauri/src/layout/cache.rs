@@ -18,11 +18,20 @@ static LAYOUT_VERSION_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SeparatorInfo {
+    pub label: String,
+    pub y: f64,
+    pub group_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LayoutSummary {
     pub total_rows:   usize,
     pub total_height: f64,
     pub layout_version: u64,
     pub total_items:  usize,
+    pub separators:   Vec<SeparatorInfo>,
 }
 
 /// Data stored in the in-memory layout cache.
@@ -123,11 +132,24 @@ pub fn get_rows_by_y(
 pub fn get_summary(cache: &LayoutCache) -> Option<LayoutSummary> {
     let guard = cache.read().unwrap();
     let data = guard.as_ref()?;
+    
+    let mut separators = Vec::new();
+    for row in &data.rows {
+        if let LayoutRow::Separator { y, separator_label, group_id, .. } = row {
+            separators.push(SeparatorInfo {
+                label: separator_label.clone(),
+                y: *y,
+                group_id: group_id.clone(),
+            });
+        }
+    }
+
     Some(LayoutSummary {
         total_rows:     data.rows.len(),
         total_height:   data.total_height,
         layout_version: data.layout_version,
         total_items:    data.total_items,
+        separators,
     })
 }
 

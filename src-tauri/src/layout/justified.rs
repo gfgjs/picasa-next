@@ -34,6 +34,7 @@ pub enum LayoutRow {
         y:               f64,
         height:          f64,
         separator_label: String,
+        group_id:        Option<String>,
     },
     #[serde(rename = "normal")]
     Normal {
@@ -110,12 +111,14 @@ pub fn compute_justified_layout(items: &[LayoutItem], params: &LayoutParams) -> 
     let mut pending_ar_sum = 0.0f64; // sum of (w/h) aspect ratios
                                      // (w/h) 宽高比总和
     let mut last_label: Option<String> = None;
+    let mut last_group_id: Option<String> = None;
 
-    let emit_separator = |label: &str, y: &mut f64, rows: &mut Vec<LayoutRow>| {
+    let emit_separator = |label: &str, group_id: Option<String>, y: &mut f64, rows: &mut Vec<LayoutRow>| {
         rows.push(LayoutRow::Separator {
             y:               *y,
             height:          SEPARATOR_HEIGHT,
             separator_label: label.to_string(),
+            group_id,
         });
         *y += SEPARATOR_HEIGHT + params.gap;
     };
@@ -238,10 +241,21 @@ pub fn compute_justified_layout(items: &[LayoutItem], params: &LayoutParams) -> 
     for item in items {
         // Grouping separator check
         // 分组分隔符检查
-        let current_label = match params.group_by.as_str() {
-            "folder" => item.dir_name.clone().unwrap_or_else(|| item.dir_path.clone().unwrap_or_else(|| "Unknown".to_string())),
-            "none" => "".to_string(),
-            _ => timestamp_to_date_label(item.sort_datetime), // "date" default
+        let (current_label, current_group_id) = match params.group_by.as_str() {
+            "folder" => {
+                let name = if let Some(path) = &item.dir_path {
+                    if path.is_empty() {
+                        "Root".to_string()
+                    } else {
+                        path.clone()
+                    }
+                } else {
+                    "Unknown".to_string()
+                };
+                (name, item.dir_id.map(|id| id.to_string()))
+            },
+            "none" => ("".to_string(), None),
+            _ => (timestamp_to_date_label(item.sort_datetime), None),
         };
 
         let needs_separator = if params.group_by == "none" {
@@ -267,8 +281,9 @@ pub fn compute_justified_layout(items: &[LayoutItem], params: &LayoutParams) -> 
                 true, // Treat rows before a separator as the "last row" of that group
                       // 将分隔符之前的行视为该组的“最后一行”
             );
-            emit_separator(&current_label, &mut current_y, &mut rows);
+            emit_separator(&current_label, current_group_id.clone(), &mut current_y, &mut rows);
             last_label = Some(current_label);
+            last_group_id = current_group_id;
         }
 
         let ar = aspect_ratio(item);

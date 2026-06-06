@@ -80,7 +80,8 @@ fn map_layout_item(row: &Row<'_>) -> rusqlite::Result<LayoutItem> {
         dir_path:      row.get(13)?,
         dir_name:      row.get(14)?,
         file_name:     row.get(15)?,
-        similarity:    row.get(16)?,
+        dir_id:        row.get(16)?,
+        similarity:    row.get(17)?,
     })
 }
 
@@ -401,7 +402,7 @@ pub fn query_layout_items(
     let mut sql = String::from(
         "SELECT m.id, m.width, m.height, m.file_size, m.sort_datetime, m.file_format, m.media_type, m.is_live_photo,
                 m.duration_ms, m.thumb_status, m.thumb_path, m.thumbhash, m.is_favorited,
-                d.rel_path as dir_path, d.name as dir_name, m.file_name, "
+                d.rel_path as dir_path, d.name as dir_name, m.file_name, m.directory_id as dir_id, "
     );
 
     if filter.ai_search == Some(true) {

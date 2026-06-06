@@ -183,6 +183,7 @@ export const useUiStore = defineStore('ui', () => {
   // ── Scroll Target ──────────────────────────────────────────────────────
   // ── 滚动目标 ────────────────────────────────────────────────────────
   const pendingScrollLabel = ref<string | null>(null)
+  const scrolledDirectoryId = ref<number | null>(null)
 
   // ── Fullscreen ─────────────────────────────────────────────────────────
   // ── 全屏 ─────────────────────────────────────────────────────────
@@ -267,7 +268,7 @@ export const useUiStore = defineStore('ui', () => {
     // 加载
     isLayoutLoading,
     // scroll target
-    pendingScrollLabel,
+    pendingScrollLabel, scrolledDirectoryId,
     // fullscreen
     // 全屏
     isFullscreen, initFullscreen, toggleFullscreen,

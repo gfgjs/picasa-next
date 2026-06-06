@@ -113,6 +113,7 @@ pub struct LayoutItem {
     pub dir_path:      Option<String>,
     pub dir_name:      Option<String>,
     pub file_name:     String,
+    pub dir_id:        Option<i64>,
     pub similarity:    Option<f64>,
 }
 
@@ -296,6 +297,8 @@ pub struct SemanticSearchResult {
 pub struct AiStatusSummary {
     pub provider:        String,
     pub gpu_name:        String,
+    pub vram_gb:         Option<i64>,
+    pub batch_size:      i64,
     pub clip_loaded:     bool,
     pub total_items:     i64,
     pub analyzed_items:  i64,

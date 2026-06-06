@@ -30,6 +30,7 @@ export interface LayoutRowSeparator {
   y:              number
   height:         number
   separatorLabel: string
+  groupId?:       string
 }
 
 export type LayoutRow = LayoutRowNormal | LayoutRowSeparator
@@ -39,4 +40,5 @@ export interface LayoutSummary {
   totalHeight:   number
   layoutVersion: number
   totalItems:    number
+  separators:    { label: string; y: number; groupId?: string }[]
 }

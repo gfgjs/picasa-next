@@ -214,6 +214,22 @@ export const useUiStore = defineStore('ui', () => {
     }
   }
 
+  // ── Close Behavior ───────────────────────────────────────────────────────
+  const closeBehavior = ref<'ask' | 'minimize_to_tray' | 'exit'>('ask')
+  const showCloseConfirmDialog = ref(false)
+
+  invoke<string | null>(IPC.GET_APP_CONFIG, { key: 'close_behavior' })
+    .then(saved => {
+      if (saved && ['ask', 'minimize_to_tray', 'exit'].includes(saved)) {
+        closeBehavior.value = saved as any
+      }
+    }).catch(console.error)
+
+  function setCloseBehavior(behavior: 'ask' | 'minimize_to_tray' | 'exit') {
+    closeBehavior.value = behavior
+    invoke(IPC.SET_APP_CONFIG, { key: 'close_behavior', value: behavior }).catch(console.error)
+  }
+
   // ── Settings ───────────────────────────────────────────────────────────
   const isSettingsOpen = ref(false)
 
@@ -255,6 +271,8 @@ export const useUiStore = defineStore('ui', () => {
     // fullscreen
     // 全屏
     isFullscreen, initFullscreen, toggleFullscreen,
+    // close behavior
+    closeBehavior, showCloseConfirmDialog, setCloseBehavior,
     // settings
     isSettingsOpen,
   }

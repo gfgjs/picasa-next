@@ -58,7 +58,6 @@
       <!-- Favorite -->
       <!-- 收藏 -->
       <button
-        v-if="showFavorite"
         class="media-thumb__fav"
         :class="{ active: isFavorited, 'fav-animate': favAnimating }"
         @click.stop="toggleFav"
@@ -130,7 +129,6 @@ const cacheBuster = urlParams.get('clear') ? `?t=${urlParams.get('clear')}` : ''
 
 const isLoaded      = ref(false)
 const displaySrc    = ref('')
-const showFavorite  = ref(false)
 const favAnimating  = ref(false)
 const hasRequested  = ref(false)  // guard: only request once per mount // 守卫：每次挂载仅请求一次
 let decodingImg: HTMLImageElement | null = null

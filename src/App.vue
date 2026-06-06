@@ -31,6 +31,10 @@
   <!-- Toast notifications -->
   <!-- 吐司通知 -->
   <ToastContainer />
+  
+  <!-- Close Confirmation Dialog -->
+  <!-- 关闭确认弹窗 -->
+  <CloseConfirmDialog />
 </template>
 
 <script setup lang="ts">
@@ -48,8 +52,11 @@ import MediaDetailOverlay from './components/media/MediaDetailOverlay.vue'
 import SettingsView       from './views/SettingsView.vue'
 import SemanticSearchPanel from './components/media/SemanticSearchPanel.vue'
 import ToastContainer     from './components/common/ToastContainer.vue'
+import CloseConfirmDialog from './components/common/CloseConfirmDialog.vue'
 import { useAiStore }     from './stores/aiStore'
 import { useRoute }       from 'vue-router'
+import { listen }         from '@tauri-apps/api/event'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import type { SemanticSearchResult } from './types/ai'
 
 const ui = useUiStore()
@@ -127,5 +134,17 @@ onMounted(async () => {
   // Deferring this avoids competing with the 4 config IPC calls on the critical path.
   // AI 状态在窗口显示后再获取，不影响启动速度。
   ai.fetchStatus().catch(() => {})
+
+  // Listen to custom window close request from backend
+  // 监听来自后端的自定义窗口关闭请求
+  listen('window-close-requested', async () => {
+    if (ui.closeBehavior === 'minimize_to_tray') {
+      await invoke('hide_window')
+    } else if (ui.closeBehavior === 'exit') {
+      await invoke('exit_app')
+    } else {
+      ui.showCloseConfirmDialog = true
+    }
+  })
 })
 </script>

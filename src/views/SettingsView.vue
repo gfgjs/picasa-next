@@ -73,6 +73,22 @@
             />
             <span class="toggle__thumb" />
           </label>
+        <div class="settings-card__item">
+          <div class="settings-card__info">
+            <div class="settings-card__label">{{ $t('settings.closeBehavior') || '关闭主窗口时' }}</div>
+            <div class="settings-card__desc">{{ $t('settings.closeBehaviorDesc') || '选择点击主窗口关闭按钮时的行为' }}</div>
+          </div>
+          <div class="select-wrap">
+            <select
+              v-model="ui.closeBehavior"
+              @change="ui.setCloseBehavior(ui.closeBehavior)"
+              class="select"
+            >
+              <option value="ask">{{ $t('settings.closeBehaviorAsk') || '每次询问我' }}</option>
+              <option value="minimize_to_tray">{{ $t('settings.closeBehaviorMinimize') || '最小化到系统托盘' }}</option>
+              <option value="exit">{{ $t('settings.closeBehaviorExit') || '退出应用' }}</option>
+            </select>
+          </div>
         </div>
       </div>
 
@@ -375,6 +391,7 @@
           </button>
         </div>
       </div>
+    </div>
     </main>
   </div>
 </template>

@@ -582,6 +582,13 @@ watch(() => ui.pendingScrollLabel, async (label) => {
   /* overflow must be visible so hover-scaled cards can bleed outside the row */
   /* 溢出部分必须可见，这样悬停时缩放的卡片就可以超出该行的边界 */
   overflow: visible;
+  z-index: 1;
+  transition: z-index 0ms 220ms;
+}
+
+.media-grid__row:hover {
+  z-index: 10;
+  transition: z-index 0ms;
 }
 
 .date-separator {

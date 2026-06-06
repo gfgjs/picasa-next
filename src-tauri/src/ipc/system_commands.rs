@@ -192,3 +192,21 @@ pub async fn clear_logs(state: State<'_, Arc<AppState>>) -> Result<()> {
     tracing::info!("Logs cleared by user | 用户清除了日志文件");
     Ok(())
 }
+
+/// Explicitly exit the application.
+/// 明确退出应用程序。
+#[tauri::command]
+pub async fn exit_app(app: tauri::AppHandle) {
+    tracing::info!("exit_app called from frontend, terminating process. | 前端调用了 exit_app，正在终止进程。");
+    app.exit(0);
+}
+
+/// Hide the main window (minimize to tray).
+/// 隐藏主窗口（最小化到托盘）。
+#[tauri::command]
+pub async fn hide_window(app: tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+    }
+}
+

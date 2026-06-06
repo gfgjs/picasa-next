@@ -16,7 +16,7 @@ pub mod utils;
 
 use std::sync::Arc;
 
-use tauri::Manager;
+use tauri::{Manager, Emitter};
 use tauri_plugin_window_state::StateFlags;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
@@ -282,6 +282,52 @@ pub fn run() {
                 let _ = main_win.hide();
             }
 
+            // ── System Tray ──────────────────────────────────────────────────
+            // ── 系统托盘 ──────────────────────────────────────────────────
+            use tauri::menu::{Menu, MenuItem};
+            use tauri::tray::{TrayIconBuilder, MouseButton, TrayIconEvent};
+
+            let show_i = MenuItem::with_id(app, "show", "显示主界面 | Show Window", true, None::<&str>)?;
+            let quit_i = MenuItem::with_id(app, "quit", "退出应用 | Exit", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
+
+            let mut tray_builder = TrayIconBuilder::new()
+                .menu(&menu)
+                .on_menu_event(|app, event| {
+                    match event.id.as_ref() {
+                        "quit" => {
+                            tracing::info!("Quit clicked from tray menu | 用户从托盘菜单点击了退出");
+                            app.exit(0);
+                        }
+                        "show" => {
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                        }
+                        _ => {}
+                    }
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: tauri::tray::MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        let app = tray.app_handle();
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                });
+                
+            if let Some(icon) = app.default_window_icon() {
+                tray_builder = tray_builder.icon(icon.clone());
+            }
+            let _tray = tray_builder.build(app)?;
+
             Ok(())
         })
         // ── IPC command handlers ───────────────────────────────────────────
@@ -353,7 +399,23 @@ pub fn run() {
             ipc::ai_commands::list_ai_models,
             ipc::ai_commands::import_ai_model,
             ipc::ai_commands::reload_ai_engine,
+            ipc::system_commands::exit_app,
+            ipc::system_commands::hide_window,
         ])
+        .on_window_event(|window, event| {
+            if window.label() == "main" {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    // Prevent the default window close behavior
+                    // 阻止默认的窗口关闭物理行为
+                    api.prevent_close();
+                    // Emit an event to the frontend to handle it according to user settings
+                    // 向前端发送事件，由前端根据用户设置处理（最小化到托盘、退出或询问）
+                    if let Err(e) = window.emit("window-close-requested", ()) {
+                        tracing::warn!("Failed to emit window-close-requested event: {}", e);
+                    }
+                }
+            }
+        })
         .build(tauri::generate_context!())
         .expect("Error while building Tauri application")
         .run(|_app_handle, event| {

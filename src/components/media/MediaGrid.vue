@@ -43,10 +43,13 @@
           gap: row.rowType === 'separator' ? undefined : GAP + 'px'
         }"
       >
-        <!-- Date separator -->
-        <!-- 日期分隔符 -->
+        <!-- Date/Folder separator -->
+        <!-- 日期/文件夹分隔符 -->
         <template v-if="row.rowType === 'separator'">
-          {{ (row as any).separatorLabel }}
+          <div class="separator-content" :style="{ position: ui.groupBy === 'folder' ? 'sticky' : 'static', top: 0, zIndex: 5 }">
+            <component :is="ui.groupBy === 'folder' ? Folder : Calendar" :size="18" class="separator-icon" />
+            <span class="separator-text">{{ (row as any).separatorLabel }}</span>
+          </div>
         </template>
 
         <!-- Normal row -->
@@ -61,6 +64,7 @@
             :style="{ width: item.w + 'px', height: item.h + 'px' }"
             @click="handleCardClick(item.id, $event)"
             @pointerdown="selection.onPointerDown(item.id, $event)"
+            @contextmenu.prevent="onContextMenu($event, item.id)"
           >
             <MediaThumb
               :id="item.id"
@@ -88,7 +92,26 @@
         </template>
       </div>
     </div>
+
+    <!-- Mini timeline / directory axis -->
+    <div v-if="media.totalRows > 0 && media.layoutSummary?.separators?.length > 0 && showTimeline" class="mini-timeline">
+      <div 
+        v-for="sep in media.layoutSummary.separators" 
+        :key="sep.y"
+        class="mini-timeline__node"
+        @click="scrollToY(sep.y)"
+        :title="sep.label"
+      ></div>
+    </div>
   </div>
+
+  <ContextMenu 
+    :visible="ctxMenu.visible"
+    :x="ctxMenu.x"
+    :y="ctxMenu.y"
+    :items="ctxMenu.items"
+    @update:visible="ctxMenu.visible = $event"
+  />
 
   <!-- Selection toolbar | 选择工具栏 -->
   <SelectionToolbar 
@@ -129,7 +152,8 @@ import { useRequestQueue }     from '../../composables/useRequestQueue'
 
 import MediaThumb from './MediaThumb.vue'
 import SelectionToolbar from './SelectionToolbar.vue'
-import { ImageIcon, Heart, Trash2, X } from '@lucide/vue'
+import ContextMenu, { type ContextMenuItem } from '../common/ContextMenu.vue'
+import { ImageIcon, Heart, Trash2, X, Folder, Calendar, Copy, FolderOpen, Image as ImageIconLucide } from '@lucide/vue'
 import { useSelection } from '../../composables/useSelection'
 import type { LayoutRow } from '../../types/layout'
 import { DEFAULTS, SEPARATOR_HEIGHT } from '../../constants/defaults'
@@ -173,7 +197,60 @@ const emptyStateDesc = computed(() => {
 const gridRef  = ref<HTMLElement | null>(null)
 const cacheDir = ref('')
 const isScrolling = ref(false)
+const showTimeline = ref(true) // Toggle for timeline
 let scrollTimeout: ReturnType<typeof setTimeout> | null = null
+
+// ── Context Menu ───────────────────────────────────────────────────────────
+const ctxMenu = ref({
+  visible: false,
+  x: 0,
+  y: 0,
+  items: [] as ContextMenuItem[],
+  targetId: null as number | null
+})
+
+async function onContextMenu(e: MouseEvent, id: number) {
+  e.preventDefault()
+  ctxMenu.value.targetId = id
+  ctxMenu.value.x = e.clientX
+  ctxMenu.value.y = e.clientY
+  ctxMenu.value.items = [
+    {
+      id: 'copy',
+      label: t('contextMenu.copyImage') || '复制图片',
+      icon: Copy,
+      action: () => invoke('copy_image_to_clipboard', { id })
+    },
+    {
+      id: 'open_explorer',
+      label: t('contextMenu.openInExplorer') || '在资源管理器中打开',
+      icon: FolderOpen,
+      action: () => invoke(IPC.SHOW_IN_EXPLORER, { id })
+    },
+    {
+      id: 'set_wallpaper',
+      label: t('contextMenu.setWallpaper') || '设为壁纸',
+      icon: ImageIconLucide,
+      action: async () => {
+        try {
+          await invoke('set_as_wallpaper', { id })
+          if (typeof (ui as any).showToast === 'function') {
+            ;(ui as any).showToast('已设为壁纸', 'success')
+          }
+        } catch (err) {
+          console.error(err)
+        }
+      }
+    }
+  ]
+  ctxMenu.value.visible = true
+}
+
+function scrollToY(y: number) {
+  if (gridRef.value) {
+    gridRef.value.scrollTo({ top: y, behavior: 'smooth' })
+  }
+}
 
 // ── Virtual scroll ─────────────────────────────────────────────────────────
 // ── 虚拟滚动 ─────────────────────────────────────────────────────────
@@ -196,6 +273,26 @@ function onGridScroll(e: Event) {
   if (!isScrolling.value) {
     isScrolling.value = true
   }
+  
+  if (gridRef.value) {
+    const scrollTop = gridRef.value.scrollTop
+    if (media.layoutSummary?.separators) {
+      let activeSep = null
+      for (const sep of media.layoutSummary.separators) {
+        if (sep.y <= scrollTop + 100) {
+          activeSep = sep
+        } else {
+          break
+        }
+      }
+      if (ui.groupBy === 'folder' && activeSep && activeSep.groupId) {
+        ui.scrolledDirectoryId = parseInt(activeSep.groupId, 10)
+      } else {
+        ui.scrolledDirectoryId = null
+      }
+    }
+  }
+
   if (scrollTimeout !== null) clearTimeout(scrollTimeout)
   scrollTimeout = setTimeout(() => {
     isScrolling.value = false
@@ -598,6 +695,52 @@ watch(() => ui.pendingScrollLabel, async (label) => {
   color: var(--color-text-primary);
   align-items: center;
   padding-left: var(--spacing-sm);
+  background: var(--color-bg-primary);
+}
+
+.separator-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(var(--color-bg-primary-rgb, 255, 255, 255), 0.85);
+  backdrop-filter: blur(8px);
+  padding: 4px 12px;
+  border-radius: var(--radius-md);
+  margin-top: 4px;
+}
+
+.separator-icon {
+  color: var(--color-text-secondary);
+}
+
+.mini-timeline {
+  position: absolute;
+  right: 6px;
+  top: 10%;
+  bottom: 10%;
+  width: 12px;
+  background: transparent;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  z-index: 50;
+  pointer-events: none;
+}
+
+.mini-timeline__node {
+  width: 6px;
+  height: 6px;
+  background: var(--color-border);
+  border-radius: 50%;
+  margin-bottom: 4px;
+  pointer-events: auto;
+  cursor: pointer;
+  transition: transform var(--transition-fast), background var(--transition-fast);
+}
+
+.mini-timeline__node:hover {
+  transform: scale(1.5);
+  background: var(--color-accent);
 }
 
 .media-card {

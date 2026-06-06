@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Picasa Next — High-performance cross-platform media asset manager"
 authors = ["Picasa Next Contributors"]
 edition = "2021"
+default-run = "picasa-next"
 
 [lib]
 name = "picasa_next_lib"
@@ -43,7 +44,7 @@ xxhash-rust = { version = "0.8", features = ["xxh3"] }
 image              = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "bmp", "gif", "tiff"] }
 fast_image_resize  = "4"
 thumbhash          = "0.1"
-windows            = { version = "0.58", features = ["Win32_Graphics_Imaging", "Win32_Graphics_Direct2D", "Win32_Graphics_Direct3D11", "Win32_Foundation", "Win32_System_Com", "Win32_Graphics_Dwm"] }
+windows            = { version = "0.58", features = ["Win32_Graphics_Imaging", "Win32_Graphics_Direct2D", "Win32_Graphics_Direct3D11", "Win32_Foundation", "Win32_System_Com", "Win32_Graphics_Dwm", "Win32_Graphics_Dxgi"] }
 
 # ── EXIF / XMP ───────────────────────────────────────────────────────────────
 kamadak-exif = "0.5"
@@ -74,6 +75,8 @@ ndarray   = "0.16"
 # HuggingFace tokenizers — 用于 Chinese-CLIP 文本编码器的 BERT WordPiece
 tokenizers = { version = "0.21", default-features = false, features = ["fancy-regex"] }
 lexicmp = "0.2.0"
+wallpaper = "3.2"
+arboard = "3.6.1"
 
 
 [features]

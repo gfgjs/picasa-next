@@ -210,3 +210,42 @@ pub async fn hide_window(app: tauri::AppHandle) {
     }
 }
 
+/// Set a media item as desktop wallpaper.
+/// 将媒体项设置为桌面壁纸。
+#[tauri::command]
+pub async fn set_as_wallpaper(item_id: i64, state: State<'_, Arc<AppState>>) -> Result<()> {
+    let pool = state.db_read_pool.get().map_err(AppError::from)?;
+    let (root, rel, name) = get_item_path_info(&pool, item_id)?;
+    let abs_path = resolve_media_path(&root, &rel, &name);
+    info!("set_as_wallpaper: {abs_path} | 设为壁纸: {abs_path}");
+
+    wallpaper::set_from_path(&abs_path).map_err(|e| AppError::Engine(format!("Failed to set wallpaper: {}", e)))?;
+    wallpaper::set_mode(wallpaper::Mode::Crop).map_err(|e| AppError::Engine(format!("Failed to set wallpaper mode: {}", e)))?;
+
+    Ok(())
+}
+
+/// Copy a media item image to the system clipboard.
+/// 复制媒体项图像到系统剪贴板。
+#[tauri::command]
+pub async fn copy_image_to_clipboard(item_id: i64, state: State<'_, Arc<AppState>>) -> Result<()> {
+    let pool = state.db_read_pool.get().map_err(AppError::from)?;
+    let (root, rel, name) = get_item_path_info(&pool, item_id)?;
+    let abs_path = resolve_media_path(&root, &rel, &name);
+    info!("copy_image_to_clipboard: {abs_path} | 复制图像到剪贴板: {abs_path}");
+
+    let img = image::open(&abs_path).map_err(|e| AppError::Engine(format!("Failed to open image for clipboard: {}", e)))?;
+    let rgba = img.into_rgba8();
+    let (width, height) = rgba.dimensions();
+    let img_data = arboard::ImageData {
+        width: width as usize,
+        height: height as usize,
+        bytes: std::borrow::Cow::Borrowed(rgba.as_raw()),
+    };
+
+    let mut clipboard = arboard::Clipboard::new().map_err(|e| AppError::Engine(format!("Failed to initialize clipboard: {}", e)))?;
+    clipboard.set_image(img_data).map_err(|e| AppError::Engine(format!("Failed to set clipboard image: {}", e)))?;
+
+    Ok(())
+}
+

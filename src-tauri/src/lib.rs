@@ -19,7 +19,7 @@ use std::sync::Arc;
 use tauri::{Manager, Emitter};
 use tauri_plugin_window_state::StateFlags;
 use tracing::info;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 use crate::db::{create_read_pool, create_write_connection};
 use crate::db::migration::run_migrations;
@@ -401,6 +401,8 @@ pub fn run() {
             ipc::ai_commands::reload_ai_engine,
             ipc::system_commands::exit_app,
             ipc::system_commands::hide_window,
+            ipc::system_commands::set_as_wallpaper,
+            ipc::system_commands::copy_image_to_clipboard,
         ])
         .on_window_event(|window, event| {
             if window.label() == "main" {

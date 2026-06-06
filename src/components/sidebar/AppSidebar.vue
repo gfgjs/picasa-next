@@ -119,7 +119,7 @@
           :key="node.id"
           class="sidebar__tree-item"
           :class="{
-            active:    ui.activeDirectoryId === node.id,
+            active:    (ui.groupBy === 'folder' ? ui.scrolledDirectoryId === node.id : ui.activeDirectoryId === node.id),
             expanded:  node.expanded,
           }"
           :style="{ paddingLeft: (node.depth * 16 + 8) + 'px' }"

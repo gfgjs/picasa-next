@@ -1,7 +1,8 @@
 <template>
-  <div class="media-grid-wrapper">
-    <div
-      ref="gridRef"
+  <div class="media-grid-layout">
+    <div class="media-grid-wrapper">
+      <div
+        ref="gridRef"
       class="media-grid"
       :class="{ 'is-scrolling': isScrolling }"
       @scroll.passive="onGridScroll"
@@ -92,19 +93,34 @@
         </template>
       </div>
     </div>
-
-    <!-- Mini timeline / directory axis -->
-    <div v-if="media.totalRows > 0 && media.layoutSummary?.separators?.length > 0 && showTimeline" class="mini-timeline">
-      <div 
-        v-for="sep in media.layoutSummary.separators" 
-        :key="sep.y"
-        class="mini-timeline__node"
-        @click="scrollToY(sep.y)"
-        :title="sep.label"
-      ></div>
+  <div class="timeline-sidebar-wrapper">
+    <button 
+      class="timeline-toggle-btn" 
+      @click="showTimeline = !showTimeline"
+      :title="showTimeline ? '隐藏时间轴' : '显示时间轴'"
+    >
+      <ChevronRight v-if="showTimeline" :size="16" />
+      <ChevronLeft v-else :size="16" />
+    </button>
+    
+    <div 
+      v-if="showTimeline" 
+      class="timeline-sidebar"
+    >
+      <div v-if="media.totalRows > 0 && (media.layoutSummary?.separators || []).length > 0" class="mini-timeline">
+        <div 
+          v-for="sep in (media.layoutSummary?.separators || [])" 
+          :key="sep.y"
+          class="mini-timeline__node"
+          :style="{ top: `${(sep.y / Math.max(1, media.totalHeight)) * 100}%` }"
+          @click="scrollToY(sep.y)"
+          :title="sep.label"
+        ></div>
+      </div>
     </div>
   </div>
-
+  </div>
+  
   <ContextMenu 
     :visible="ctxMenu.visible"
     :x="ctxMenu.x"
@@ -153,7 +169,7 @@ import { useRequestQueue }     from '../../composables/useRequestQueue'
 import MediaThumb from './MediaThumb.vue'
 import SelectionToolbar from './SelectionToolbar.vue'
 import ContextMenu, { type ContextMenuItem } from '../common/ContextMenu.vue'
-import { ImageIcon, Heart, Trash2, X, Folder, Calendar, Copy, FolderOpen, Image as ImageIconLucide } from '@lucide/vue'
+import { ImageIcon, Heart, Trash2, X, Folder, Calendar, Copy, FolderOpen, Image as ImageIconLucide, ChevronLeft, ChevronRight } from '@lucide/vue'
 import { useSelection } from '../../composables/useSelection'
 import type { LayoutRow } from '../../types/layout'
 import { DEFAULTS, SEPARATOR_HEIGHT } from '../../constants/defaults'
@@ -635,11 +651,19 @@ watch(() => ui.pendingScrollLabel, async (label) => {
 </script>
 
 <style scoped>
+.media-grid-layout {
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  position: relative;
+}
+
 .media-grid-wrapper {
   position: relative;
-  width: 100%;
   flex: 1;
-  min-height: 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
 }
@@ -713,34 +737,77 @@ watch(() => ui.pendingScrollLabel, async (label) => {
   color: var(--color-text-secondary);
 }
 
+.timeline-sidebar-wrapper {
+  position: relative;
+  display: flex;
+  flex-direction: row;
+  height: 100%;
+}
+
+.timeline-toggle-btn {
+  position: absolute;
+  left: -24px;
+  top: 16px;
+  width: 24px;
+  height: 24px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-right: none;
+  border-radius: 12px 0 0 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 60;
+  color: var(--color-text-secondary);
+  box-shadow: -2px 0 4px rgba(0,0,0,0.1);
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+
+.timeline-toggle-btn:hover {
+  color: var(--color-accent);
+  background: var(--color-bg-hover);
+}
+
+.timeline-sidebar {
+  width: 24px;
+  height: 100%;
+  background: var(--color-bg-primary);
+  border-left: 1px solid var(--color-border);
+  position: relative;
+  flex-shrink: 0;
+  display: flex;
+  justify-content: center;
+}
+
 .mini-timeline {
   position: absolute;
-  right: 6px;
-  top: 10%;
-  bottom: 10%;
-  width: 12px;
+  left: 0;
+  right: 0;
+  top: 10px;
+  bottom: 10px;
   background: transparent;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  z-index: 50;
   pointer-events: none;
 }
 
 .mini-timeline__node {
+  position: absolute;
+  left: 50%;
   width: 6px;
   height: 6px;
-  background: var(--color-border);
+  background: var(--color-text-tertiary);
   border-radius: 50%;
-  margin-bottom: 4px;
+  transform: translate(-50%, -50%);
   pointer-events: auto;
   cursor: pointer;
   transition: transform var(--transition-fast), background var(--transition-fast);
+  opacity: 0.8;
 }
 
 .mini-timeline__node:hover {
-  transform: scale(1.5);
+  transform: translate(-50%, -50%) scale(2);
   background: var(--color-accent);
+  opacity: 1;
 }
 
 .media-card {

@@ -193,10 +193,12 @@ export const useMediaStore = defineStore('media', () => {
     // Update in row cache to reflect in grid immediately if toggled from detail view
     // 如果在详情视图中切换，则在行缓存中更新以立即反映在网格中
     for (const row of rowCache.value.values()) {
-      const item = row.items.find(i => i.id === id)
-      if (item) {
-        item.isFavorited = newVal
-        break // An item only appears once
+      if (row.rowType === 'normal') {
+        const item = row.items.find(i => i.id === id)
+        if (item) {
+          item.isFavorited = newVal
+          break // An item only appears once
+        }
       }
     }
     return newVal

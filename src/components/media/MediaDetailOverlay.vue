@@ -142,7 +142,7 @@
               </div>
               <div class="info-row" style="flex-direction: column; align-items: flex-start; gap: 4px;">
                 <span class="info-label">完整路径</span>
-                <span class="info-value clickable-path" :title="detail.absPath" @click="showInExplorer">{{ detail.absPath }}</span>
+                <span class="info-value clickable-path" :title="detail.absPath" @click.stop.prevent="showInExplorer">{{ detail.absPath }}</span>
               </div>
             </div>
 

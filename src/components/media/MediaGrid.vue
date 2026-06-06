@@ -93,31 +93,30 @@
         </template>
       </div>
     </div>
-  <div class="timeline-sidebar-wrapper">
+    <div class="timeline-sidebar-wrapper" v-if="showTimeline">
+      <div class="timeline-sidebar">
+        <div v-if="media.totalRows > 0 && (media.layoutSummary?.separators || []).length > 0" class="mini-timeline">
+          <div 
+            v-for="sep in (media.layoutSummary?.separators || [])" 
+            :key="sep.y"
+            class="mini-timeline__node"
+            :style="{ top: `${(sep.y / Math.max(1, media.totalHeight)) * 100}%` }"
+            @click.stop="scrollToY(sep.y)"
+            :title="sep.label"
+          ></div>
+        </div>
+      </div>
+    </div>
+
     <button 
       class="timeline-toggle-btn" 
+      :class="{ 'is-open': showTimeline }"
       @click="showTimeline = !showTimeline"
       :title="showTimeline ? '隐藏时间轴' : '显示时间轴'"
     >
       <ChevronRight v-if="showTimeline" :size="16" />
       <ChevronLeft v-else :size="16" />
     </button>
-    
-    <div 
-      v-if="showTimeline" 
-      class="timeline-sidebar"
-    >
-      <div v-if="media.totalRows > 0 && (media.layoutSummary?.separators || []).length > 0" class="mini-timeline">
-        <div 
-          v-for="sep in (media.layoutSummary?.separators || [])" 
-          :key="sep.y"
-          class="mini-timeline__node"
-          :style="{ top: `${(sep.y / Math.max(1, media.totalHeight)) * 100}%` }"
-          @click="scrollToY(sep.y)"
-          :title="sep.label"
-        ></div>
-      </div>
-    </div>
   </div>
   </div>
   
@@ -746,7 +745,7 @@ watch(() => ui.pendingScrollLabel, async (label) => {
 
 .timeline-toggle-btn {
   position: absolute;
-  left: -24px;
+  right: 0px;
   top: 16px;
   width: 24px;
   height: 24px;
@@ -761,7 +760,10 @@ watch(() => ui.pendingScrollLabel, async (label) => {
   z-index: 60;
   color: var(--color-text-secondary);
   box-shadow: -2px 0 4px rgba(0,0,0,0.1);
-  transition: color var(--transition-fast), background var(--transition-fast);
+  transition: right var(--transition-fast), color var(--transition-fast), background var(--transition-fast);
+}
+.timeline-toggle-btn.is-open {
+  right: 24px;
 }
 
 .timeline-toggle-btn:hover {

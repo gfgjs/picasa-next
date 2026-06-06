@@ -29,6 +29,7 @@ use crate::db::queries::{
     batch_upsert_ai_embeddings, batch_update_ai_status, count_pending_ai_items,
     get_pending_ai_items,
 };
+use crate::error::{AppError, Result};
 use crate::db::models::AiStatus;
 use crate::engine::gpu::get_gpu_engine;
 use crate::engine::traits::ResizeHint;
@@ -97,22 +98,9 @@ fn run_pipeline_blocking(
 ) -> crate::error::Result<()> {
     // Get AI engine — bail if not ready
     // 获取 AI 引擎 — 未就绪则退出
-    let engine_guard = state.ai_engine.read().unwrap();
-    let engine = match engine_guard.as_ref() {
-        Some(e) => e,
-        None => {
-            warn!("AI engine not initialised, skipping pipeline | AI 引擎未初始化，跳过流水线");
-            return Ok(());
-        }
-    };
-
-    let clip_session = match engine.clip_image_session.as_ref() {
-        Some(s) => Arc::clone(s),
-        None => {
-            warn!("CLIP image session not loaded, skipping pipeline | CLIP 图像 Session 未加载，跳过流水线");
-            return Ok(());
-        }
-    };
+    let clip_session = state.ai_engine.read().unwrap().as_ref()
+        .and_then(|p| p.clip_image_session.clone())
+        .ok_or_else(|| AppError::Ai("CLIP engine not initialized | CLIP 引擎未初始化".to_string()))?;
 
     // Count how many items need processing
     // 统计需要处理的项数
@@ -142,8 +130,8 @@ fn run_pipeline_blocking(
         });
 
         // ── Consumer threads (rayon thread pool) ──────────────────────────────
-        // ── 消费者线程（rayon 线程池）────────────────────────────────────────
-        let session_clone = Arc::clone(&clip_session);
+        // ── 消费者线程（rayon 线程池）─────────────────────────────────────────
+        let session_clone = clip_session.clone();
         let result_tx_clone = result_tx.clone();
         let state_consumer = Arc::clone(state);
         s.spawn(move |_| {
@@ -225,7 +213,7 @@ fn produce_tasks(
 fn consume_tasks(
     task_rx: Receiver<AiTask>,
     result_tx: Sender<AiResult>,
-    session: Arc<std::sync::Mutex<ort::session::Session>>,
+    session_pool: crate::ai::engine::SessionPool,
     state: &Arc<AppState>,
     token: &CancellationToken,
 ) {
@@ -235,12 +223,12 @@ fn consume_tasks(
         for task in task_rx {
             if token.is_cancelled() { break; }
 
-            let session = Arc::clone(&session);
+            let session_pool = session_pool.clone();
             let result_tx = result_tx.clone();
             let state = Arc::clone(state);
 
             s.spawn(move |_| {
-                let embedding_result = process_task(&task, &session, &state);
+                let embedding_result = process_task(&task, &session_pool, &state);
                 match embedding_result {
                     Ok(embedding) => {
                         let _ = result_tx.send(AiResult { item_id: task.item_id, embedding: Some(embedding) });
@@ -267,7 +255,7 @@ fn consume_tasks(
 /// 处理单个 AI 任务：通过 ImageEngine（GPU 加速）解码源图像，然后运行 CLIP 推理。
 fn process_task(
     task: &AiTask,
-    session: &Arc<std::sync::Mutex<ort::session::Session>>,
+    session_pool: &crate::ai::engine::SessionPool,
     state: &AppState,
 ) -> crate::error::Result<Vec<u8>> {
     let gpu_engine_name = state.thumb_config.read().unwrap().gpu_engine.clone();
@@ -301,7 +289,8 @@ fn process_task(
         }
     };
 
-    let embedding_f32 = encode_image_from_decoded(session, &decoded)?;
+    let mut guard = session_pool.get();
+    let embedding_f32 = encode_image_from_decoded(&mut *guard, &decoded)?;
     Ok(embedding_to_bytes(&embedding_f32))
 }
 

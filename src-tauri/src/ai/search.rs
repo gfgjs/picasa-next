@@ -22,7 +22,7 @@ use crate::error::{AppError, Result};
 /// 执行语义搜索：编码查询，与所有存储的嵌入向量比较，返回带相似度分数的 Top-K 结果。
 pub fn semantic_search(
     conn: &mut rusqlite::Connection,
-    text_session: &Arc<std::sync::Mutex<ort::session::Session>>,
+    text_session_pool: &crate::ai::engine::SessionPool,
     tokenizer: &ClipTokenizer,
     query: &str,
     top_k: usize,
@@ -31,7 +31,8 @@ pub fn semantic_search(
 
     // 1. Encode the text query into a 512-d unit vector
     // 1. 将文本查询编码为 512-d 单位向量
-    let query_vec = encode_text(text_session, tokenizer, query)?;
+    let mut guard = text_session_pool.get();
+    let query_vec = encode_text(&mut *guard, tokenizer, query)?;
 
     // 2. Load all embeddings from SQLite
     // 2. 从 SQLite 加载所有嵌入向量

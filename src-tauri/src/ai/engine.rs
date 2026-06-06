@@ -68,10 +68,72 @@ use std::time::Duration;
 use ort::session::Session;
 use ort::session::builder::GraphOptimizationLevel;
 use tracing::{info, warn};
+use crossbeam_channel::{bounded, Receiver, Sender};
 
 use crate::ai::clip::ClipTokenizer;
 use crate::ai::provider::AiProvider;
-use crate::error::Result;
+use crate::error::{AppError, Result};
+
+/// A thread-safe pool of ONNX Runtime Sessions.
+/// 用于解决 ort rc.12 中 Session::run 需要 &mut self 导致的串行瓶颈。
+#[derive(Clone)]
+pub struct SessionPool {
+    rx: Receiver<Session>,
+    tx: Sender<Session>,
+}
+
+impl SessionPool {
+    pub fn new(capacity: usize) -> Self {
+        let (tx, rx) = bounded(capacity);
+        Self { rx, tx }
+    }
+
+    pub fn push(&self, session: Session) {
+        let _ = self.tx.send(session);
+    }
+
+    pub fn get(&self) -> SessionGuard {
+        // Block until a session is available
+        let session = self.rx.recv().expect("Session pool channel disconnected");
+        SessionGuard {
+            session: Some(session),
+            tx: self.tx.clone(),
+        }
+    }
+}
+
+/// A RAII guard that automatically returns the Session to the pool on drop.
+pub struct SessionGuard {
+    session: Option<Session>,
+    tx: Sender<Session>,
+}
+
+impl Drop for SessionGuard {
+    fn drop(&mut self) {
+        if let Some(session) = self.session.take() {
+            let _ = self.tx.send(session);
+        }
+    }
+}
+
+impl std::ops::Deref for SessionGuard {
+    type Target = Session;
+    fn deref(&self) -> &Self::Target {
+        self.session.as_ref().unwrap()
+    }
+}
+
+impl std::ops::DerefMut for SessionGuard {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.session.as_mut().unwrap()
+    }
+}
+
+impl std::fmt::Debug for SessionPool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SessionPool").field("available", &self.rx.len()).finish()
+    }
+}
 
 /// 会话加载超时时间。
 ///
@@ -92,13 +154,13 @@ pub struct AiEnginePool {
     /// GPU 显示名称（CPU 时为空字符串）。
     pub gpu_name: String,
 
-    /// Chinese-CLIP image encoder session.
-    /// Chinese-CLIP 图像编码器 Session。
-    pub clip_image_session: Option<Arc<Mutex<Session>>>,
+    /// Chinese-CLIP image encoder session pool.
+    /// Chinese-CLIP 图像编码器 Session 池。
+    pub clip_image_session: Option<SessionPool>,
 
-    /// Chinese-CLIP text encoder session.
-    /// Chinese-CLIP 文本编码器 Session。
-    pub clip_text_session: Option<Arc<Mutex<Session>>>,
+    /// Chinese-CLIP text encoder session pool.
+    /// Chinese-CLIP 文本编码器 Session 池。
+    pub clip_text_session: Option<SessionPool>,
 
     /// Cached BERT tokenizer (loaded from vocab.txt).
     /// 缓存的 BERT 分词器（从 vocab.txt 加载）。
@@ -133,27 +195,34 @@ impl AiEnginePool {
             provider_info.gpu_name = String::new();
         }
 
+        let pool_size = match provider_info.provider {
+            AiProvider::Cpu => std::thread::available_parallelism().map(|n| n.get().min(8)).unwrap_or(4),
+            _ => 2, // GPU providers: 2 concurrent sessions are usually enough to hide dispatch latency and saturate GPU
+        };
+
         // ── Step 2: load CLIP models ────────────────────────────────────────
         // ── 步骤 2：加载 CLIP 模型 ──────────────────────────────────────
-        let mut clip_image_session = load_session(&image_path, &provider_info.provider, "CLIP image encoder | CLIP 图像编码器");
+        let mut clip_image_session = load_session_pool(&image_path, &provider_info.provider, "CLIP image encoder | CLIP 图像编码器", pool_size);
 
         // Fallback to CPU if GPU failed to load the image encoder
         if clip_image_session.is_none() && provider_info.provider != AiProvider::Cpu {
             tracing::warn!("GPU acceleration failed, falling back to CPU... | GPU 加速失败，正在回退至 CPU...");
             provider_info.provider = AiProvider::Cpu;
             provider_info.gpu_name = String::new();
-            clip_image_session = load_session(&image_path, &AiProvider::Cpu, "CLIP image encoder (CPU) | CLIP 图像编码器 (CPU)");
+            let cpu_pool_size = std::thread::available_parallelism().map(|n| n.get().min(8)).unwrap_or(4);
+            clip_image_session = load_session_pool(&image_path, &AiProvider::Cpu, "CLIP image encoder (CPU) | CLIP 图像编码器 (CPU)", cpu_pool_size);
         }
 
-        let mut clip_text_session = load_session(&text_path, &provider_info.provider, "CLIP text encoder | CLIP 文本编码器");
+        let mut clip_text_session = load_session_pool(&text_path, &provider_info.provider, "CLIP text encoder | CLIP 文本编码器", pool_size);
 
         // Fallback to CPU if GPU failed to load the text encoder
         if clip_text_session.is_none() && provider_info.provider != AiProvider::Cpu {
             tracing::warn!("GPU acceleration failed, falling back to CPU... | GPU 加速失败，正在回退至 CPU...");
             provider_info.provider = AiProvider::Cpu;
             provider_info.gpu_name = String::new();
-            clip_image_session = load_session(&image_path, &AiProvider::Cpu, "CLIP image encoder (CPU) | CLIP 图像编码器 (CPU)");
-            clip_text_session = load_session(&text_path, &AiProvider::Cpu, "CLIP text encoder (CPU) | CLIP 文本编码器 (CPU)");
+            let cpu_pool_size = std::thread::available_parallelism().map(|n| n.get().min(8)).unwrap_or(4);
+            clip_image_session = load_session_pool(&image_path, &AiProvider::Cpu, "CLIP image encoder (CPU) | CLIP 图像编码器 (CPU)", cpu_pool_size);
+            clip_text_session = load_session_pool(&text_path, &AiProvider::Cpu, "CLIP text encoder (CPU) | CLIP 文本编码器 (CPU)", cpu_pool_size);
         }
 
         info!(
@@ -188,15 +257,12 @@ impl AiEnginePool {
 // ── Helpers ──────────────────────────────────────────────────────────────────
 // ── 辅助函数 ──────────────────────────────────────────────────────────────────
 
-/// Load a single ONNX session with the given provider.
-/// Uses a background thread with timeout to detect hangs (DirectML shader compilation deadlock).
-/// 使用给定提供者加载单个 ONNX Session。
-/// 使用带超时的后台线程检测卡死情况（DirectML shader 编译死锁）。
-fn load_session(
+fn load_session_pool(
     model_path: &PathBuf,
     provider: &AiProvider,
     label: &str,
-) -> Option<Arc<Mutex<Session>>> {
+    pool_size: usize,
+) -> Option<SessionPool> {
     if !model_path.exists() {
         warn!(
             "Model file not found, skipping {} | 模型文件未找到，跳过 {}: {:?}",
@@ -206,62 +272,53 @@ fn load_session(
     }
 
     info!(
-        "Loading {} with provider {} | 正在用 {} 加载 {}: {:?}",
-        label, provider.label(), provider.label(), label, model_path
+        "Loading {} (pool size: {}) with provider {} | 正在用 {} 加载 {} (容量: {}): {:?}",
+        label, pool_size, provider.label(), provider.label(), label, pool_size, model_path
     );
 
-    // Spawn session loading in a dedicated thread with a timeout.
-    // This guards against DirectML / shader-compilation hangs.
-    // 在专用线程中加载 session 并设置超时，防止 DirectML 编译 shader 时无限期卡死。
-    let path_clone = model_path.clone();
-    let provider_clone = provider.clone();
-    let (tx, rx) = std::sync::mpsc::channel();
+    let pool = SessionPool::new(pool_size);
 
-    std::thread::spawn(move || {
-        let result = build_session(&path_clone, &provider_clone);
-        // Ignore send errors if the receiver timed out and dropped
-        // 如果接收方已超时退出，忽略发送错误
-        let _ = tx.send(result);
-    });
+    for i in 0..pool_size {
+        let path_clone = model_path.clone();
+        let provider_clone = provider.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
 
-    match rx.recv_timeout(SESSION_LOAD_TIMEOUT) {
-        Ok(Ok(session)) => {
-            // ── Diagnostic: log model I/O spec ──────────────────────────
-            // ── 诊断：记录模型输入/输出规格 ──────────────────────────────
-            let input_names: Vec<&str> = session.inputs().iter()
-                .map(|i| i.name())
-                .collect();
-            let output_names: Vec<&str> = session.outputs().iter()
-                .map(|o| o.name())
-                .collect();
-            info!(
-                "Loaded {} — inputs: {:?}, outputs: {:?} | {} 加载成功 — 输入: {:?}, 输出: {:?}",
-                label, input_names, output_names,
-                label, input_names, output_names
-            );
-            Some(Arc::new(Mutex::new(session)))
-        }
-        Ok(Err(e)) => {
-            warn!(
-                "Failed to load {}, AI feature degraded | {} 加载失败，AI 功能降级: {}",
-                label, label, e
-            );
-            None
-        }
-        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-            warn!(
-                "Timeout loading {} after {:?} — provider {} likely hung on shader/graph compilation. \
-                 | {} 加载超时（{:?}），提供者 {} 可能在 shader/图优化阶段卡死。",
-                label, SESSION_LOAD_TIMEOUT, provider.label(),
-                label, SESSION_LOAD_TIMEOUT, provider.label()
-            );
-            None
-        }
-        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-            warn!("Session loader thread panicked while loading {} | 加载 {} 时 Session 加载线程崩溃", label, label);
-            None
+        std::thread::spawn(move || {
+            let result = build_session(&path_clone, &provider_clone);
+            let _ = tx.send(result);
+        });
+
+        match rx.recv_timeout(SESSION_LOAD_TIMEOUT) {
+            Ok(Ok(session)) => {
+                if i == 0 {
+                    let input_names: Vec<&str> = session.inputs().iter().map(|i| i.name()).collect();
+                    let output_names: Vec<&str> = session.outputs().iter().map(|o| o.name()).collect();
+                    info!(
+                        "Loaded {} [1/{}] — inputs: {:?}, outputs: {:?} | {} 加载成功 [1/{}] — 输入: {:?}, 输出: {:?}",
+                        label, pool_size, input_names, output_names,
+                        label, pool_size, input_names, output_names
+                    );
+                } else {
+                    info!("Loaded {} [{}/{}] | {} 加载成功 [{}/{}]", label, i + 1, pool_size, label, i + 1, pool_size);
+                }
+                pool.push(session);
+            }
+            Ok(Err(e)) => {
+                warn!("Failed to load {} [{}/{}], AI feature degraded | {} 加载失败 [{}/{}], AI 功能降级: {}", label, i + 1, pool_size, label, i + 1, pool_size, e);
+                return None;
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                warn!("Timeout loading {} [{}/{}] after {:?} | {} 加载超时 [{}/{}] ({:?})", label, i + 1, pool_size, SESSION_LOAD_TIMEOUT, label, i + 1, pool_size, SESSION_LOAD_TIMEOUT);
+                return None;
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                warn!("Session loader thread panicked while loading {} [{}/{}] | 加载 {} 时 Session 加载线程崩溃 [{}/{}]", label, i + 1, pool_size, label, i + 1, pool_size);
+                return None;
+            }
         }
     }
+
+    Some(pool)
 }
 
 /// Build a Session with the appropriate EP for the selected provider.

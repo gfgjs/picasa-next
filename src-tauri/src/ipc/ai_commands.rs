@@ -204,8 +204,10 @@ pub async fn semantic_search_cmd(
         let engine_guard = state.ai_engine.read().unwrap();
         let engine = engine_guard.as_ref().unwrap();
 
-        let text_session = engine.clip_text_session.as_ref()
-            .ok_or_else(|| "Text encoder not loaded | 文本编码器未加载".to_string())?;
+        let text_session = match engine.clip_text_session.as_ref() {
+            Some(s) => s,
+            None => return Err("Text encoder not loaded | 文本编码器未加载".to_string()),
+        };
 
         let mut conn = state.db_writer.lock().unwrap();
 

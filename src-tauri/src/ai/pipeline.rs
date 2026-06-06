@@ -36,11 +36,11 @@ use crate::state::AppState;
 
 /// Batch size for reading from DB and writing embeddings.
 /// 从数据库读取和写入嵌入向量的批次大小。
-const BATCH_SIZE: i64 = 128;
+const BATCH_SIZE: i64 = 512;
 
 /// Channel capacity between producer and consumers.
 /// 生产者和消费者之间的通道容量。
-const CHANNEL_CAPACITY: usize = 256;
+const CHANNEL_CAPACITY: usize = 1024;
 
 /// Task item sent from producer to consumers.
 /// 从生产者发送到消费者的任务项。

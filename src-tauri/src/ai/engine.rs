@@ -297,8 +297,9 @@ fn build_session(model_path: &PathBuf, provider: &AiProvider) -> ort::Result<Ses
             b.commit_from_file(model_path)
         }
         AiProvider::CUDA => {
+            let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
             let mut b = Session::builder()?
-                .with_intra_threads(4)?
+                .with_intra_threads(cores as _)?
                 .with_optimization_level(GraphOptimizationLevel::Level3)?
                 .with_execution_providers([ort::ep::CUDA::default().build()])?
                 ;
@@ -306,16 +307,18 @@ fn build_session(model_path: &PathBuf, provider: &AiProvider) -> ort::Result<Ses
         }
         #[cfg(any(target_os = "macos", target_os = "ios"))]
         AiProvider::CoreML => {
+            let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
             let mut b = Session::builder()?
-                .with_intra_threads(4)?
+                .with_intra_threads(cores as _)?
                 .with_optimization_level(GraphOptimizationLevel::Level3)?
                 .with_execution_providers([ort::ep::CoreML::default().build()])?
                 ;
             b.commit_from_file(model_path)
         }
         AiProvider::OpenVINO => {
+            let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
             let mut b = Session::builder()?
-                .with_intra_threads(4)?
+                .with_intra_threads(cores as _)?
                 .with_optimization_level(GraphOptimizationLevel::Level3)?
                 .with_execution_providers([ort::ep::OpenVINO::default().build()])?
                 ;
@@ -332,8 +335,9 @@ fn build_session(model_path: &PathBuf, provider: &AiProvider) -> ort::Result<Ses
             // CPU 路径 — 使用 Level1（Basic）图优化以加快 Session 创建速度。
             // Level3 对 330 MB fp32 ViT-B/16 图执行完整的图融合和布局变换，首次加载可能耗时 5–10 分钟。
             // Level1 仅执行常量折叠和死节点消除，Session 创建时间为秒级，对 CPU fp32 推理性能影响极小。
+            let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
             let mut b = Session::builder()?
-                .with_intra_threads(4)?
+                .with_intra_threads(cores as _)?
                 .with_optimization_level(GraphOptimizationLevel::Level1)?
                 ;
             b.commit_from_file(model_path)

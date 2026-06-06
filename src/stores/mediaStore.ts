@@ -37,6 +37,7 @@ export const useMediaStore = defineStore('media', () => {
   // ── Computed ─────────────────────────────────────────────────────────────
   // ── 计算属性 ─────────────────────────────────────────────────────────────
   const totalItems   = computed(() => stats.value?.totalItems ?? 0)
+  const viewTotalItems = computed(() => layoutSummary.value?.totalItems ?? 0)
   const totalHeight  = computed(() => layoutSummary.value?.totalHeight ?? 0)
   const totalRows    = computed(() => layoutSummary.value?.totalRows ?? 0)
   const layoutVersion = computed(() => layoutSummary.value?.layoutVersion ?? 0)
@@ -212,7 +213,7 @@ export const useMediaStore = defineStore('media', () => {
     layoutSummary, rowCache, isComputingLayout, layoutDirty,
     detailItem, isDetailOpen, navContext,
     stats,
-    totalItems, totalHeight, totalRows, layoutVersion,
+    totalItems, viewTotalItems, totalHeight, totalRows, layoutVersion,
     computeLayout, fetchRows, fetchRowsByY, openDetail, openDetailFromLayout, openDetailFromSearch, closeDetail, navigateDetail,
     loadStats, toggleFavorite, setRating, invalidateLayout, consumeLayoutDirty,
   }

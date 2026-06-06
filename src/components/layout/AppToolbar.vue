@@ -4,7 +4,7 @@
     <!-- 标题 / 面包屑 -->
     <div class="toolbar__breadcrumb">
       <span class="toolbar__title">{{ title }}</span>
-      <span v-if="media.stats" class="toolbar__count">{{ media.totalItems.toLocaleString() }} 个项目</span>
+      <span v-if="media.stats" class="toolbar__count">{{ media.viewTotalItems.toLocaleString() }} 个项目</span>
     </div>
   </div>
 
@@ -82,6 +82,7 @@
         class="toolbar__search"
         :value="ai.isSemanticMode ? ai.semanticQuery : ui.searchQuery"
         @input="onSearchInput"
+        @keydown.esc.prevent
         @focus="isSearchFocused = true"
         @blur="isSearchFocused = false"
         :placeholder="ai.isSemanticMode ? '用自然语言搜索图片…' : $t('toolbar.searchPlaceholder')"

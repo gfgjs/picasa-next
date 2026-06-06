@@ -805,10 +805,15 @@ Justified Layout 计算在 Rust 后端完成，前端仅按需加载可视行：
 ### 10.4 缩略图加载流程
 
 1. thumbhash (28B) → 32×32 DataURL → `blur(20px)` 占位
-2. 可视行 items 中 `thumb_status=1` 的项 → 直接 `new Image(thumb_path) + img.decode()` 预光栅化
+2. 可视行 items 中 `thumb_status=1` 的项 → 执行异步解码预热（见 10.4.1）
 3. `thumb_status=0` 的项 → 请求队列攒批 → `batch_request_thumbnails` IPC → rayon 并行生成
-4. `decode()` 完成 → 替换 src → `opacity 0→1 (300ms)`
-5. 快速滚动 → 取消离开视口的请求
+4. 快速滚动 → 结合 `AbortController` 取消离开视口的预加载/解码请求
+
+#### 10.4.1 图片异步解码（GPU 纹理上传预热）
+
+在等高网格快速滚动时，即便虚拟滚动极其流畅，DOM 元素的插入依然可能因为浏览器主线程忙于同步解码图片而造成微小的卡顿（Jank）。
+**技术细节与落地**：在 Vue 3 虚拟滚动渲染器中，当检测到图片即将进入视口边缘时（可结合 IntersectionObserver 外延缓冲区），在内存中动态创建 `new Image()`，并调用原生的 `img.decode().then(...)` 异步解码接口。当 Promise 回调成功后再将其真实挂载到 DOM 上。此时该图片的 GPU 纹理已在后台线程上传完毕，图片会瞬间亮起（配合 `opacity 0→1` 动画），彻底消灭极速滚动时的掉帧（Frame Drop）。
+为防止极速滚动撑爆内存，需配合并发请求队列（如最大并发数 10-20），并在图片划出缓冲区时立即清空 src/中断拉取，以达到比肩原生 App 的丝滑体验。
 
 ### 10.5 媒体类型筛选芯片 (AppToolbar)
 

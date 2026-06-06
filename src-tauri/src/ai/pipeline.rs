@@ -20,16 +20,17 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use ndarray::Array4;
 use crossbeam_channel::{bounded, Receiver, Sender};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-use crate::ai::clip::{encode_image_from_decoded, embedding_to_bytes, MODEL_NAME};
+use crate::ai::clip::{embedding_to_bytes, MODEL_NAME};
 use crate::db::queries::{
     batch_upsert_ai_embeddings, batch_update_ai_status, count_pending_ai_items,
     get_pending_ai_items,
 };
-use crate::error::{AppError, Result};
+use crate::error::AppError;
 use crate::db::models::AiStatus;
 use crate::engine::gpu::get_gpu_engine;
 use crate::engine::traits::ResizeHint;
@@ -49,6 +50,13 @@ struct AiTask {
     item_id:     i64,
     source_path: PathBuf,
     file_format: String,
+}
+
+/// Task sent from preprocessor to inferencer.
+/// 从预处理器发送到推理器的任务。
+struct InferenceTask {
+    item_id: i64,
+    tensor: Array4<f32>,
 }
 
 /// Embedding result sent from consumers to writer.
@@ -87,6 +95,13 @@ pub fn start_ai_pipeline(
         // Clear the token from state after completion.
         // 完成后从状态中清除令牌。
         state.cancel_ai_analysis();
+
+        // Release AI engine to free up VRAM after analysis ends
+        // 结束分析后卸载 AI 引擎以释放显存
+        if let Ok(mut engine) = state.ai_engine.write() {
+            *engine = None;
+            info!("AI engine unloaded to release VRAM | AI 引擎已卸载以释放显存");
+        }
     });
 }
 
@@ -115,6 +130,7 @@ fn run_pipeline_blocking(
     // ── Channel setup ─────────────────────────────────────────────────────────
     // ── 通道设置 ─────────────────────────────────────────────────────────────
     let (task_tx, task_rx) = bounded::<AiTask>(CHANNEL_CAPACITY);
+    let (inference_tx, inference_rx) = bounded::<InferenceTask>(CHANNEL_CAPACITY);
     let (result_tx, result_rx) = bounded::<AiResult>(CHANNEL_CAPACITY);
 
     let token_prod   = token.clone();
@@ -129,13 +145,23 @@ fn run_pipeline_blocking(
             produce_tasks(&state_prod, task_tx, &token_prod);
         });
 
-        // ── Consumer threads (rayon thread pool) ──────────────────────────────
-        // ── 消费者线程（rayon 线程池）─────────────────────────────────────────
-        let session_clone = clip_session.clone();
-        let result_tx_clone = result_tx.clone();
+        // ── Preprocessor threads (rayon thread pool) ──────────────────────────
+        // ── 预处理线程（rayon 线程池）────────────────────────────────────────
         let state_consumer = Arc::clone(state);
+        let token_consumer = token.clone();
+        let result_tx_preprocess = result_tx.clone();
         s.spawn(move |_| {
-            consume_tasks(task_rx, result_tx_clone, session_clone, &state_consumer, token);
+            preprocess_tasks(task_rx, inference_tx, result_tx_preprocess, &state_consumer, &token_consumer);
+        });
+
+        // ── Inferencer thread ─────────────────────────────────────────────────
+        // ── 推理线程 ──────────────────────────────────────────────────────────
+        let session_clone = clip_session.clone();
+        let token_inferencer = token.clone();
+        let result_tx_inferencer = result_tx.clone();
+        let state_inferencer = Arc::clone(state);
+        s.spawn(move |_| {
+            run_inference_tasks(inference_rx, result_tx_inferencer, session_clone, &state_inferencer, &token_inferencer);
         });
 
         // ── Writer thread ─────────────────────────────────────────────────────
@@ -208,38 +234,33 @@ fn produce_tasks(
     info!("AI producer finished | AI 生产者已完成");
 }
 
-/// Consumer: receive tasks, run CLIP image inference, send results.
-/// 消费者：接收任务，运行 CLIP 图像推理，发送结果。
-fn consume_tasks(
+/// Preprocessor: receive tasks, decode image, run CLIP preprocessing, send to inferencer.
+/// 预处理器：接收任务，解码图像，运行 CLIP 预处理，发送到推理器。
+fn preprocess_tasks(
     task_rx: Receiver<AiTask>,
+    inference_tx: Sender<InferenceTask>,
     result_tx: Sender<AiResult>,
-    session_pool: crate::ai::engine::SessionPool,
     state: &Arc<AppState>,
     token: &CancellationToken,
 ) {
-    // Use rayon parallel iterator for the consumer tasks
-    // 使用 rayon 并行迭代器处理消费者任务
     rayon::scope(|s| {
         for task in task_rx {
             if token.is_cancelled() { break; }
 
-            let session_pool = session_pool.clone();
+            let inference_tx = inference_tx.clone();
             let result_tx = result_tx.clone();
             let state = Arc::clone(state);
 
             s.spawn(move |_| {
-                let embedding_result = process_task(&task, &session_pool, &state);
-                match embedding_result {
-                    Ok(embedding) => {
-                        let _ = result_tx.send(AiResult { item_id: task.item_id, embedding: Some(embedding) });
+                match process_preprocess_task(&task, &state) {
+                    Ok(tensor) => {
+                        let _ = inference_tx.send(InferenceTask { item_id: task.item_id, tensor });
                     }
                     Err(e) => {
                         debug!(
-                            "CLIP inference failed for item {} | 项 {} CLIP 推理失败: {}",
+                            "Preprocess failed for item {} | 项 {} 预处理失败: {}",
                             task.item_id, task.item_id, e
                         );
-                        // Send failure marker so writer can set ai_status=Error
-                        // 发送失败标记，让写入器将 ai_status 设为 Error
                         let _ = result_tx.send(AiResult { item_id: task.item_id, embedding: None });
                     }
                 }
@@ -247,24 +268,19 @@ fn consume_tasks(
         }
     });
 
-    info!("AI consumers finished | AI 消费者已完成");
+    info!("AI preprocessors finished | AI 预处理器已完成");
 }
 
-/// Process a single AI task: decode source image via ImageEngine (GPU-accelerated),
-/// then run CLIP inference.
-/// 处理单个 AI 任务：通过 ImageEngine（GPU 加速）解码源图像，然后运行 CLIP 推理。
-fn process_task(
+/// Process a single AI preprocess task: decode source image via ImageEngine (GPU-accelerated),
+/// then run CLIP preprocessing.
+/// 处理单个 AI 预处理任务：通过 ImageEngine（GPU 加速）解码源图像，然后运行 CLIP 预处理。
+fn process_preprocess_task(
     task: &AiTask,
-    session_pool: &crate::ai::engine::SessionPool,
     state: &AppState,
-) -> crate::error::Result<Vec<u8>> {
+) -> crate::error::Result<Array4<f32>> {
     let gpu_engine_name = state.thumb_config.read().unwrap().gpu_engine.clone();
     let resize_hint = Some(ResizeHint::ShortEdge(224));
 
-    // Try GPU engine first for hardware-accelerated decode + resize,
-    // fall back to CPU engine (image-rs) if GPU is unavailable or fails.
-    // 先尝试 GPU 引擎进行硬件加速解码 + 缩放，
-    // 如果 GPU 不可用或失败则回退到 CPU 引擎 (image-rs)。
     let decoded = match get_gpu_engine(&gpu_engine_name) {
         Some(gpu) if gpu.can_handle(&task.file_format) => {
             match gpu.decode(&task.source_path, resize_hint) {
@@ -289,8 +305,100 @@ fn process_task(
         }
     };
 
-    let embedding_f32 = encode_image_from_decoded(session_pool, &decoded)?;
-    Ok(embedding_to_bytes(&embedding_f32))
+    Ok(crate::ai::clip::preprocess_decoded(&decoded))
+}
+
+/// Inferencer: receive preprocessed tensors, dynamically batch them, and run CLIP inference.
+/// 推理器：接收预处理后的张量，动态批处理它们，并运行 CLIP 推理。
+fn run_inference_tasks(
+    inference_rx: Receiver<InferenceTask>,
+    result_tx: Sender<AiResult>,
+    session_pool: crate::ai::engine::SessionPool,
+    state: &Arc<AppState>,
+    token: &CancellationToken,
+) {
+    let conn = state.db_read_pool.get().unwrap();
+    let batch_size_str = crate::db::queries::get_config(&conn, "ai_batch_size").unwrap_or_default();
+    
+    let batch_size = if let Some(s) = batch_size_str {
+        s.parse::<usize>().unwrap_or(8)
+    } else {
+        let vram_bytes = crate::ai::provider::detect_vram_bytes();
+        let gb = vram_bytes.map(|b| b / (1024 * 1024 * 1024)).unwrap_or(0);
+        if gb >= 8 { 64 } else if gb >= 4 { 32 } else if gb >= 2 { 16 } else { 8 }
+    };
+    drop(conn);
+
+    let mut batch = Vec::with_capacity(batch_size);
+    let timeout = std::time::Duration::from_millis(50);
+
+    loop {
+        if token.is_cancelled() {
+            info!("AI inferencer cancelled | AI 推理器已取消");
+            break;
+        }
+
+        match inference_rx.recv_timeout(timeout) {
+            Ok(task) => {
+                batch.push(task);
+                if batch.len() >= batch_size {
+                    flush_inference_batch(&mut batch, &session_pool, &result_tx);
+                }
+            }
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                if !batch.is_empty() {
+                    flush_inference_batch(&mut batch, &session_pool, &result_tx);
+                }
+            }
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                if !batch.is_empty() {
+                    flush_inference_batch(&mut batch, &session_pool, &result_tx);
+                }
+                break;
+            }
+        }
+    }
+
+    info!("AI inferencer finished | AI 推理器已完成");
+}
+
+/// Flush a batch of tensors to the CLIP inference engine.
+/// 将一批张量刷新到 CLIP 推理引擎。
+fn flush_inference_batch(
+    batch: &mut Vec<InferenceTask>,
+    session_pool: &crate::ai::engine::SessionPool,
+    result_tx: &Sender<AiResult>,
+) {
+    if batch.is_empty() {
+        return;
+    }
+
+    let views: Vec<_> = batch.iter().map(|t| t.tensor.view()).collect();
+    let batch_tensor = match ndarray::concatenate(ndarray::Axis(0), &views) {
+        Ok(tensor) => tensor,
+        Err(e) => {
+            warn!("Failed to concatenate tensors | 拼接张量失败: {}", e);
+            for task in batch.drain(..) {
+                let _ = result_tx.send(AiResult { item_id: task.item_id, embedding: None });
+            }
+            return;
+        }
+    };
+
+    match crate::ai::clip::encode_image_batch(session_pool, batch_tensor) {
+        Ok(embeddings) => {
+            for (task, embedding) in batch.drain(..).zip(embeddings) {
+                let bytes = embedding_to_bytes(&embedding);
+                let _ = result_tx.send(AiResult { item_id: task.item_id, embedding: Some(bytes) });
+            }
+        }
+        Err(e) => {
+            warn!("Batch inference failed | 批量推理失败: {}", e);
+            for task in batch.drain(..) {
+                let _ = result_tx.send(AiResult { item_id: task.item_id, embedding: None });
+            }
+        }
+    }
 }
 
 /// Writer: batch-collect results and write to DB.

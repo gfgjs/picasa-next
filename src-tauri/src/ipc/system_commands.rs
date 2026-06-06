@@ -25,8 +25,9 @@ pub async fn show_in_explorer(item_id: i64, state: State<'_, Arc<AppState>>) -> 
     // 特定平台的文件显示
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
         std::process::Command::new("explorer")
-            .args(["/select,", &abs_path.replace('/', "\\")])
+            .raw_arg(format!("/select,\"{}\"", abs_path.replace('/', "\\")))
             .spawn()
             .map_err(AppError::from)?;
     }

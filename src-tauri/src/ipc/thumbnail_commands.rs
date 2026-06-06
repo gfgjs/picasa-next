@@ -12,7 +12,7 @@ use rayon::prelude::*;
 use crate::db::models::ThumbResult;
 use crate::error::{AppError, Result};
 use crate::state::AppState;
-use crate::thumbnail::{decode_media_step, encode_media_step, generate_thumbnail, DecodeResult};
+use crate::thumbnail::{decode_media_step, encode_media_step, generate_thumbnail, process_deferred_cpu, DecodeResult, ThumbResultOrDeferred};
 
 /// 【一键切换架构开关】
 /// true: 使用方案二（多阶段流水线解耦），适合未来进行深度的并发与 IO 性能调优。
@@ -106,7 +106,7 @@ pub async fn batch_request_thumbnails(
         tokio::task::spawn_blocking(move || {
             if !USE_PIPELINE {
                 // 方案一：Rayon 直线并发 (Scheme 1)
-                let results: Vec<ThumbResult> = needs_gen
+                let intermediate: Vec<Result<ThumbResultOrDeferred>> = needs_gen
                     .par_iter()
                     .filter_map(|&id| {
                         if state_arc.cancelled_thumb_ids.lock().unwrap().remove(&id) {
@@ -140,26 +140,63 @@ pub async fn batch_request_thumbnails(
                         let abs_path_str = crate::utils::path::resolve_media_path(&root_path, &rel_path, &file_name);
                         let abs_path = std::path::Path::new(&abs_path_str);
 
-                        let res = generate_thumbnail(&item, abs_path, &state_arc.engine_arena, &config);
-                        match res {
-                            Ok(r) => { 
-                                let _ = on_result.send(r.clone()); 
-                                Some(r)
-                            },
-                            Err(e) => {
-                                let r = ThumbResult {
-                                    item_id:      id,
-                                    thumb_status: 2,
-                                    thumb_path:   None,
-                                    thumbhash:    None,
-                                };
-                                let _ = on_result.send(r.clone());
-                                error!("Thumbnail gen failed for id={id}: {e}");
-                                Some(r)
-                            }
-                        }
+                        Some(generate_thumbnail(&item, abs_path, &state_arc.engine_arena, &config))
                     })
                     .collect();
+
+                let mut results = Vec::new();
+                let mut deferred = Vec::new();
+                for (id, res) in needs_gen.iter().zip(intermediate) {
+                    match res {
+                        Ok(ThumbResultOrDeferred::Done(r)) => {
+                            let _ = on_result.send(r.clone());
+                            results.push(r);
+                        }
+                        Ok(ThumbResultOrDeferred::Deferred { item, abs_path }) => {
+                            deferred.push((item, abs_path));
+                        }
+                        Err(e) => {
+                            let r = ThumbResult {
+                                item_id:      *id,
+                                thumb_status: 2,
+                                thumb_path:   None,
+                                thumbhash:    None,
+                            };
+                            let _ = on_result.send(r.clone());
+                            error!("Thumbnail gen failed for id={id}: {e}");
+                            results.push(r);
+                        }
+                    }
+                }
+
+                if !deferred.is_empty() {
+                    let cpu_results: Vec<ThumbResult> = deferred
+                        .into_par_iter()
+                        .filter_map(|(item, abs_path)| {
+                            if state_arc.cancelled_thumb_ids.lock().unwrap().remove(&item.id) {
+                                return None;
+                            }
+                            match process_deferred_cpu(&item, &abs_path, &state_arc.engine_arena, &config) {
+                                Ok(r) => {
+                                    let _ = on_result.send(r.clone());
+                                    Some(r)
+                                }
+                                Err(e) => {
+                                    let r = ThumbResult {
+                                        item_id:      item.id,
+                                        thumb_status: 2,
+                                        thumb_path:   None,
+                                        thumbhash:    None,
+                                    };
+                                    let _ = on_result.send(r.clone());
+                                    error!("Thumbnail cpu gen failed for id={}: {}", item.id, e);
+                                    Some(r)
+                                }
+                            }
+                        })
+                        .collect();
+                    results.extend(cpu_results);
+                }
 
                 if !results.is_empty() {
                     if let Ok(mut conn) = state_arc.db_writer.lock() {
@@ -238,6 +275,19 @@ pub async fn batch_request_thumbnails(
                             }
                             Ok(DecodeResult::ToEncode { item_id, cache_key, decoded }) => {
                                 let _ = tx.send((item_id, cache_key, decoded));
+                            }
+                            Ok(DecodeResult::DeferredToCpu { item, abs_path }) => {
+                                // Fallback to CPU inline because we don't have deferred_tx in Scheme 2 batch request yet
+                                // Wait, to implement proper deferral in batch_request, we can just spawn CPU tasks.
+                                // Actually for batch_request_thumbnails it's okay to just process inline if we really want,
+                                // but for simplicity and correctness, let's process inline here since it's Scheme 2.
+                                match process_deferred_cpu(&item, &abs_path, &state_worker.engine_arena, &cfg) {
+                                    Ok(res) => { let _ = res_tx.send(res); }
+                                    Err(e) => {
+                                        error!("Deferred CPU Decode failed for id={}: {}", item.id, e);
+                                        let _ = res_tx.send(ThumbResult { item_id: item.id, thumb_status: 2, thumb_path: None, thumbhash: None });
+                                    }
+                                }
                             }
                             Err(e) => {
                                 error!("Decode failed for id={}: {}", item.id, e);
@@ -324,6 +374,8 @@ pub struct FullThumbProgressPayload {
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_item: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub phase: Option<String>,
 }
 
 #[tauri::command]
@@ -348,6 +400,7 @@ pub async fn start_full_thumbnail_generation(
             total: 0,
             status: "completed".to_string(),
             current_item: None,
+            phase: None,
         });
         return Ok(());
     }
@@ -364,6 +417,7 @@ pub async fn start_full_thumbnail_generation(
             total: total as u64,
             status: "running".to_string(),
             current_item: None,
+            phase: Some("GPU".to_string()),
         });
 
         let config = state_arc.thumb_config.read().unwrap().clone();
@@ -414,10 +468,20 @@ pub async fn start_full_thumbnail_generation(
                             generated: current,
                             total: total as u64,
                             status: "running".to_string(),
-                            current_item: Some(file_name),
+            current_item: Some(file_name),
+            phase: Some("GPU".to_string()),
                         });
                         
                         let res = generate_thumbnail(&item, abs_path, &state_arc.engine_arena, &config);
+                        // In scheme 1 full gen, if it's deferred, we just immediately process it for simplicity 
+                        // (since scheme 1 is deprecated for two-phase)
+                        let res = match res {
+                            Ok(ThumbResultOrDeferred::Done(r)) => Ok(r),
+                            Ok(ThumbResultOrDeferred::Deferred { item, abs_path }) => {
+                                process_deferred_cpu(&item, &abs_path, &state_arc.engine_arena, &config)
+                            }
+                            Err(e) => Err(e),
+                        };
                         
                         generated_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         
@@ -467,14 +531,15 @@ pub async fn start_full_thumbnail_generation(
                     generated: current_gen,
                     total: total as u64,
                     status: "running".to_string(),
-                    current_item: None,
+            current_item: None,
+            phase: Some("GPU".to_string()),
                 });
             }
         } else {
             // 方案二：多阶段流水线解耦 (Scheme 2)
             let (decode_tx, decode_rx) = bounded(1024);
             let (encode_tx, encode_rx) = bounded(1024);
-            let (result_tx, result_rx) = bounded(1024);
+            let (result_tx, result_rx) = bounded::<std::result::Result<ThumbResult, (crate::db::models::MediaItem, std::path::PathBuf)>>(1024);
 
             let state_dispatcher = state_arc.clone();
             let cancel_dispatcher = cancel_token.clone();
@@ -524,13 +589,16 @@ pub async fn start_full_thumbnail_generation(
                     while let Ok((item, abs_path)) = rx.recv() {
                         if cancel.is_cancelled() { break; }
                         match decode_media_step(&item, &abs_path, &state_worker.engine_arena, &cfg) {
-                            Ok(DecodeResult::Ready(res)) => { let _ = res_tx.send(res); }
+                            Ok(DecodeResult::Ready(res)) => { let _ = res_tx.send(Ok(res)); }
                             Ok(DecodeResult::ToEncode { item_id, cache_key, decoded }) => {
                                 if tx.send((item_id, cache_key, decoded)).is_err() { break; }
                             }
+                            Ok(DecodeResult::DeferredToCpu { item, abs_path }) => {
+                                let _ = res_tx.send(Err((item, abs_path)));
+                            }
                             Err(e) => {
                                 error!("Full gen decode failed for id={}: {}", item.id, e);
-                                let _ = res_tx.send(ThumbResult { item_id: item.id, thumb_status: 2, thumb_path: None, thumbhash: None });
+                                let _ = res_tx.send(Ok(ThumbResult { item_id: item.id, thumb_status: 2, thumb_path: None, thumbhash: None }));
                             }
                         }
                     }
@@ -549,10 +617,10 @@ pub async fn start_full_thumbnail_generation(
                     while let Ok((item_id, cache_key, decoded)) = rx.recv() {
                         if cancel.is_cancelled() { break; }
                         match encode_media_step(item_id, cache_key, decoded, &cfg) {
-                            Ok(res) => { let _ = tx.send(res); }
+                            Ok(res) => { let _ = tx.send(Ok(res)); }
                             Err(e) => {
                                 error!("Full gen encode failed for id={}: {}", item_id, e);
-                                let _ = tx.send(ThumbResult { item_id, thumb_status: 2, thumb_path: None, thumbhash: None });
+                                let _ = tx.send(Ok(ThumbResult { item_id, thumb_status: 2, thumb_path: None, thumbhash: None }));
                             }
                         }
                     }
@@ -561,20 +629,29 @@ pub async fn start_full_thumbnail_generation(
             drop(result_tx);
 
             let mut successful_results = Vec::new();
-            while let Ok(res) = result_rx.recv() {
+            let mut deferred_items = Vec::new();
+            
+            while let Ok(msg) = result_rx.recv() {
                 if cancel_token.is_cancelled() { break; }
-                successful_results.push(res.clone());
-                generated_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 
-                let current = generated_count.load(std::sync::atomic::Ordering::Relaxed);
-                
-                // 每次都向前端发送事件，保证进度条平滑 (+1 变化)
-                let _ = on_progress.send(FullThumbProgressPayload {
-                    generated: current,
-                    total: total as u64,
-                    status: "running".to_string(),
-                    current_item: None,
-                });
+                match msg {
+                    Ok(res) => {
+                        successful_results.push(res.clone());
+                        generated_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        
+                        let current = generated_count.load(std::sync::atomic::Ordering::Relaxed);
+                        let _ = on_progress.send(FullThumbProgressPayload {
+                            generated: current,
+                            total: total as u64,
+                            status: "running".to_string(),
+                            current_item: None,
+                            phase: Some("GPU".to_string()),
+                        });
+                    }
+                    Err(deferred) => {
+                        deferred_items.push(deferred);
+                    }
+                }
 
                 if successful_results.len() >= 50 {
                     // Log batch status breakdown
@@ -639,6 +716,60 @@ pub async fn start_full_thumbnail_generation(
                     }
                 }
             }
+
+            // Phase 2: CPU processing for deferred items
+            if !deferred_items.is_empty() && !cancel_token.is_cancelled() {
+                info!("[FullThumbGen] Phase 2: Processing {} deferred CPU tasks | 阶段2：处理延迟的 CPU 任务", deferred_items.len());
+                let mut cpu_successful = Vec::new();
+                for (item, abs_path) in deferred_items {
+                    if cancel_token.is_cancelled() { break; }
+                    
+                    let res = match process_deferred_cpu(&item, &abs_path, &state_arc.engine_arena, &config) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            error!("Full gen CPU fallback failed for id={}: {}", item.id, e);
+                            ThumbResult { item_id: item.id, thumb_status: 2, thumb_path: None, thumbhash: None }
+                        }
+                    };
+                    
+                    cpu_successful.push(res.clone());
+                    generated_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let current = generated_count.load(std::sync::atomic::Ordering::Relaxed);
+                    
+                    let _ = on_progress.send(FullThumbProgressPayload {
+                        generated: current,
+                        total: total as u64,
+                        status: "running".to_string(),
+                        current_item: None,
+                        phase: Some("CPU".to_string()),
+                    });
+                    
+                    // Flush every 10 for CPU
+                    if cpu_successful.len() >= 10 {
+                        if let Ok(mut conn) = state_arc.db_writer.lock() {
+                            if let Ok(tx) = conn.transaction() {
+                                for r in &cpu_successful {
+                                    let _ = crate::db::queries::update_thumb_result(&tx, r.item_id, r.thumb_status, r.thumb_path.as_deref(), r.thumbhash.as_deref());
+                                }
+                                let _ = tx.commit();
+                            }
+                        }
+                        cpu_successful.clear();
+                    }
+                }
+                
+                // Flush final CPU
+                if !cpu_successful.is_empty() {
+                    if let Ok(mut conn) = state_arc.db_writer.lock() {
+                        if let Ok(tx) = conn.transaction() {
+                            for r in &cpu_successful {
+                                let _ = crate::db::queries::update_thumb_result(&tx, r.item_id, r.thumb_status, r.thumb_path.as_deref(), r.thumbhash.as_deref());
+                            }
+                            let _ = tx.commit();
+                        }
+                    }
+                }
+            }
         }
 
         let final_gen = generated_count.load(std::sync::atomic::Ordering::Relaxed);
@@ -651,14 +782,16 @@ pub async fn start_full_thumbnail_generation(
                 generated: final_gen,
                 total: total as u64,
                 status: "cancelled".to_string(),
-                current_item: None,
+            current_item: None,
+            phase: None,
             });
         } else {
             let _ = on_progress.send(FullThumbProgressPayload {
                 generated: final_gen,
                 total: total as u64,
                 status: "completed".to_string(),
-                current_item: None,
+            current_item: None,
+            phase: None,
             });
         }
 

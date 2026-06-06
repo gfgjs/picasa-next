@@ -213,8 +213,9 @@
                   :style="{ width: thumbGenPercent + '%' }"
                 />
               </div>
-              <div class="thumb-gen-text">
+              <div class="thumb-gen-text" style="display: flex; align-items: center; gap: 6px;">
                 <span v-if="scan.thumbGenProgress.isRunning">{{ $t('settings.genStatusRunning', { generated: scan.thumbGenProgress.generated, total: scan.thumbGenProgress.total }) }}</span>
+                <span v-if="scan.thumbGenProgress.isRunning && scan.thumbGenProgress.phase" style="font-weight: 500; color: var(--color-warning); border: 1px solid currentColor; padding: 0 4px; border-radius: 4px; font-size: 10px; line-height: 1.2;">[{{ scan.thumbGenProgress.phase }}]</span>
                 <span v-else-if="scan.thumbGenProgress.status === 'completed'">{{ $t('settings.genStatusCompleted') }}</span>
                 <span v-else-if="scan.thumbGenProgress.status === 'cancelled'">{{ $t('settings.genStatusCancelled') }}</span>
                 <span v-else-if="scan.thumbGenProgress.status === 'error'">{{ $t('settings.genStatusError') }}</span>
@@ -249,6 +250,7 @@
             <div class="settings-card__label">{{ $t('settings.aiEngineStatus') }}</div>
             <div class="settings-card__desc">
               {{ ai.providerLabel }} {{ ai.status.gpuName ? `(${ai.status.gpuName})` : '' }}
+              <span v-if="ai.status.vramGb !== null"> [显存: {{ ai.status.vramGb }}GB]</span>
               <span v-if="!ai.status.clipLoaded" style="color: var(--color-warning);"> (未加载)</span>
               <span v-else style="color: var(--color-success);"> (已加载)</span>
             </div>
@@ -256,6 +258,21 @@
           <button class="btn btn-secondary" @click="ai.initEngine" :disabled="ai.status.clipLoaded">
             {{ $t('settings.aiTestLoad') }}
           </button>
+        </div>
+
+        <div class="settings-card__item">
+          <div class="settings-card__info">
+            <div class="settings-card__label">AI 批处理大小 (Batch Size)</div>
+            <div class="settings-card__desc">推入 GPU 并行计算的图片数量。显存越大可设置的值越高，更改后下次分析生效。</div>
+          </div>
+          <input
+            type="number"
+            v-model.number="aiBatchSize"
+            min="1"
+            max="128"
+            class="input-number"
+            @change="saveAiBatchSize"
+          />
         </div>
 
         <div class="settings-card__item">
@@ -432,6 +449,7 @@ const availableAiModels = ref<string[]>([])
 const aiImageModel = ref('cn-clip-vit-b16-image.onnx')
 const aiTextModel = ref('cn-clip-vit-b16-text.onnx')
 const aiProviderOverride = ref('auto')
+const aiBatchSize = ref(8)
 
 const thumbGenPercent = computed(() => {
   const { generated, total } = scan.thumbGenProgress
@@ -497,6 +515,10 @@ onMounted(async () => {
 
     availableAiModels.value = await ai.listAiModels()
     await ai.fetchStatus()
+
+    const valBatch = await invoke<string | null>('get_app_config', { key: 'ai_batch_size' })
+    if (valBatch) aiBatchSize.value = parseInt(valBatch, 10)
+    else aiBatchSize.value = ai.status.batchSize || 8
   } catch (e) {
     console.error('Failed to get config:', e)
   }
@@ -643,6 +665,11 @@ async function importModel() {
 async function saveAiProvider() {
   await saveConfig('ai_provider_override', aiProviderOverride.value)
   ui.addToast('success', '硬件加速策略已保存！需点击“测试加载”或重载引擎后生效。')
+}
+
+async function saveAiBatchSize() {
+  await saveConfig('ai_batch_size', aiBatchSize.value.toString())
+  ui.addToast('success', 'AI 批处理大小已保存，将在下一次流水线启动时生效。')
 }
 
 async function saveAiModels() {

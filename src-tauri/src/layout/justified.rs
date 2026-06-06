@@ -33,7 +33,9 @@ pub enum LayoutRow {
     Separator {
         y:               f64,
         height:          f64,
+        #[serde(rename = "separatorLabel")]
         separator_label: String,
+        #[serde(rename = "groupId")]
         group_id:        Option<String>,
     },
     #[serde(rename = "normal")]
@@ -245,7 +247,7 @@ pub fn compute_justified_layout(items: &[LayoutItem], params: &LayoutParams) -> 
             "folder" => {
                 let name = if let Some(path) = &item.dir_path {
                     if path.is_empty() {
-                        "Root".to_string()
+                        item.dir_name.clone().unwrap_or_else(|| "Root".to_string())
                     } else {
                         path.clone()
                     }

@@ -8,7 +8,7 @@
 //! Phase 4A：从 SQLite BLOB 加载所有嵌入向量，与查询向量计算余弦相似度，
 //! 返回按相似度排序的 Top-K 结果。
 
-use std::sync::Arc;
+
 
 use tracing::{debug, info};
 

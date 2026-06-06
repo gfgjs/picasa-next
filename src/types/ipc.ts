@@ -69,4 +69,5 @@ export interface FullThumbProgressPayload {
   total:     number
   status:    'running' | 'completed' | 'cancelled'
   currentItem?: string
+  phase?: string
 }

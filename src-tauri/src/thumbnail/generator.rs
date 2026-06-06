@@ -48,9 +48,42 @@ pub enum DecodeResult {
         cache_key: i64,
         decoded: crate::engine::traits::DecodedImage,
     },
+    DeferredToCpu {
+        item: crate::db::models::MediaItem,
+        abs_path: std::path::PathBuf,
+    },
+}
+
+pub enum ThumbResultOrDeferred {
+    Done(ThumbResult),
+    Deferred {
+        item: crate::db::models::MediaItem,
+        abs_path: std::path::PathBuf,
+    },
 }
 
 pub fn generate_thumbnail(
+    item: &crate::db::models::MediaItem,
+    abs_path: &Path,
+    arena: &EngineArena,
+    config: &ThumbConfig,
+) -> Result<ThumbResultOrDeferred> {
+    let mut snapped_config = config.clone();
+    snapped_config.size = snap_to_tier(config.size);
+    let config = &snapped_config;
+
+    match decode_media_step(item, abs_path, arena, config)? {
+        DecodeResult::Ready(res) => Ok(ThumbResultOrDeferred::Done(res)),
+        DecodeResult::ToEncode { item_id, cache_key, decoded } => {
+            Ok(ThumbResultOrDeferred::Done(encode_media_step(item_id, cache_key, decoded, config)?))
+        }
+        DecodeResult::DeferredToCpu { item, abs_path } => {
+            Ok(ThumbResultOrDeferred::Deferred { item, abs_path })
+        }
+    }
+}
+
+pub fn process_deferred_cpu(
     item: &crate::db::models::MediaItem,
     abs_path: &Path,
     arena: &EngineArena,
@@ -60,11 +93,12 @@ pub fn generate_thumbnail(
     snapped_config.size = snap_to_tier(config.size);
     let config = &snapped_config;
 
-    match decode_media_step(item, abs_path, arena, config)? {
+    match try_cpu_decode(item, abs_path, arena, config)? {
         DecodeResult::Ready(res) => Ok(res),
         DecodeResult::ToEncode { item_id, cache_key, decoded } => {
             encode_media_step(item_id, cache_key, decoded, config)
         }
+        DecodeResult::DeferredToCpu { .. } => unreachable!("CPU decode cannot return Deferred"),
     }
 }
 
@@ -149,8 +183,11 @@ pub fn decode_media_step(
                         Ok(res)
                     }
                     Err(e) => {
-                        warn!("[ThumbGen] GPU_DECODE_FAIL: id={} err={}, falling back to CPU | GPU 解码失败，回退 CPU", item_id, e);
-                        try_cpu_decode(item, abs_path, arena, config)
+                        warn!("[ThumbGen] GPU_DECODE_FAIL: id={} err={}, deferring to CPU | GPU 解码失败，推迟至 CPU 跑道", item_id, e);
+                        Ok(DecodeResult::DeferredToCpu {
+                            item: item.clone(),
+                            abs_path: abs_path.to_path_buf(),
+                        })
                     }
                 }
             } else {

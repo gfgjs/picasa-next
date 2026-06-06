@@ -8,6 +8,8 @@ export type AiProvider = 'directml' | 'cuda' | 'coreml' | 'openvino' | 'cpu'
 export interface AiStatusSummary {
   provider: string
   gpuName: string
+  vramGb: number | null
+  batchSize: number
   clipLoaded: boolean
   totalItems: number
   analyzedItems: number

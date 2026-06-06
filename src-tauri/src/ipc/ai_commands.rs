@@ -171,9 +171,28 @@ pub async fn get_ai_status(
 
         let is_analyzing = state.ai_analysis_token.lock().unwrap().is_some();
 
+        let vram_bytes = crate::ai::provider::detect_vram_bytes();
+        let vram_gb = vram_bytes.map(|b| (b / (1024 * 1024 * 1024)) as i64);
+
+        let batch_size_str = get_config(&conn, "ai_batch_size").unwrap_or_default();
+        let batch_size = if let Some(s) = batch_size_str {
+            s.parse::<i64>().unwrap_or(8)
+        } else {
+            let default_batch = if let Some(gb) = vram_gb {
+                if gb >= 8 { 64 } else if gb >= 4 { 32 } else if gb >= 2 { 16 } else { 8 }
+            } else {
+                8
+            };
+            let w_conn = state.db_writer.lock().unwrap();
+            let _ = set_config(&w_conn, "ai_batch_size", &default_batch.to_string());
+            default_batch
+        };
+
         Ok(AiStatusSummary {
             provider,
             gpu_name,
+            vram_gb,
+            batch_size,
             clip_loaded,
             total_items,
             analyzed_items,

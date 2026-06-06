@@ -87,3 +87,22 @@ pub fn detect_best_provider() -> ProviderInfo {
     #[allow(unreachable_code)]
     ProviderInfo { provider: AiProvider::Cpu, gpu_name: String::new() }
 }
+
+/// Detect the dedicated video memory (VRAM) in bytes.
+/// 探测专用显存大小（字节）。
+pub fn detect_vram_bytes() -> Option<u64> {
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIFactory1};
+        unsafe {
+            if let Ok(factory) = CreateDXGIFactory1::<IDXGIFactory1>() {
+                if let Ok(adapter) = factory.EnumAdapters1(0) {
+                    if let Ok(desc) = adapter.GetDesc1() {
+                        return Some(desc.DedicatedVideoMemory as u64);
+                    }
+                }
+            }
+        }
+    }
+    None
+}

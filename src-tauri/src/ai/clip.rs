@@ -115,13 +115,13 @@
 //! 如果 Python 正确但 Rust 不对，说明是代码问题（预处理/tokenizer 配置）。
 
 use std::path::Path;
-use std::sync::Arc;
+
 
 use image::DynamicImage;
 use ndarray::Array4;
-use ort::session::Session;
+
 use ort::value::Tensor;
-use std::sync::Mutex;
+
 use tracing::debug;
 
 use crate::engine::traits::DecodedImage;
@@ -221,6 +221,46 @@ fn run_image_inference(
     Ok(l2_normalize(embedding))
 }
 
+/// Run CLIP image encoder inference on a batch of preprocessed tensors.
+/// 在一批预处理后的张量上运行 CLIP 图像编码器推理。
+pub fn encode_image_batch(
+    session_pool: &crate::ai::engine::SessionPool,
+    batch_tensor: Array4<f32>,
+) -> Result<Vec<Vec<f32>>> {
+    let shape: [i64; 4] = [
+        batch_tensor.shape()[0] as i64,
+        3,
+        IMG_SIZE as i64,
+        IMG_SIZE as i64,
+    ];
+    let (flat_data, _offset) = batch_tensor.into_raw_vec_and_offset();
+    let tensor = Tensor::from_array((shape, flat_data))
+        .map_err(|e| AppError::Ai(format!("Build image batch tensor failed | 构建图像批处理张量失败: {e}")))?;
+
+    let mut guard = session_pool.get();
+    let outputs = guard
+        .run(ort::inputs!["pixel_values" => tensor])
+        .map_err(|e| AppError::Ai(format!("CLIP image batch inference failed | CLIP 图像批量推理失败: {e}")))?;
+
+    // Output: "unnorm_image_features" [N, 512]
+    let raw = outputs[0]
+        .try_extract_tensor::<f32>()
+        .map_err(|e| AppError::Ai(format!("Extract image batch tensor failed | 提取图像批量张量失败: {e}")))?;
+
+    let (out_shape, raw_slice) = raw;
+    let n = out_shape[0] as usize;
+    let mut results = Vec::with_capacity(n);
+
+    for i in 0..n {
+        let start = i * EMBED_DIM;
+        let end = start + EMBED_DIM;
+        let embedding: Vec<f32> = raw_slice[start..end].to_vec();
+        results.push(l2_normalize(embedding));
+    }
+
+    Ok(results)
+}
+
 /// Preprocess an image to a [1, 3, 224, 224] f32 array.
 /// 将图像预处理为 [1, 3, 224, 224] f32 数组。
 ///
@@ -233,7 +273,7 @@ fn run_image_inference(
 /// 【关键修复】旧代码先 CenterCrop(最大正方形) 再 Resize(224, Lanczos3)，
 /// 导致宽幅图像丢失大量语义内容（如 1920×1080 图片会先裁掉左右各 420px）。
 /// 正确做法是先按短边等比缩放，再裁剪，最大限度保留图像内容。
-fn preprocess_image(img: &DynamicImage) -> Array4<f32> {
+pub fn preprocess_image(img: &DynamicImage) -> Array4<f32> {
     // 1. Convert to RGB
     // 1. 转换为 RGB
     let rgb = img.to_rgb8();
@@ -286,7 +326,7 @@ fn preprocess_image(img: &DynamicImage) -> Array4<f32> {
 ///
 /// 图像预期 `短边 = 224`（如 336×224 或 224×224）。
 /// 执行：CenterCrop(224×224) → RGBA→RGB → /255 → CLIP 归一化 → HWC→CHW。
-fn preprocess_decoded(decoded: &DecodedImage) -> Array4<f32> {
+pub fn preprocess_decoded(decoded: &DecodedImage) -> Array4<f32> {
     let (w, h) = (decoded.width as usize, decoded.height as usize);
     let crop_size = IMG_SIZE as usize;
 

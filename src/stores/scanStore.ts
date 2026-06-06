@@ -114,6 +114,7 @@ export const useScanStore = defineStore('scan', () => {
     isRunning: boolean
     status:    'idle' | 'running' | 'completed' | 'cancelled' | 'error'
     currentItem?: string
+    phase?: string
   }
 
   const thumbGenProgress = ref<ThumbGenProgress>({
@@ -121,7 +122,8 @@ export const useScanStore = defineStore('scan', () => {
     total: 0,
     isRunning: false,
     status: 'idle',
-    currentItem: undefined
+    currentItem: undefined,
+    phase: undefined
   })
 
   // State for automatic thumbnail generation (triggered by scrolling)
@@ -134,7 +136,8 @@ export const useScanStore = defineStore('scan', () => {
       total: 0,
       isRunning: true,
       status: 'running',
-      currentItem: undefined
+      currentItem: undefined,
+      phase: undefined
     }
 
     const channel = new Channel<any>()
@@ -144,7 +147,8 @@ export const useScanStore = defineStore('scan', () => {
         total: msg.total,
         isRunning: msg.status === 'running',
         status: msg.status,
-        currentItem: msg.currentItem
+        currentItem: msg.currentItem,
+        phase: msg.phase
       }
       // When generation finishes (completed/cancelled), invalidate layout
       // so the grid re-fetches fresh thumb_status/thumb_path from DB.

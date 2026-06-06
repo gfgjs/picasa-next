@@ -72,7 +72,7 @@ use crossbeam_channel::{bounded, Receiver, Sender};
 
 use crate::ai::clip::ClipTokenizer;
 use crate::ai::provider::AiProvider;
-use crate::error::{AppError, Result};
+use crate::error::Result;
 
 /// A thread-safe pool of ONNX Runtime Sessions.
 /// 用于解决 ort rc.12 中 Session::run 需要 &mut self 导致的串行瓶颈。

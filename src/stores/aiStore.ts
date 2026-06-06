@@ -14,6 +14,8 @@ export const useAiStore = defineStore('ai', () => {
   const status = ref<AiStatusSummary>({
     provider: '',
     gpuName: '',
+    vramGb: 0,
+    batchSize: 0,
     clipLoaded: false,
     totalItems: 0,
     analyzedItems: 0,

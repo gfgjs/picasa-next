@@ -91,9 +91,10 @@
             />
           </div>
         </template>
-      </div> <!-- Close media-grid-content -->
-    </div> <!-- Close media-grid -->
-  </div> <!-- Close media-grid-wrapper -->
+      </div> <!-- Close v-for row -->
+    </div> <!-- Close media-grid-content -->
+  </div> <!-- Close media-grid -->
+</div> <!-- Close media-grid-wrapper -->
 
   <div class="timeline-sidebar-wrapper" v-if="showTimeline">
     <div class="timeline-sidebar">
@@ -148,7 +149,6 @@
         ↓
       </button>
     </div>
-  </div>
 </template>
 
 <script setup lang="ts">
@@ -232,9 +232,9 @@ async function onContextMenu(e: MouseEvent, id: number) {
   ctxMenu.value.y = e.clientY
 
   let item = null
-  for (const row of media.rowCache.values()) {
-    if (row.rowType === 'normal') {
-      item = row.items.find(i => i.id === id)
+  for (const row of visibleRows.value) {
+    if ((row as any).rowType === 'normal') {
+      item = (row as any).items.find((i: any) => i.id === id)
       if (item) break
     }
   }
@@ -733,7 +733,7 @@ watch(() => ui.pendingScrollLabel, async (label) => {
   font-weight: 600;
   color: var(--color-text-primary);
   align-items: center;
-  padding-left: var(--spacing-sm);
+  padding-left: 0;
   background: var(--color-bg-primary);
 }
 

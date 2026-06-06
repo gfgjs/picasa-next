@@ -71,8 +71,8 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "../target/release/onnxruntime.dll": "onnxruntime.dll",
-      "../target/release/onnxruntime_providers_shared.dll": "onnxruntime_providers_shared.dll"
+      "target/release/onnxruntime.dll": "onnxruntime.dll",
+      "target/release/onnxruntime_providers_shared.dll": "onnxruntime_providers_shared.dll"
     }
   }
 }

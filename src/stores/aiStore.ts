@@ -136,7 +136,6 @@ export const useAiStore = defineStore('ai', () => {
     }
   }
 
-  /** Toggle between filename and semantic search modes | 在文件名和语义搜索模式之间切换 */
   function toggleSearchMode() {
     searchMode.value = searchMode.value === 'filename' ? 'semantic' : 'filename'
     const ui = useUiStore()
@@ -145,10 +144,16 @@ export const useAiStore = defineStore('ai', () => {
       if (ui.sortWithinGroup !== 'similarity') {
         ui.setSortWithinGroup('similarity')
       }
+      if (ui.groupBy !== 'none') {
+        ui.setGroupBy('none')
+      }
       ui.searchQuery = ''
     } else {
       if (ui.sortWithinGroup === 'similarity') {
         ui.setSortWithinGroup('datetime')
+      }
+      if (ui.groupBy === 'none') {
+        ui.setGroupBy('date')
       }
       semanticQuery.value = ''
     }
@@ -165,10 +170,16 @@ export const useAiStore = defineStore('ai', () => {
       if (ui.sortWithinGroup !== 'similarity') {
         ui.setSortWithinGroup('similarity')
       }
+      if (ui.groupBy !== 'none') {
+        ui.setGroupBy('none')
+      }
       ui.searchQuery = ''
     } else {
       if (ui.sortWithinGroup === 'similarity') {
         ui.setSortWithinGroup('datetime')
+      }
+      if (ui.groupBy === 'none') {
+        ui.setGroupBy('date')
       }
       semanticQuery.value = ''
       useMediaStore().invalidateLayout()

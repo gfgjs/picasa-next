@@ -113,7 +113,6 @@ pub fn compute_justified_layout(items: &[LayoutItem], params: &LayoutParams) -> 
     let mut pending_ar_sum = 0.0f64; // sum of (w/h) aspect ratios
                                      // (w/h) 宽高比总和
     let mut last_label: Option<String> = None;
-    let mut last_group_id: Option<String> = None;
 
     let emit_separator = |label: &str, group_id: Option<String>, y: &mut f64, rows: &mut Vec<LayoutRow>| {
         rows.push(LayoutRow::Separator {
@@ -285,7 +284,6 @@ pub fn compute_justified_layout(items: &[LayoutItem], params: &LayoutParams) -> 
             );
             emit_separator(&current_label, current_group_id.clone(), &mut current_y, &mut rows);
             last_label = Some(current_label);
-            last_group_id = current_group_id;
         }
 
         let ar = aspect_ratio(item);

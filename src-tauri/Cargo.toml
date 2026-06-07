@@ -98,7 +98,7 @@ opt-level = 3
 panic    = "abort"
 # Use multiple codegen units for faster parallel builds (default is 16)
 # codegen-units = 1
-# Disable LTO to workaround rustc STATUS_ACCESS_VIOLATION on Windows
-lto      = false
+# Use thin LTO instead of fat LTO (huge speedup in link time)
+lto      = "thin"
 opt-level = 3
 strip    = true

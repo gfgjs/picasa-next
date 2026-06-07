@@ -23,7 +23,8 @@ export const useAiStore = defineStore('ai', () => {
     isAnalyzing: false,
   })
 
-  const searchMode = ref<SearchMode>('filename')
+  const searchMode = ref<SearchMode>('mixed')
+  const activeMixedQueryType = ref<'semantic' | 'normal' | 'none'>('none')
   const semanticQuery = ref('')
   const matchCount = ref(0)
   const similarityThreshold = ref(0.20)
@@ -51,7 +52,7 @@ export const useAiStore = defineStore('ai', () => {
     return '未初始化'
   })
 
-  const isSemanticMode = computed(() => searchMode.value === 'semantic')
+  const isSemanticMode = computed(() => searchMode.value === 'semantic' || (searchMode.value === 'mixed' && activeMixedQueryType.value === 'semantic'))
 
   // ── Actions ───────────────────────────────────────────────────────────────
 
@@ -115,6 +116,12 @@ export const useAiStore = defineStore('ai', () => {
   async function runSemanticSearch(query: string, limit = 1000) {
     if (!query.trim()) {
       semanticQuery.value = ''
+      if (searchMode.value === 'mixed') {
+        activeMixedQueryType.value = 'none'
+        const ui = useUiStore()
+        if (ui.sortWithinGroup === 'similarity') ui.setSortWithinGroup('datetime')
+        if (ui.groupBy === 'none') ui.setGroupBy(previousGroupBy.value)
+      }
       useMediaStore().invalidateLayout()
       return
     }
@@ -122,6 +129,17 @@ export const useAiStore = defineStore('ai', () => {
     isSearching.value = true
     searchError.value = null
     semanticQuery.value = query
+
+    if (searchMode.value === 'mixed' && activeMixedQueryType.value !== 'semantic') {
+      activeMixedQueryType.value = 'semantic'
+      const ui = useUiStore()
+      ui.searchQuery = ''
+      if (ui.sortWithinGroup !== 'similarity') ui.setSortWithinGroup('similarity')
+      if (ui.groupBy !== 'none') {
+        previousGroupBy.value = ui.groupBy
+        ui.setGroupBy('none')
+      }
+    }
 
     try {
       const count = await invoke<number>('semantic_search_cmd', {
@@ -139,36 +157,38 @@ export const useAiStore = defineStore('ai', () => {
     }
   }
 
-  function toggleSearchMode() {
-    searchMode.value = searchMode.value === 'filename' ? 'semantic' : 'filename'
+  function setNormalSearchQueryInMixedMode(query: string) {
     const ui = useUiStore()
-    
-    if (searchMode.value === 'semantic') {
-      if (ui.sortWithinGroup !== 'similarity') {
-        ui.setSortWithinGroup('similarity')
-      }
-      if (ui.groupBy !== 'none') {
-        previousGroupBy.value = ui.groupBy
-        ui.setGroupBy('none')
-      }
-      ui.searchQuery = ''
+    ui.searchQuery = query
+    if (!query.trim()) {
+      activeMixedQueryType.value = 'none'
     } else {
-      if (ui.sortWithinGroup === 'similarity') {
-        ui.setSortWithinGroup('datetime')
-      }
-      if (ui.groupBy === 'none') {
-        ui.setGroupBy(previousGroupBy.value)
-      }
+      activeMixedQueryType.value = 'normal'
       semanticQuery.value = ''
+      if (ui.sortWithinGroup === 'similarity') ui.setSortWithinGroup('datetime')
+      if (ui.groupBy === 'none') ui.setGroupBy(previousGroupBy.value)
     }
-    
-    searchError.value = null
-    useMediaStore().invalidateLayout()
+  }
+
+  function toggleSearchMode() {
+    if (searchMode.value === 'mixed') {
+      setSearchMode('semantic')
+    } else if (searchMode.value === 'semantic') {
+      setSearchMode('normal')
+    } else {
+      setSearchMode('mixed')
+    }
   }
 
   function setSearchMode(mode: SearchMode) {
     searchMode.value = mode
     const ui = useUiStore()
+    
+    // Reset queries and types on mode switch | 切换模式时重置查询和类型
+    ui.searchQuery = ''
+    semanticQuery.value = ''
+    activeMixedQueryType.value = 'none'
+    searchError.value = null
     
     if (mode === 'semantic') {
       if (ui.sortWithinGroup !== 'similarity') {
@@ -178,17 +198,17 @@ export const useAiStore = defineStore('ai', () => {
         previousGroupBy.value = ui.groupBy
         ui.setGroupBy('none')
       }
-      ui.searchQuery = ''
     } else {
+      // For both 'normal' and 'mixed' (initial state), we want regular sorting/grouping
       if (ui.sortWithinGroup === 'similarity') {
         ui.setSortWithinGroup('datetime')
       }
       if (ui.groupBy === 'none') {
         ui.setGroupBy(previousGroupBy.value)
       }
-      semanticQuery.value = ''
-      useMediaStore().invalidateLayout()
     }
+    
+    useMediaStore().invalidateLayout()
   }
 
   /** Poll AI status every 2 seconds during analysis | 分析期间每 2 秒轮询 AI 状态 */
@@ -239,6 +259,7 @@ export const useAiStore = defineStore('ai', () => {
     // state
     status,
     searchMode,
+    activeMixedQueryType,
     semanticQuery,
     similarityThreshold,
     isSearching,
@@ -255,6 +276,7 @@ export const useAiStore = defineStore('ai', () => {
     stopAnalysis,
     rebuildEmbeddings,
     runSemanticSearch,
+    setNormalSearchQueryInMixedMode,
     toggleSearchMode,
     setSearchMode,
     startStatusPolling,

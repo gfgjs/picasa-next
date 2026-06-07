@@ -39,4 +39,4 @@ export interface AiProviderInfo {
 }
 
 /** Search mode toggle | 搜索模式切换 */
-export type SearchMode = 'filename' | 'semantic'
+export type SearchMode = 'mixed' | 'semantic' | 'normal'

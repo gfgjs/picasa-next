@@ -86,6 +86,8 @@ devtools = []
 
 [profile.dev]
 incremental = true
+# 开启基础优化（1）能显著提升我们自身代码在 dev 模式下的执行速度，同时编译速度仍较快
+opt-level = 1
 
 # Compile all dependencies with full optimizations even in dev mode
 # 在开发模式下也使用完全优化来编译所有依赖库（极大提升图片解码速度）

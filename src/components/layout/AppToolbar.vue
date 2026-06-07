@@ -49,24 +49,38 @@
 
     <!-- Search -->
     <!-- 搜索 -->
-    <div class="toolbar__search-wrap" :class="{ focused: isSearchFocused, 'semantic-mode': ai.isSemanticMode }">
+    <div class="toolbar__search-wrap" :class="{ focused: isSearchFocused, 'semantic-mode': ai.isSemanticMode }" style="position: relative;">
       <!-- Mode toggle button -->
       <!-- 模式切换按钮 -->
       <button
         class="toolbar__search-mode-btn"
-        :class="{ active: ai.isSemanticMode }"
-        :title="ai.isSemanticMode ? '切换到普通搜索' : '切换到 AI 语义搜索'"
+        :class="['mode-' + ai.searchMode]"
+        :title="ai.searchMode === 'mixed' ? '混合搜索 (聚焦)' : (ai.searchMode === 'semantic' ? '纯 AI 语义搜索' : '纯普通搜索')"
         @click="toggleSearchMode"
       >
-        <span class="mode-text">AI</span>
+        <Sparkles v-if="ai.searchMode === 'mixed'" :size="14" />
+        <Bot v-else-if="ai.searchMode === 'semantic'" :size="14" />
+        <Search v-else :size="14" />
       </button>
 
-      <Search :size="14" class="toolbar__search-icon" />
+      <input
+        ref="searchInputRef"
+        class="toolbar__search"
+        v-model="currentSearchQuery"
+        @keydown.esc.prevent="onEscape"
+        @keydown.down="onKeydownDown"
+        @keydown.up="onKeydownUp"
+        @keydown.enter="onKeydownEnter"
+        @focus="onSearchFocus"
+        @blur="onSearchBlur"
+        :placeholder="ai.searchMode === 'mixed' ? '搜索图片...' : (ai.searchMode === 'semantic' ? '用自然语言搜索图片…' : $t('toolbar.searchPlaceholder'))"
+        type="search"
+      />
 
       <!-- Scope selector (only for normal search mode) -->
       <!-- 搜索范围选择器（仅限普通搜索模式） -->
       <select
-        v-if="!ai.isSemanticMode"
+        v-show="ai.searchMode === 'normal'"
         class="toolbar__search-scope"
         v-model="ui.searchScope"
       >
@@ -77,20 +91,40 @@
         <option value="location">{{ $t('toolbar.searchScopeLocation') }}</option>
         <option value="global">{{ $t('toolbar.searchScopeGlobal') }}</option>
       </select>
-      <input
-        ref="searchInputRef"
-        class="toolbar__search"
-        :value="ai.isSemanticMode ? ai.semanticQuery : ui.searchQuery"
-        @input="onSearchInput"
-        @keydown.esc.prevent
-        @focus="isSearchFocused = true"
-        @blur="isSearchFocused = false"
-        :placeholder="ai.isSemanticMode ? '用自然语言搜索图片…' : $t('toolbar.searchPlaceholder')"
-        type="search"
-      />
+
       <!-- AI searching indicator -->
       <!-- AI 搜索中指示器 -->
       <span v-if="ai.isSearching" class="toolbar__search-spinner" />
+
+      <!-- Mixed mode dropdown -->
+      <Transition name="dropdown-fade">
+        <div v-if="isMixedDropdownOpen" class="mixed-search-dropdown" @mousedown.prevent>
+          <div
+            class="dropdown-item"
+            :class="{ selected: mixedDropdownIndex === 0 }"
+            @click="executeMixedSearch(0)"
+          >
+            <div class="dropdown-icon-wrap"><Sparkles :size="14" /></div>
+            <div class="dropdown-text">
+              <span class="prefix">使用 AI 寻找有关</span>
+              <span class="query">"{{ pendingMixedQuery }}"</span>
+              <span class="suffix">的画面</span>
+            </div>
+          </div>
+          <div
+            class="dropdown-item"
+            :class="{ selected: mixedDropdownIndex === 1 }"
+            @click="executeMixedSearch(1)"
+          >
+            <div class="dropdown-icon-wrap"><Search :size="14" /></div>
+            <div class="dropdown-text">
+              <span class="prefix">搜索文件名包含</span>
+              <span class="query">"{{ pendingMixedQuery }}"</span>
+              <span class="suffix">的图片</span>
+            </div>
+          </div>
+        </div>
+      </Transition>
     </div>
 
     <!-- Row height slider | 行高调节滑块 -->
@@ -150,7 +184,7 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { ImageIcon, Video, Sparkles, X, Maximize2, Minimize2, Search, ArrowDown, ArrowUp, Rows3 } from '@lucide/vue'
+import { ImageIcon, Video, Sparkles, X, Maximize2, Minimize2, Search, ArrowDown, ArrowUp, Rows3, Bot } from '@lucide/vue'
 import { useUiStore } from '../../stores/uiStore'
 import { useFilterStore } from '../../stores/filterStore'
 import { useMediaStore } from '../../stores/mediaStore'
@@ -182,29 +216,114 @@ const title = computed(() => {
   return map[ui.activeSmartAlbum] ?? '媒体库'
 })
 
-function onSearchInput(e: Event) {
-  const val = (e.target as HTMLInputElement).value
-  if (ai.isSemanticMode) {
-    // Debounce semantic search | 对语义搜索进行防抖
-    if (searchTimer) clearTimeout(searchTimer)
-    searchTimer = setTimeout(() => {
-      ai.runSemanticSearch(val)
-      emit('semantic-search', val)
-    }, 500)
-  } else {
-    ui.searchQuery = val
-    if (searchTimer) clearTimeout(searchTimer)
-    searchTimer = setTimeout(() => emit('search', val), DEFAULTS.SEARCH_DEBOUNCE_MS)
+const pendingMixedQuery = ref('')
+const isMixedDropdownOpen = ref(false)
+const mixedDropdownIndex = ref(0) // 0: AI, 1: Normal
+
+function triggerMixedSearch(immediate = false) {
+  const query = pendingMixedQuery.value
+  
+  if (searchTimer) clearTimeout(searchTimer)
+  
+  if (!query.trim()) {
+    ai.setNormalSearchQueryInMixedMode('')
+    return
   }
+
+  const delay = immediate ? 0 : 500
+
+  searchTimer = setTimeout(() => {
+    if (mixedDropdownIndex.value === 0) {
+      ai.runSemanticSearch(query)
+      emit('semantic-search', query)
+    } else {
+      ai.setNormalSearchQueryInMixedMode(query)
+      emit('search', query)
+    }
+  }, delay)
+}
+
+const currentSearchQuery = computed({
+  get() {
+    if (ai.searchMode === 'mixed') return pendingMixedQuery.value
+    return ai.searchMode === 'semantic' ? ai.semanticQuery : ui.searchQuery
+  },
+  set(val: string) {
+    if (ai.searchMode === 'mixed') {
+      pendingMixedQuery.value = val
+      isMixedDropdownOpen.value = val.trim().length > 0
+      triggerMixedSearch(false)
+    } else if (ai.searchMode === 'semantic') {
+      ai.semanticQuery = val
+      // Debounce semantic search | 对语义搜索进行防抖
+      if (searchTimer) clearTimeout(searchTimer)
+      searchTimer = setTimeout(() => {
+        ai.runSemanticSearch(val)
+        emit('semantic-search', val)
+      }, 500)
+    } else {
+      ui.searchQuery = val
+      if (searchTimer) clearTimeout(searchTimer)
+      searchTimer = setTimeout(() => emit('search', val), DEFAULTS.SEARCH_DEBOUNCE_MS)
+    }
+  }
+})
+
+function onSearchFocus() {
+  isSearchFocused.value = true
+  if (ai.searchMode === 'mixed' && pendingMixedQuery.value.trim().length > 0) {
+    isMixedDropdownOpen.value = true
+  }
+}
+
+function onSearchBlur() {
+  isSearchFocused.value = false
+  isMixedDropdownOpen.value = false
+}
+
+function onEscape() {
+  if (isMixedDropdownOpen.value) {
+    isMixedDropdownOpen.value = false
+  } else {
+    // maybe clear search?
+  }
+}
+
+function onKeydownDown(e: KeyboardEvent) {
+  if (ai.searchMode === 'mixed' && isMixedDropdownOpen.value) {
+    e.preventDefault()
+    mixedDropdownIndex.value = (mixedDropdownIndex.value + 1) % 2
+    triggerMixedSearch(true)
+  }
+}
+
+function onKeydownUp(e: KeyboardEvent) {
+  if (ai.searchMode === 'mixed' && isMixedDropdownOpen.value) {
+    e.preventDefault()
+    mixedDropdownIndex.value = (mixedDropdownIndex.value + 1) % 2
+    triggerMixedSearch(true)
+  }
+}
+
+function onKeydownEnter(e: KeyboardEvent) {
+  if (ai.searchMode === 'mixed' && isMixedDropdownOpen.value) {
+    e.preventDefault()
+    isMixedDropdownOpen.value = false
+    triggerMixedSearch(true)
+  }
+}
+
+function executeMixedSearch(index: number) {
+  mixedDropdownIndex.value = index
+  isMixedDropdownOpen.value = false
+  triggerMixedSearch(true)
 }
 
 function toggleSearchMode() {
   ai.toggleSearchMode()
-  // Clear current search when switching modes | 切换模式时清除当前搜索
-  if (ai.isSemanticMode) {
-    ui.searchQuery = ''
-  } else {
-    ai.semanticQuery === '' // reset handled in store
+  if (ai.searchMode === 'mixed') {
+    pendingMixedQuery.value = ''
+    isMixedDropdownOpen.value = false
   }
 }
 
@@ -305,11 +424,11 @@ function onSortWithinGroupChange(e: Event) {
   appearance: none;
   background: transparent;
   border: none;
-  border-right: 1px solid var(--color-border);
+  border-left: 1px solid var(--color-border);
   color: var(--color-text-secondary);
   font-size: var(--font-size-xs);
-  padding: 0 6px 0 2px;
-  margin-right: 4px;
+  padding: 0 2px 0 6px;
+  margin-left: 4px;
   cursor: pointer;
   outline: none;
   transition: color var(--transition-fast);
@@ -420,11 +539,101 @@ function onSortWithinGroupChange(e: Event) {
   border-color: var(--color-accent);
   color: var(--color-accent);
 }
-.toolbar__search-mode-btn.active {
+.toolbar__search-mode-btn.mode-mixed {
+  background: color-mix(in srgb, var(--color-accent) 15%, transparent);
+  border-color: transparent;
+  color: var(--color-accent);
+}
+.toolbar__search-mode-btn.mode-semantic {
   background: var(--color-accent);
   border-color: var(--color-accent);
   color: #fff;
   box-shadow: 0 0 8px color-mix(in srgb, var(--color-accent) 40%, transparent);
+}
+.toolbar__search-mode-btn.mode-normal {
+  border-color: var(--color-border);
+  background: transparent;
+  color: var(--color-text-tertiary);
+}
+.toolbar__search-mode-btn:hover {
+  opacity: 0.8;
+}
+
+/* Mixed Search Dropdown */
+.mixed-search-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+  padding: var(--spacing-xs);
+  z-index: 100;
+  /* fallback for backdrop-filter */
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+  color: var(--color-text-secondary);
+}
+
+.dropdown-item:hover, .dropdown-item.selected {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}
+
+.dropdown-item.selected {
+  background: color-mix(in srgb, var(--color-accent) 15%, transparent);
+  color: var(--color-accent);
+}
+.dropdown-item.selected .query {
+  color: var(--color-accent);
+}
+
+.dropdown-icon-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--color-bg-surface);
+  flex-shrink: 0;
+}
+.dropdown-item.selected .dropdown-icon-wrap {
+  background: color-mix(in srgb, var(--color-accent) 25%, transparent);
+}
+
+.dropdown-text {
+  flex: 1;
+  font-size: var(--font-size-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.query {
+  font-weight: 600;
+  margin: 0 4px;
+}
+
+.dropdown-fade-enter-active,
+.dropdown-fade-leave-active {
+  transition: opacity var(--transition-fast), transform var(--transition-fast);
+}
+.dropdown-fade-enter-from,
+.dropdown-fade-leave-to {
+  opacity: 0;
+  transform: translateY(-5px);
 }
 
 .toolbar__search-spinner {

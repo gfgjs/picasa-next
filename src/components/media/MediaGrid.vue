@@ -718,12 +718,12 @@ watch(() => ui.pendingScrollLabel, async (label) => {
   /* overflow must be visible so hover-scaled cards can bleed outside the row */
   /* 溢出部分必须可见，这样悬停时缩放的卡片就可以超出该行的边界 */
   overflow: visible;
-  z-index: 1;
-  transition: z-index 0ms 220ms;
+  z-index: 2;
+  transition: z-index 220ms linear;
 }
 
 .media-grid__row:hover {
-  z-index: 10;
+  z-index: 100;
   transition: z-index 0ms;
 }
 
@@ -840,19 +840,19 @@ watch(() => ui.pendingScrollLabel, async (label) => {
 
   /* base: sits behind neighbours */
   /* 基础状态: 位于相邻元素之后 */
-  z-index: 0;
+  z-index: 2;
 
-  /* On hover-out, delay z-index reset until the scale-down finishes (220ms) */
-  /* 鼠标移出时，延迟 z-index 重置直到缩放完成（220毫秒） */
+  /* On hover-out, use linear z-index interpolation to smoothly drop it */
+  /* 鼠标移出时，使用线性的 z-index 插值，使其平滑下降，避免被邻居瞬间遮挡，也能保证新 hovered 项在最前 */
   transition:
     transform 220ms cubic-bezier(0.34, 1.18, 0.64, 1),
     box-shadow 220ms ease,
-    z-index 0ms 220ms;
+    z-index 220ms linear;
 }
 
 .media-card:hover {
   transform: scale(1.06);
-  z-index: 10;
+  z-index: 100;
   box-shadow: 0 8px 28px color-mix(in srgb, var(--color-text-primary) 15%, transparent),
               0 2px 8px color-mix(in srgb, var(--color-text-primary) 5%, transparent);
 
@@ -860,7 +860,8 @@ watch(() => ui.pendingScrollLabel, async (label) => {
   /* 鼠标悬停时，立即应用 z-index（无延迟） */
   transition:
     transform 220ms cubic-bezier(0.34, 1.18, 0.64, 1),
-    box-shadow 220ms ease;
+    box-shadow 220ms ease,
+    z-index 0ms;
 }
 
 .scroll-fab {

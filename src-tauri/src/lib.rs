@@ -371,6 +371,7 @@ pub fn run() {
             ipc::thumbnail_commands::start_full_thumbnail_generation,
             ipc::thumbnail_commands::stop_full_thumbnail_generation,
             ipc::thumbnail_commands::cancel_thumbnail_request,
+            ipc::thumbnail_commands::clear_all_thumbnails,
             // search
             // search
             ipc::search_commands::search_media,
@@ -404,6 +405,10 @@ pub fn run() {
             ipc::system_commands::hide_window,
             ipc::system_commands::set_as_wallpaper,
             ipc::system_commands::copy_image_to_clipboard,
+            // file ops
+            ipc::file_ops_commands::create_physical_folder,
+            ipc::file_ops_commands::move_media_items,
+            ipc::file_ops_commands::copy_media_items,
         ])
         .on_window_event(|window, event| {
             if window.label() == "main" {

@@ -33,9 +33,17 @@ export function useFolderTree() {
         const children = await invoke<DirNode[]>(IPC.GET_DIRECTORY_TREE, { rootId })
         if (loadId !== undefined && loadId !== loadingId) return // Race condition guard
                                                                  // 竞争条件守卫
+        children.forEach(c => {
+          const r = roots.value.find(root => root.id === c.rootId)
+          if (r) c.absPath = c.relPath ? `${r.path}/${c.relPath}` : r.path
+        })
         nodes.value = [...nodes.value, ...children]
       } else if (parentId !== null) {
         const children = await invoke<DirNode[]>(IPC.GET_DIRECTORY_CHILDREN, { parentId })
+        children.forEach(c => {
+          const r = roots.value.find(root => root.id === c.rootId)
+          if (r) c.absPath = c.relPath ? `${r.path}/${c.relPath}` : r.path
+        })
         // Inject children after their parent
         // 在其父节点之后注入子节点
         const idx = nodes.value.findIndex(n => n.id === parentId)

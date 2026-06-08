@@ -15,29 +15,31 @@
           </span>
         </div>
         <div class="selection-toolbar__actions">
-          <button class="selection-action" @click="$emit('select-all')" title="全选">
-            <CheckSquare :size="16" />
-            <span>全选</span>
+          <button class="selection-action" @click="$emit('select-all')" data-tooltip="全选">
+            <CheckSquare :size="18" />
           </button>
-          <button class="selection-action" @click="$emit('invert-selection')" title="反选">
-            <CopyMinus :size="16" />
-            <span>反选</span>
+          <button class="selection-action" @click="$emit('invert-selection')" data-tooltip="反选">
+            <CopyMinus :size="18" />
           </button>
-          <button class="selection-action" @click="$emit('batch-favorite')" :title="$t('selection.favorite')">
-            <Heart :size="16" />
-            <span>{{ $t('selection.favorite') }}</span>
+          <button class="selection-action" @click="$emit('batch-favorite')" :data-tooltip="$t('selection.favorite')">
+            <Heart :size="18" />
           </button>
-          <button class="selection-action" @click="$emit('batch-unfavorite')" title="取消收藏">
-            <HeartOff :size="16" />
-            <span>取消收藏</span>
+          <button class="selection-action" @click="$emit('batch-unfavorite')" data-tooltip="取消收藏">
+            <HeartOff :size="18" />
           </button>
-          <button class="selection-action selection-action--danger" @click="$emit('batch-delete')" :title="$t('selection.delete')">
-            <Trash2 :size="16" />
-            <span>{{ $t('selection.delete') }}</span>
+          <button class="selection-action selection-action--danger" @click="$emit('batch-delete')" :data-tooltip="$t('selection.delete')">
+            <Trash2 :size="18" />
           </button>
-          <button class="selection-action" @click="selection.clearSelection()" :title="$t('selection.cancel')">
-            <X :size="16" />
-            <span>{{ $t('selection.cancel') }}</span>
+          <div class="divider"></div>
+          <button class="selection-action" @click="$emit('batch-move')" data-tooltip="移动到...">
+            <FolderInput :size="18" />
+          </button>
+          <button class="selection-action" @click="$emit('batch-copy')" data-tooltip="复制到...">
+            <Copy :size="18" />
+          </button>
+          <div class="divider"></div>
+          <button class="selection-action" @click="selection.clearSelection()" :data-tooltip="$t('selection.cancel')">
+            <X :size="18" />
           </button>
         </div>
       </div>
@@ -47,13 +49,15 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { Heart, HeartOff, Trash2, X, CheckSquare, CopyMinus, GripVertical } from '@lucide/vue'
+import { Heart, HeartOff, Trash2, X, CheckSquare, CopyMinus, GripVertical, FolderInput, Copy } from '@lucide/vue'
 import { useSelection } from '../../composables/useSelection'
 
 defineEmits<{
   (e: 'batch-favorite'): void
   (e: 'batch-unfavorite'): void
   (e: 'batch-delete'): void
+  (e: 'batch-move'): void
+  (e: 'batch-copy'): void
   (e: 'select-all'): void
   (e: 'invert-selection'): void
 }>()
@@ -118,7 +122,7 @@ watch(() => selection.isSelectionMode.value, (newVal) => {
   right: 0;
   display: flex;
   justify-content: center;
-  z-index: 50;
+  z-index: 200;
   pointer-events: none; /* Let clicks pass through outside toolbar */
 }
 
@@ -175,16 +179,16 @@ watch(() => selection.isSelectionMode.value, (newVal) => {
 }
 
 .selection-action {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 14px;
-  border-radius: 99px;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
   background: transparent;
   color: var(--color-text-primary);
-  border: 1px solid transparent;
-  font-size: 13px;
-  font-weight: 500;
+  border: none;
   cursor: pointer;
   transition: all var(--transition-fast);
 }
@@ -200,6 +204,46 @@ watch(() => selection.isSelectionMode.value, (newVal) => {
 .selection-action--danger:hover {
   background: var(--color-error);
   color: #fff;
+}
+
+/* ── Custom CSS Tooltip ──────────────────────────────────────────────── */
+[data-tooltip] {
+  position: relative;
+}
+
+[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  padding: 6px 10px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  z-index: 1000;
+}
+
+[data-tooltip]:hover::after {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
+}
+
+.divider {
+  width: 1px;
+  height: 20px;
+  background: var(--color-border);
+  margin: 0 4px;
 }
 
 .slide-up-enter-active,

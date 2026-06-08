@@ -61,6 +61,15 @@ pub enum AppError {
 
     #[error("AI model not loaded: {0}")]
     AiModelNotLoaded(String),
+
+    #[error("Failed to create folder: {0}")]
+    CreateFolder(String),
+
+    #[error("Failed to move file: {0}")]
+    MoveFile(String),
+
+    #[error("Failed to copy file: {0}")]
+    CopyFile(String),
 }
 
 // ── Conversions ────────────────────────────────────────────────────────────

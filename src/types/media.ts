@@ -33,6 +33,7 @@ export interface DirNode {
   expanded?:   boolean
   loading?:    boolean
   children?:   DirNode[]
+  absPath?:    string
 }
 
 export interface MediaItem {

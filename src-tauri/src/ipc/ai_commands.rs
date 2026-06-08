@@ -50,6 +50,10 @@ fn ensure_engine_initialised(state: &AppState) -> Result<()> {
         return Ok(());  // Race check | 竞争检查
     }
 
+    // [方案 5 准备] 指定加载系统自带的 onnxruntime.dll，避免打包官方 DLL 导致体积膨胀。
+    // 若要测试方案 5，请在 Cargo.toml 中切换 ort 依赖，并取消下面这行代码的注释：
+    // std::env::set_var("ORT_DYLIB_PATH", "C:\\Windows\\System32\\onnxruntime.dll");
+
     // Initialise ORT runtime once, lazily (avoids blocking Tauri setup() and the
     // white-screen delay caused by loading the 160 MB onnxruntime.dll at startup).
     // 惰性初始化 ORT runtime（避免在 Tauri setup() 中阻塞并导致白屏）。

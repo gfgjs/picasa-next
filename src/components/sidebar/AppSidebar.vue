@@ -12,20 +12,25 @@
     <!-- Smart albums -->
     <!-- 智能相册 -->
     <section class="sidebar__section">
-      <div class="sidebar__section-label">{{ $t('sidebar.library') }}</div>
-      <ul class="sidebar__nav">
-        <li v-for="album in smartAlbums" :key="album.id">
-          <button
-            class="sidebar__nav-item"
-            :class="{ active: ui.activeSmartAlbum === album.id && !ui.activeDirectoryId }"
-            @click="handleSmartAlbumClick(album.id)"
-          >
-            <span class="sidebar__nav-icon"><component :is="album.icon" :size="18" /></span>
-            <span class="sidebar__nav-label">{{ album.label }}</span>
-            <span v-if="album.count != null" class="sidebar__nav-count">{{ formatCount(album.count) }}</span>
-          </button>
-        </li>
-      </ul>
+      <div class="sidebar__section-label" @click="isLibraryExpanded = !isLibraryExpanded" style="cursor: pointer; display: flex; align-items: center; gap: 4px; justify-content: flex-start; user-select: none;">
+        <ChevronRight :size="14" style="transition: transform 0.2s" :style="{ transform: isLibraryExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }" />
+        {{ $t('sidebar.library') }}
+      </div>
+      <transition name="collapse" @enter="onEnter" @after-enter="onAfterEnter" @leave="onLeave">
+        <ul class="sidebar__nav" v-show="isLibraryExpanded">
+          <li v-for="album in smartAlbums" :key="album.id">
+            <button
+              class="sidebar__nav-item"
+              :class="{ active: ui.activeSmartAlbum === album.id && !ui.activeDirectoryId }"
+              @click="handleSmartAlbumClick(album.id)"
+            >
+              <span class="sidebar__nav-icon"><component :is="album.icon" :size="18" /></span>
+              <span class="sidebar__nav-label">{{ album.label }}</span>
+              <span v-if="album.count != null" class="sidebar__nav-count">{{ formatCount(album.count) }}</span>
+            </button>
+          </li>
+        </ul>
+      </transition>
     </section>
 
     <!-- Divider -->
@@ -34,58 +39,64 @@
 
     <!-- Tools -->
     <section class="sidebar__section">
-      <div class="sidebar__section-label">工具 / TOOLS</div>
-      <ul class="sidebar__nav">
-        <li>
-          <div class="sidebar__nav-item" style="flex-direction: column; align-items: flex-start; gap: 8px; cursor: default;">
-            <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
-              <div style="display: flex; align-items: center; gap: 8px;">
-                <span class="sidebar__nav-icon"><Zap :size="18" /></span>
-                <span class="sidebar__nav-label">全量生成缩略图</span>
+      <div class="sidebar__section-label" @click="isToolsExpanded = !isToolsExpanded" style="cursor: pointer; display: flex; align-items: center; gap: 4px; justify-content: flex-start; user-select: none;">
+        <ChevronRight :size="14" style="transition: transform 0.2s" :style="{ transform: isToolsExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }" />
+        工具 / TOOLS
+      </div>
+      <transition name="collapse" @enter="onEnter" @after-enter="onAfterEnter" @leave="onLeave">
+        <ul class="sidebar__nav" v-show="isToolsExpanded">
+          <li>
+            <div class="sidebar__nav-item" style="flex-direction: column; align-items: flex-start; gap: 8px; cursor: default;">
+              <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <span class="sidebar__nav-icon"><Zap :size="18" /></span>
+                  <span class="sidebar__nav-label">全量生成缩略图</span>
+                </div>
+                <button class="btn-icon" @click="toggleThumbGen" :title="scan.thumbGenProgress.isRunning ? '停止生成' : '开始生成'">
+                  <Square v-if="scan.thumbGenProgress.isRunning" :size="14" color="var(--color-error)" fill="var(--color-error)" />
+                  <Play v-else :size="14" />
+                </button>
               </div>
-              <button class="btn-icon" @click="toggleThumbGen" :title="scan.thumbGenProgress.isRunning ? '停止生成' : '开始生成'">
-                <Square v-if="scan.thumbGenProgress.isRunning" :size="14" color="var(--color-error)" fill="var(--color-error)" />
-                <Play v-else :size="14" />
-              </button>
-            </div>
-            
-            <div v-if="scan.thumbGenProgress.isRunning || scan.thumbGenProgress.status === 'completed'" style="width: 100%; font-size: 12px; color: var(--color-text-tertiary);">
-              <div v-if="scan.thumbGenProgress.isRunning" class="progress-bar" style="margin-bottom: 4px;">
-                <div class="progress-bar__fill" style="background: var(--color-accent);" :style="{ width: ((scan.thumbGenProgress.generated / Math.max(scan.thumbGenProgress.total, 1)) * 100) + '%' }" />
-              </div>
-              <div style="display: flex; justify-content: space-between;">
-                <span>{{ scan.thumbGenProgress.generated }} / {{ scan.thumbGenProgress.total }}</span>
-                <span v-if="elapsedTimeStr" style="font-family: monospace;">{{ elapsedTimeStr }}</span>
-              </div>
-            </div>
-          </div>
-        </li>
-        <li>
-          <div class="sidebar__nav-item" style="flex-direction: column; align-items: flex-start; gap: 8px; cursor: default;">
-            <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
-              <div style="display: flex; align-items: center; gap: 8px;">
-                <span class="sidebar__nav-icon"><Sparkles :size="18" /></span>
-                <span class="sidebar__nav-label">全量 AI 分析</span>
-              </div>
-              <button class="btn-icon" @click="toggleAiAnalysis" :disabled="isAiInitialising" :title="ai.status.isAnalyzing ? '停止分析' : '开始分析'">
-                <Square v-if="ai.status.isAnalyzing" :size="14" color="var(--color-error)" fill="var(--color-error)" />
-                <RefreshCw v-else-if="isAiInitialising" :size="14" class="spinning" style="animation: spin 1s linear infinite;" />
-                <Play v-else :size="14" />
-              </button>
-            </div>
-            
-            <div v-if="ai.status.isAnalyzing || ai.status.totalItems > 0" style="width: 100%; font-size: 12px; color: var(--color-text-tertiary);">
-              <div v-if="ai.status.isAnalyzing" class="progress-bar" style="margin-bottom: 4px;">
-                <div class="progress-bar__fill" style="background: var(--color-accent);" :style="{ width: ai.analyzeProgress + '%' }" />
-              </div>
-              <div style="display: flex; justify-content: space-between;">
-                <span>{{ ai.status.analyzedItems }} / {{ ai.status.totalItems }}</span>
-                <span style="font-family: monospace;">{{ ai.analyzeProgress }}%</span>
+              
+              <div v-if="scan.thumbGenProgress.isRunning || scan.thumbGenProgress.status === 'completed'" style="width: 100%; font-size: 12px; color: var(--color-text-tertiary);">
+                <div v-if="scan.thumbGenProgress.isRunning" class="progress-bar" style="margin-bottom: 4px;">
+                  <div class="progress-bar__fill" style="background: var(--color-accent);" :style="{ width: ((scan.thumbGenProgress.generated / Math.max(scan.thumbGenProgress.total, 1)) * 100) + '%' }" />
+                </div>
+                <div style="display: flex; justify-content: space-between;">
+                  <span>{{ scan.thumbGenProgress.generated }} / {{ scan.thumbGenProgress.total }}</span>
+                  <span v-if="elapsedTimeStr" style="font-family: monospace;">{{ elapsedTimeStr }}</span>
+                </div>
               </div>
             </div>
-          </div>
-        </li>
-      </ul>
+          </li>
+          <li>
+            <div class="sidebar__nav-item" style="flex-direction: column; align-items: flex-start; gap: 8px; cursor: default;">
+              <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <span class="sidebar__nav-icon"><Sparkles :size="18" /></span>
+                  <span class="sidebar__nav-label">全量 AI 分析</span>
+                </div>
+                <button class="btn-icon" @click="toggleAiAnalysis" :disabled="isAiInitialising" :title="ai.status.isAnalyzing ? '停止分析' : '开始分析'">
+                  <Square v-if="ai.status.isAnalyzing" :size="14" color="var(--color-error)" fill="var(--color-error)" />
+                  <RefreshCw v-else-if="isAiInitialising" :size="14" class="spinning" style="animation: spin 1s linear infinite;" />
+                  <Play v-else :size="14" />
+                </button>
+              </div>
+              
+              <div v-if="ai.status.isAnalyzing || ai.status.totalItems > 0" style="width: 100%; font-size: 12px; color: var(--color-text-tertiary);">
+                <div v-if="ai.status.isAnalyzing" class="progress-bar" style="margin-bottom: 4px;">
+                  <div class="progress-bar__fill" style="background: var(--color-accent);" :style="{ width: ai.analyzeProgress + '%' }" />
+                </div>
+                <div style="display: flex; justify-content: space-between;">
+                  <span>{{ ai.status.analyzedItems }} / {{ ai.status.totalItems }}</span>
+                  <span v-if="aiElapsedTimeStr" style="font-family: monospace; margin-right: auto; margin-left: 8px;">{{ aiElapsedTimeStr }}</span>
+                  <span style="font-family: monospace;">{{ ai.analyzeProgress }}%</span>
+                </div>
+              </div>
+            </div>
+          </li>
+        </ul>
+      </transition>
     </section>
 
     <!-- Divider -->
@@ -94,9 +105,12 @@
     <!-- Scan roots / folder tree -->
     <!-- 扫描根目录 / 文件夹树 -->
     <section class="sidebar__section sidebar__section--tree">
-      <div class="sidebar__section-label">
-        <span>{{ $t('sidebar.folders') }}</span>
+      <div class="sidebar__section-label" @click="isFoldersExpanded = !isFoldersExpanded" style="cursor: pointer; justify-content: space-between; user-select: none;">
         <div style="display: flex; align-items: center; gap: 4px;">
+          <ChevronRight :size="14" style="transition: transform 0.2s" :style="{ transform: isFoldersExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }" />
+          <span>{{ $t('sidebar.folders') }}</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 4px;" @click.stop>
           <button
             class="sidebar-show-all-btn"
             :class="{ active: ui.activeSmartAlbum === 'all' && !ui.activeDirectoryId }"
@@ -105,87 +119,106 @@
           >
             {{ $t('sidebar.showAll') }}
           </button>
-          <button class="btn-icon" :title="$t('sidebar.addFolder')" @click="addRoot"><FolderPlus :size="16" /></button>
+          <button class="btn-icon" :title="$t('sidebar.addFolder') || '导入已有文件夹'" @click="addRoot"><FolderSearch :size="16" /></button>
+          <button class="btn-icon" title="新建空白文件夹" @click="createNewGlobalFolder"><FolderPlus :size="16" /></button>
         </div>
       </div>
 
-      <div v-if="folderTree.nodes.value.length === 0 && !scan.hasScanRoots" class="sidebar__empty">
-        <span>{{ $t('sidebar.noFolders') }}</span>
-      </div>
+      <transition name="collapse" @enter="onEnter" @after-enter="onAfterEnter" @leave="onLeave">
+        <div v-show="isFoldersExpanded" style="display: flex; flex-direction: column; flex: 1; overflow: hidden; min-height: 0;">
+          <div v-if="folderTree.nodes.value.length === 0 && !scan.hasScanRoots" class="sidebar__empty">
+            <span>{{ $t('sidebar.noFolders') }}</span>
+          </div>
 
-      <div class="sidebar__tree" v-if="folderTree.nodes.value.length > 0">
-        <button
-          v-for="node in folderTree.nodes.value"
-          :key="node.id"
-          class="sidebar__tree-item"
-          :data-dir-id="node.id"
-          :class="{
-            active:    (ui.groupBy === 'folder' ? ui.scrolledDirectoryId === node.id : ui.activeDirectoryId === node.id),
-            expanded:  node.expanded,
-          }"
-          :style="{ paddingLeft: (node.depth * 16 + 8) + 'px' }"
-          @click="onNodeClick(node)"
-        >
-          <span class="sidebar__tree-arrow" @click.stop="folderTree.toggleNode(node)">
-            <ChevronRight v-if="node.hasChildren" :size="14" class="sidebar__tree-chevron" :class="{ expanded: node.expanded }" />
-            <span v-else class="sidebar__tree-chevron-spacer" />
-          </span>
-          <span class="sidebar__tree-icon"><Folder :size="15" /></span>
-          <span class="sidebar__tree-label" :title="node.relPath">{{ node.name }}</span>
-          <span class="sidebar__tree-count">{{ node.mediaCount }}</span>
-        </button>
-      </div>
+          <div class="sidebar__tree" v-if="folderTree.nodes.value.length > 0">
+            <button
+              v-for="node in folderTree.nodes.value"
+              :key="node.id"
+              class="sidebar__tree-item"
+              :data-dir-id="node.id"
+              :class="{
+                active:    (ui.groupBy === 'folder' ? ui.scrolledDirectoryId === node.id : ui.activeDirectoryId === node.id),
+                expanded:  node.expanded,
+              }"
+              :style="{ paddingLeft: (node.depth * 16 + 8) + 'px' }"
+              @click="onNodeClick(node)"
+              @contextmenu.prevent="onNodeContextMenu($event, node)"
+            >
+              <span class="sidebar__tree-arrow" @click.stop="folderTree.toggleNode(node)">
+                <ChevronRight v-if="node.hasChildren" :size="14" class="sidebar__tree-chevron" :class="{ expanded: node.expanded }" />
+                <span v-else class="sidebar__tree-chevron-spacer" />
+              </span>
+              <span class="sidebar__tree-icon"><Folder :size="15" /></span>
+              <span class="sidebar__tree-label" :title="node.relPath">{{ node.name }}</span>
+              <span class="sidebar__tree-count">{{ node.mediaCount }}</span>
+            </button>
+          </div>
+        </div>
+      </transition>
     </section>
 
-    <!-- Scan roots status -->
-    <!-- 扫描根目录状态 -->
-    <div v-if="scan.hasScanRoots" class="sidebar__scan-status">
-      <div
-        v-for="root in scan.scanRoots"
-        :key="root.id"
-        class="scan-root-item"
-      >
-        <div class="scan-root-item__info">
-          <span class="scan-root-item__alias">{{ root.alias ?? root.path.split('/').pop() }}</span>
-          <div style="display: flex; gap: 4px;">
-            <button
-              class="btn-icon scan-root-item__scan-btn"
-              :class="{ active: scan.getProgress(root.id)?.isRunning }"
-              @click="toggleScan(root.id)"
-              :title="scan.getProgress(root.id)?.isRunning ? $t('sidebar.stopScan') : $t('sidebar.rescan')"
-            >
-              <Square v-if="scan.getProgress(root.id)?.isRunning" :size="14" color="var(--color-error)" fill="var(--color-error)" />
-              <RefreshCw v-else :size="14" />
-            </button>
-            <button
-              class="btn-icon scan-root-item__scan-btn"
-              style="color: var(--color-error); opacity: 0.7;"
-              :title="$t('sidebar.removeFolder')"
-              @click="removeRoot(root.id)"
-            >
-              <Trash2 :size="14" />
-            </button>
-          </div>
-        </div>
-        <div v-if="scan.getProgress(root.id)?.isRunning" class="scan-root-item__progress">
-          <div class="progress-bar">
-            <div
-              class="progress-bar__fill progress-shimmer"
-              :style="{ width: (scan.getProgress(root.id)?.status === 'discovering' ? 100 : progressPercent(root.id)) + '%' }"
-              :class="{ 'progress-bar__fill--discovering': scan.getProgress(root.id)?.status === 'discovering' }"
-            />
-          </div>
-          <span class="scan-root-item__count">
-            <template v-if="scan.getProgress(root.id)?.status === 'discovering'">
-              {{ $t('sidebar.discoveringFiles', { count: scan.getProgress(root.id)?.scanned ?? 0 }) }}
-            </template>
-            <template v-else>
-              {{ scan.getProgress(root.id)?.scanned ?? 0 }} / {{ scan.getProgress(root.id)?.total ?? 0 }}
-            </template>
-          </span>
-        </div>
+    <!-- Divider -->
+    <div v-if="scan.hasScanRoots" class="sidebar__divider" />
+
+    <!-- Management -->
+    <!-- 管理 -->
+    <section v-if="scan.hasScanRoots" class="sidebar__section">
+      <div class="sidebar__section-label" @click="isManagementExpanded = !isManagementExpanded" style="cursor: pointer; display: flex; align-items: center; gap: 4px; justify-content: flex-start; user-select: none;">
+        <ChevronRight :size="14" style="transition: transform 0.2s" :style="{ transform: isManagementExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }" />
+        管理 / MANAGEMENT
       </div>
-    </div>
+      <transition name="collapse" @enter="onEnter" @after-enter="onAfterEnter" @leave="onLeave">
+        <div v-show="isManagementExpanded" style="overflow: hidden;">
+          <div class="sidebar__scan-status" style="border-top: none; padding-top: 4px;">
+            <div
+              v-for="root in scan.scanRoots"
+              :key="root.id"
+              class="scan-root-item"
+            >
+              <div class="scan-root-item__info">
+                <span class="scan-root-item__alias">{{ root.alias ?? root.path.split('/').pop() }}</span>
+                <div style="display: flex; gap: 4px;">
+                  <button
+                    class="btn-icon scan-root-item__scan-btn"
+                    :class="{ active: scan.getProgress(root.id)?.isRunning }"
+                    @click="toggleScan(root.id)"
+                    :title="scan.getProgress(root.id)?.isRunning ? $t('sidebar.stopScan') : $t('sidebar.rescan')"
+                  >
+                    <Square v-if="scan.getProgress(root.id)?.isRunning" :size="14" color="var(--color-error)" fill="var(--color-error)" />
+                    <RefreshCw v-else :size="14" />
+                  </button>
+                  <button
+                    class="btn-icon scan-root-item__scan-btn"
+                    style="color: var(--color-error); opacity: 0.7;"
+                    :title="$t('sidebar.removeFolder')"
+                    @click="removeRoot(root.id)"
+                  >
+                    <Trash2 :size="14" />
+                  </button>
+                </div>
+              </div>
+              <div v-if="scan.getProgress(root.id)?.isRunning" class="scan-root-item__progress">
+                <div class="progress-bar">
+                  <div
+                    class="progress-bar__fill progress-shimmer"
+                    :style="{ width: (scan.getProgress(root.id)?.status === 'discovering' ? 100 : progressPercent(root.id)) + '%' }"
+                    :class="{ 'progress-bar__fill--discovering': scan.getProgress(root.id)?.status === 'discovering' }"
+                  />
+                </div>
+                <span class="scan-root-item__count">
+                  <template v-if="scan.getProgress(root.id)?.status === 'discovering'">
+                    {{ $t('sidebar.discoveringFiles', { count: scan.getProgress(root.id)?.scanned ?? 0 }) }}
+                  </template>
+                  <template v-else>
+                    {{ scan.getProgress(root.id)?.scanned ?? 0 }} / {{ scan.getProgress(root.id)?.total ?? 0 }}
+                  </template>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </transition>
+    </section>
 
     <!-- Settings / footer -->
     <!-- 设置 / 页脚 -->
@@ -216,6 +249,23 @@
         </div>
       </div>
     </div>
+
+    <!-- Context Menu for Tree Node -->
+    <ContextMenu
+      :items="treeContextMenu.items"
+      :visible="treeContextMenu.visible"
+      :x="treeContextMenu.x"
+      :y="treeContextMenu.y"
+      @update:visible="treeContextMenu.visible = $event"
+    />
+
+    <!-- Folder Create Dialog -->
+    <FolderCreateDialog
+      v-if="folderCreateDialog.isOpen"
+      :base-path="folderCreateDialog.basePath"
+      @close="folderCreateDialog.isOpen = false"
+      @created="onFolderCreated"
+    />
   </nav>
 </template>
 
@@ -231,8 +281,10 @@ import { useScanStore } from '../../stores/scanStore'
 import { useMediaStore } from '../../stores/mediaStore'
 import { useAiStore } from '../../stores/aiStore'
 import { useFolderTree } from '../../composables/useFolderTree'
+import ContextMenu, { ContextMenuItem } from '../common/ContextMenu.vue'
+import FolderCreateDialog from '../common/FolderCreateDialog.vue'
 import {
-  Aperture, FolderPlus, ChevronRight, Folder,
+  Aperture, FolderPlus, FolderSearch, ChevronRight, Folder,
   Square, RefreshCw, Trash2, Settings,
   Sun, Moon, Monitor, ImageIcon, Heart, Sparkles, Clock, Play, Zap
 } from '@lucide/vue'
@@ -245,6 +297,36 @@ const folderTree = useFolderTree()
 const router   = useRouter()
 const route    = useRoute()
 const { t }    = useI18n()
+
+// ── Collapsible Sections ───────────────────────────────────────────────────
+const isLibraryExpanded = ref(true)
+const isToolsExpanded = ref(true)
+const isFoldersExpanded = ref(true)
+const isManagementExpanded = ref(true)
+
+function onEnter(el: Element) {
+  const htmlEl = el as HTMLElement
+  htmlEl.style.height = '0'
+  htmlEl.style.opacity = '0'
+  void htmlEl.offsetHeight // force reflow
+  htmlEl.style.height = htmlEl.scrollHeight + 'px'
+  htmlEl.style.opacity = '1'
+}
+
+function onAfterEnter(el: Element) {
+  const htmlEl = el as HTMLElement
+  htmlEl.style.height = ''
+  htmlEl.style.opacity = ''
+}
+
+function onLeave(el: Element) {
+  const htmlEl = el as HTMLElement
+  htmlEl.style.height = htmlEl.offsetHeight + 'px'
+  htmlEl.style.opacity = '1'
+  void htmlEl.offsetHeight // force reflow
+  htmlEl.style.height = '0'
+  htmlEl.style.opacity = '0'
+}
 
 // ── Custom Confirm Dialog ──────────────────────────────────────────────────
 interface ConfirmDialogOptions {
@@ -340,38 +422,85 @@ function showAll() {
   ui.setActiveDirectory(null)
 }
 
+// ── Context Menu and Folder Creation ───────────────────────────────────────
+const treeContextMenu = ref({
+  visible: false,
+  x: 0,
+  y: 0,
+  activeNode: null as any,
+  items: [] as ContextMenuItem[]
+})
+
+const folderCreateDialog = ref({
+  isOpen: false,
+  basePath: ''
+})
+
+function onNodeContextMenu(event: MouseEvent, node: any) {
+  treeContextMenu.value.activeNode = node
+  treeContextMenu.value.items = [
+    {
+      id: 'new_subfolder',
+      label: '新建子文件夹',
+      icon: markRaw(FolderPlus),
+      action: () => {
+        folderCreateDialog.value.basePath = node.absPath || ''
+        folderCreateDialog.value.isOpen = true
+      }
+    }
+  ]
+  treeContextMenu.value.x = event.clientX
+  treeContextMenu.value.y = event.clientY
+  treeContextMenu.value.visible = true
+}
+
+function createNewGlobalFolder() {
+  folderCreateDialog.value.basePath = ''
+  folderCreateDialog.value.isOpen = true
+}
+
+async function onFolderCreated() {
+  // 刷新左侧树
+  await scan.loadScanRoots()
+  folderTree.loadRoots(scan.scanRoots)
+}
+
 // ── Thumbnail Gen Controls ──────────────────────────────────────────────────
 const thumbGenStartTime = ref<number | null>(null)
 const thumbGenElapsedTime = ref<number>(0)
 
 const elapsedTimeStr = computed(() => {
   if (thumbGenElapsedTime.value === 0 && !scan.thumbGenProgress.isRunning && scan.thumbGenProgress.status !== 'completed') return ''
-  const secs = Math.floor(thumbGenElapsedTime.value / 1000)
+  const ms = thumbGenElapsedTime.value
+  const secs = Math.floor(ms / 1000)
   const m = Math.floor(secs / 60)
   const s = secs % 60
-  return `${m}m ${s}s`
+  const msPart = String(ms % 1000).padStart(3, '0')
+  return `${m}m ${s}.${msPart}s`
 })
 
-let timerInterval: number | null = null
+let thumbTimerFrame: number | null = null
+
+function updateThumbTimer() {
+  if (thumbGenStartTime.value && scan.thumbGenProgress.isRunning) {
+    thumbGenElapsedTime.value = Date.now() - thumbGenStartTime.value
+    thumbTimerFrame = requestAnimationFrame(updateThumbTimer)
+  }
+}
 
 watch(() => scan.thumbGenProgress.isRunning, (isRunning) => {
   if (isRunning) {
     thumbGenStartTime.value = Date.now()
     thumbGenElapsedTime.value = 0
-    if (timerInterval) clearInterval(timerInterval)
-    timerInterval = window.setInterval(() => {
-      if (thumbGenStartTime.value) {
-        thumbGenElapsedTime.value = Date.now() - thumbGenStartTime.value
-      }
-    }, 1000)
+    if (thumbTimerFrame) cancelAnimationFrame(thumbTimerFrame)
+    thumbTimerFrame = requestAnimationFrame(updateThumbTimer)
   } else {
-    if (timerInterval) {
-      clearInterval(timerInterval)
-      timerInterval = null
-      if (thumbGenStartTime.value) {
-        // Final exact time calculation
-        thumbGenElapsedTime.value = Date.now() - thumbGenStartTime.value
-      }
+    if (thumbTimerFrame) {
+      cancelAnimationFrame(thumbTimerFrame)
+      thumbTimerFrame = null
+    }
+    if (thumbGenStartTime.value) {
+      thumbGenElapsedTime.value = Date.now() - thumbGenStartTime.value
     }
   }
 })
@@ -385,6 +514,45 @@ function toggleThumbGen() {
 }
 
 const isAiInitialising = ref(false)
+
+const aiStartTime = ref<number | null>(null)
+const aiElapsedTime = ref<number>(0)
+
+const aiElapsedTimeStr = computed(() => {
+  if (aiElapsedTime.value === 0 && !ai.status.isAnalyzing) return ''
+  const ms = aiElapsedTime.value
+  const secs = Math.floor(ms / 1000)
+  const m = Math.floor(secs / 60)
+  const s = secs % 60
+  const msPart = String(ms % 1000).padStart(3, '0')
+  return `${m}m ${s}.${msPart}s`
+})
+
+let aiTimerFrame: number | null = null
+
+function updateAiTimer() {
+  if (aiStartTime.value && ai.status.isAnalyzing) {
+    aiElapsedTime.value = Date.now() - aiStartTime.value
+    aiTimerFrame = requestAnimationFrame(updateAiTimer)
+  }
+}
+
+watch(() => ai.status.isAnalyzing, (isAnalyzing) => {
+  if (isAnalyzing) {
+    aiStartTime.value = Date.now()
+    aiElapsedTime.value = 0
+    if (aiTimerFrame) cancelAnimationFrame(aiTimerFrame)
+    aiTimerFrame = requestAnimationFrame(updateAiTimer)
+  } else {
+    if (aiTimerFrame) {
+      cancelAnimationFrame(aiTimerFrame)
+      aiTimerFrame = null
+    }
+    if (aiStartTime.value) {
+      aiElapsedTime.value = Date.now() - aiStartTime.value
+    }
+  }
+})
 
 async function toggleAiAnalysis() {
   if (ai.status.isAnalyzing) {
@@ -430,6 +598,22 @@ function progressPercent(rootId: number): number {
   if (!p || !p.total || p.status === 'discovering') return 0
   return Math.round((p.scanned / p.total) * 100)
 }
+
+// ── Folder tree refresh ────────────────────────────────────────────────────
+// ── 文件夹树刷新 ────────────────────────────────────────────────────
+onMounted(() => {
+  window.addEventListener('folder-stats-changed', () => {
+    // Refresh only the expanded nodes to preserve tree state
+    const expandedIds = folderTree.nodes.value.filter(n => n.expanded).map(n => n.id)
+    folderTree.loadRoots(scan.scanRoots).then(() => {
+      // Re-expand previously expanded nodes
+      expandedIds.forEach(id => {
+        const node = folderTree.nodes.value.find(n => n.id === id)
+        if (node) folderTree.toggleNode(node)
+      })
+    })
+  })
+})
 
 async function toggleScan(rootId: number) {
   const p = scan.getProgress(rootId)
@@ -561,6 +745,12 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.collapse-enter-active,
+.collapse-leave-active {
+  transition: height 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: hidden;
+}
+
 .sidebar {
   display: flex;
   flex-direction: column;

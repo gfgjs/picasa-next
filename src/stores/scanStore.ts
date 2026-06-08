@@ -131,6 +131,13 @@ export const useScanStore = defineStore('scan', () => {
   const autoThumbInFlight = ref(0)
 
   async function startFullThumbnailGeneration() {
+    if (!hasScanRoots.value) {
+      const { useUiStore } = await import('./uiStore')
+      const ui = useUiStore()
+      ui.addToast('warning', '请先添加需要扫描的文件夹')
+      return
+    }
+
     thumbGenProgress.value = {
       generated: 0,
       total: 0,

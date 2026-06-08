@@ -7,3 +7,4 @@ pub mod scan_commands;
 pub mod search_commands;
 pub mod system_commands;
 pub mod thumbnail_commands;
+pub mod file_ops_commands;

@@ -91,24 +91,24 @@ pub async fn remove_scan_root_with_options(
     //    取消该根的任何正在进行的扫描
     state.cancel_scan(id);
     
-    // 2. If clear_thumbnails, collect thumb_path list BEFORE cascade delete
-    //    如果 clear_thumbnails，在级联删除前收集 thumb_path 列表
-    let thumb_paths: Vec<String> = if clear_thumbnails {
+    // 2. If clear_thumbnails, collect cache_keys list BEFORE cascade delete
+    //    如果 clear_thumbnails，在级联删除前收集 cache_key 列表
+    let cache_keys: Vec<i64> = if clear_thumbnails {
         let conn = state.db_read_pool.get()?;
         let mut stmt = conn.prepare(
-            "SELECT m.thumb_path FROM media_items m \
+            "SELECT m.cache_key FROM media_items m \
              JOIN directories d ON m.directory_id = d.id \
-             WHERE d.root_id = ?1 AND m.thumb_path IS NOT NULL"
+             WHERE d.root_id = ?1 AND m.thumb_status = 1"
         )?;
-        let paths: Vec<String> = stmt.query_map([id], |row| row.get::<_, String>(0))?
+        let keys: Vec<i64> = stmt.query_map([id], |row| row.get::<_, i64>(0))?
             .filter_map(|r| r.ok())
             .collect();
-        paths
+        keys
     } else {
         vec![]
     };
     
-    let cleared_count = thumb_paths.len();
+    let cleared_count = cache_keys.len();
     
     // 3. CASCADE delete DB records
     //    级联删除数据库记录
@@ -120,19 +120,21 @@ pub async fn remove_scan_root_with_options(
     
     // 4. Async background delete thumbnail files
     //    异步后台删除缩略图文件
-    if !thumb_paths.is_empty() {
+    if !cache_keys.is_empty() {
         let cache_dir = state.thumb_config.read().unwrap().cache_dir.clone();
         tokio::spawn(async move {
             let mut deleted = 0u32;
-            for path in &thumb_paths {
-                let full = cache_dir.join("thumbnails").join(path);
-                if tokio::fs::remove_file(&full).await.is_ok() {
-                    deleted += 1;
+            for key in &cache_keys {
+                for size in [120, 240, 480, 960] {
+                    let full = crate::thumbnail::cache::thumb_path(&cache_dir, size, *key);
+                    if tokio::fs::remove_file(&full).await.is_ok() {
+                        deleted += 1;
+                    }
                 }
             }
             tracing::info!(
-                "Cleaned {deleted}/{} thumbnails | 清理缩略图 {deleted}/{}",
-                thumb_paths.len(), thumb_paths.len()
+                "Cleaned {} thumbnails for {} items | 为 {} 个项目清理了 {} 个缩略图",
+                deleted, cache_keys.len(), cache_keys.len(), deleted
             );
         });
     }

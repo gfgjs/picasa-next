@@ -78,6 +78,14 @@ export const useAiStore = defineStore('ai', () => {
 
   /** Start background embedding analysis | 启动后台嵌入向量分析 */
   async function startAnalysis() {
+    const { useScanStore } = await import('./scanStore')
+    const scan = useScanStore()
+    if (!scan.hasScanRoots) {
+      const ui = useUiStore()
+      ui.addToast('warning', '请先添加需要扫描的文件夹')
+      return
+    }
+
     try {
       await invoke('start_ai_analysis')
       status.value.isAnalyzing = true

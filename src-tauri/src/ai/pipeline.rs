@@ -79,6 +79,7 @@ pub fn start_ai_pipeline(
 ) {
     let state_clone = Arc::clone(&state);
     tokio::spawn(async move {
+        let start_time = std::time::Instant::now();
         // Run blocking work in a spawn_blocking to avoid blocking the async runtime.
         // 在 spawn_blocking 中运行阻塞工作，避免阻塞异步运行时。
         let result = tokio::task::spawn_blocking(move || {
@@ -86,8 +87,9 @@ pub fn start_ai_pipeline(
         })
         .await;
 
+        let elapsed_ms = start_time.elapsed().as_millis();
         match result {
-            Ok(Ok(())) => info!("AI analysis pipeline completed | AI 分析流水线完成"),
+            Ok(Ok(())) => info!("AI analysis pipeline completed: elapsed={}ms | AI 分析流水线完成: 耗时={}ms", elapsed_ms, elapsed_ms),
             Ok(Err(e)) => warn!("AI analysis pipeline error | AI 分析流水线错误: {}", e),
             Err(e) => warn!("AI analysis task panicked | AI 分析任务崩溃: {}", e),
         }
@@ -250,8 +252,13 @@ fn preprocess_tasks(
             let inference_tx = inference_tx.clone();
             let result_tx = result_tx.clone();
             let state = Arc::clone(state);
+            let token_clone = token.clone();
 
             s.spawn(move |_| {
+                if token_clone.is_cancelled() {
+                    return;
+                }
+                
                 match process_preprocess_task(&task, &state) {
                     Ok(tensor) => {
                         let _ = inference_tx.send(InferenceTask { item_id: task.item_id, tensor });

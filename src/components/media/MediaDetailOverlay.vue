@@ -208,6 +208,13 @@
     :items="ctxMenu.items"
     @update:visible="ctxMenu.visible = $event"
   />
+
+  <FolderTreeSelectorDialog
+    v-if="moveCopyDialog.isOpen"
+    :title="moveCopyDialog.mode === 'move' ? '移动到文件夹' : '复制到文件夹'"
+    @close="moveCopyDialog.isOpen = false"
+    @confirm="onMoveCopyConfirm"
+  />
 </template>
 
 <script setup lang="ts">
@@ -216,18 +223,25 @@ import { invoke } from '@tauri-apps/api/core'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { useI18n } from 'vue-i18n'
 import ContextMenu from '../common/ContextMenu.vue'
+import FolderTreeSelectorDialog from '../common/FolderTreeSelectorDialog.vue'
 import { useMediaStore } from '../../stores/mediaStore'
 import { useUiStore }    from '../../stores/uiStore'
+import { useFilterStore } from '../../stores/filterStore'
+import { useScanStore } from '../../stores/scanStore'
+import { useFolderTree } from '../../composables/useFolderTree'
 import { useMediaDetail } from '../../composables/useMediaDetail'
 import { formatFileSize, formatDateTime, formatFocalLength, formatAperture, formatGps } from '../../utils/format'
 import {
   X, ZoomIn, ZoomOut, Maximize, MoveHorizontal, MoveVertical,
-  Heart, FolderOpen, Info, Star, FileText, Copy, Monitor
+  Heart, FolderOpen, Info, Star, FileText, Copy, Monitor, FolderInput
 } from '@lucide/vue'
 import { IPC } from '../../constants/ipc'
 
 const media = useMediaStore()
 const ui    = useUiStore()
+const filter = useFilterStore()
+const scan = useScanStore()
+const folderTree = useFolderTree()
 const { t } = useI18n()
 
 const ctxMenu = ref({
@@ -235,6 +249,12 @@ const ctxMenu = ref({
   x: 0,
   y: 0,
   items: [] as any[]
+})
+
+const moveCopyDialog = ref({
+  isOpen: false,
+  mode: 'move' as 'move' | 'copy',
+  targetId: null as number | null
 })
 
 function onContextMenu(e: MouseEvent) {
@@ -253,6 +273,26 @@ function onContextMenu(e: MouseEvent) {
       label: t('contextMenu.showInExplorer') || '在文件夹中显示',
       icon: markRaw(FolderOpen),
       action: () => invoke(IPC.SHOW_IN_EXPLORER, { itemId: id })
+    },
+    {
+      id: 'move_to',
+      label: '移动到...',
+      icon: markRaw(FolderInput),
+      action: () => {
+        moveCopyDialog.value.mode = 'move'
+        moveCopyDialog.value.targetId = id
+        moveCopyDialog.value.isOpen = true
+      }
+    },
+    {
+      id: 'copy_to',
+      label: '复制到...',
+      icon: markRaw(Copy),
+      action: () => {
+        moveCopyDialog.value.mode = 'copy'
+        moveCopyDialog.value.targetId = id
+        moveCopyDialog.value.isOpen = true
+      }
     }
   ]
 
@@ -461,6 +501,59 @@ async function toggleLive() {
       state.isPlayingLive.value = true
     } catch (e) {
       ui.addToast('error', t('detail.livePhotoError'))
+    }
+  }
+}
+
+async function onMoveCopyConfirm(targetNode: any) {
+  const id = moveCopyDialog.value.targetId
+  if (!id || (!targetNode.absPath && !targetNode.relPath)) return
+  
+  const targetDir = targetNode.absPath || targetNode.relPath
+  moveCopyDialog.value.isOpen = false
+  const mode = moveCopyDialog.value.mode
+  const cmd = mode === 'move' ? 'move_media_items' : 'copy_media_items'
+  
+  try {
+    await invoke(cmd, { mediaIds: [id], targetDir })
+    if (typeof (ui as any).showToast === 'function') {
+      ;(ui as any).showToast(mode === 'move' ? `已移动图片` : `已复制图片`, 'success')
+    }
+    
+    // For move, navigate to next or close if empty
+    if (mode === 'move') {
+      media.navigateDetail(1)
+      if (media.detailItem?.id === id) {
+        // If navigating to next still points to the same item, it was the only one
+        media.closeDetail()
+      }
+      
+      // Manually decrement source node count if possible
+      if (ui.activeDirectoryId) {
+        const srcNode = folderTree.nodes.value.find(n => n.id === ui.activeDirectoryId)
+        if (srcNode) {
+          srcNode.mediaCount = Math.max(0, srcNode.mediaCount - 1)
+        }
+      }
+    }
+    
+    // Manually increment target node count
+    if (targetNode) {
+      targetNode.mediaCount += 1
+    }
+    
+    // Refresh stats
+    await media.loadStats()
+
+    // Trigger background scan on target root to ingest new file into DB
+    if (targetNode.rootId) {
+      scan.startScan(targetNode.rootId, async () => {
+        window.dispatchEvent(new CustomEvent('folder-stats-changed'))
+      })
+    }
+  } catch (e) {
+    if (typeof (ui as any).showToast === 'function') {
+      ;(ui as any).showToast(`操作失败: ${e}`, 'error')
     }
   }
 }

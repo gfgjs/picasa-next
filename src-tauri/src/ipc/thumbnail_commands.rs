@@ -412,6 +412,7 @@ pub async fn start_full_thumbnail_generation(
     let generated_count = Arc::new(std::sync::atomic::AtomicU64::new(0));
 
     tokio::task::spawn_blocking(move || -> Result<()> {
+        let start_time = std::time::Instant::now();
         let _ = on_progress.send(FullThumbProgressPayload {
             generated: 0,
             total: total as u64,
@@ -774,8 +775,8 @@ pub async fn start_full_thumbnail_generation(
 
         let final_gen = generated_count.load(std::sync::atomic::Ordering::Relaxed);
         info!(
-            "[FullThumbGen] FINISHED: generated={} total={} cancelled={} | 全量缩略图生成完成",
-            final_gen, total, cancel_token.is_cancelled()
+            "[FullThumbGen] FINISHED: generated={} total={} cancelled={} elapsed={}ms | 全量缩略图生成完成",
+            final_gen, total, cancel_token.is_cancelled(), start_time.elapsed().as_millis()
         );
         if cancel_token.is_cancelled() {
             let _ = on_progress.send(FullThumbProgressPayload {
@@ -824,5 +825,30 @@ pub fn stop_full_thumbnail_generation(state: State<'_, Arc<AppState>>) -> Result
 #[tauri::command]
 pub async fn cancel_thumbnail_request(id: i64, state: State<'_, Arc<AppState>>) -> Result<()> {
     state.cancelled_thumb_ids.lock().unwrap().insert(id);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn clear_all_thumbnails(state: State<'_, Arc<AppState>>) -> Result<()> {
+    info!("User action: Clearing all thumbnails | 用户操作：清除所有缩略图");
+    
+    // 1. Reset database thumb_status
+    {
+        let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        conn.execute("UPDATE media_items SET thumb_status = 0, thumb_path = NULL, thumbhash = NULL WHERE thumb_status != 0", [])
+            .map_err(|e| AppError::Db(e.to_string()))?;
+    }
+    
+    // 2. Delete cache directory
+    let cache_dir = state.thumb_config.read().unwrap().cache_dir.clone();
+    let thumb_dir = cache_dir.join("thumbnails");
+    if thumb_dir.exists() {
+        std::fs::remove_dir_all(&thumb_dir)
+            .map_err(|e| AppError::Io(format!("Failed to remove thumbnail cache: {e}")))?;
+    }
+    
+    // 3. Clear layout cache
+    *state.layout_cache.write().unwrap() = None;
+    
     Ok(())
 }

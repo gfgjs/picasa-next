@@ -120,7 +120,6 @@
     <ChevronRight v-if="showTimeline" :size="16" />
     <ChevronLeft v-else :size="16" />
   </button>
-</div> <!-- Close media-grid-layout -->
   
   <ContextMenu 
     :visible="ctxMenu.visible"
@@ -135,8 +134,17 @@
     @batch-favorite="batchFavorite" 
     @batch-unfavorite="batchUnfavorite"
     @batch-delete="batchDelete" 
+    @batch-move="startBatchMove"
+    @batch-copy="startBatchCopy"
     @select-all="selection.selectAll(getAllVisibleItemIds())"
     @invert-selection="selection.invertSelection(getAllVisibleItemIds())"
+  />
+
+  <FolderTreeSelectorDialog
+    v-if="moveCopyDialog.isOpen"
+    :title="moveCopyDialog.mode === 'move' ? '移动到文件夹' : '复制到文件夹'"
+    @close="moveCopyDialog.isOpen = false"
+    @confirm="onMoveCopyConfirm"
   />
 
   <!-- Floating Scroll Buttons -->
@@ -149,10 +157,14 @@
         ↓
       </button>
     </div>
+  </div> <!-- Close media-grid-layout -->
 </template>
 
 <script setup lang="ts">
 import { ref, watch, onMounted, onBeforeUnmount, computed, markRaw } from 'vue'
+import { useScanStore } from '../../stores/scanStore'
+import { useFolderTree } from '../../composables/useFolderTree'
+import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import type { UnlistenFn } from '@tauri-apps/api/event'
@@ -169,7 +181,8 @@ import { useRequestQueue }     from '../../composables/useRequestQueue'
 import MediaThumb from './MediaThumb.vue'
 import SelectionToolbar from './SelectionToolbar.vue'
 import ContextMenu, { type ContextMenuItem } from '../common/ContextMenu.vue'
-import { ImageIcon, Heart, Trash2, X, Folder, Calendar, Copy, FolderOpen, Image as ImageIconLucide, ChevronLeft, ChevronRight, Monitor } from '@lucide/vue'
+import FolderTreeSelectorDialog from '../common/FolderTreeSelectorDialog.vue'
+import { ImageIcon, Heart, Trash2, X, Folder, Calendar, Copy, FolderOpen, Image as ImageIconLucide, ChevronLeft, ChevronRight, Monitor, FolderInput } from '@lucide/vue'
 import { useSelection } from '../../composables/useSelection'
 import type { LayoutRow } from '../../types/layout'
 import { DEFAULTS, SEPARATOR_HEIGHT } from '../../constants/defaults'
@@ -179,8 +192,10 @@ import { scrollCache } from '../../utils/scrollCache'
 
 const GAP = DEFAULTS.GRID_GAP
 
-const media  = useMediaStore()
 const ui     = useUiStore()
+const media  = useMediaStore()
+const scan = useScanStore()
+const folderTree = useFolderTree()
 const filter = useFilterStore()
 const queue  = useRequestQueue()
 const { t }  = useI18n()
@@ -215,6 +230,11 @@ const cacheDir = ref('')
 const isScrolling = ref(false)
 const showTimeline = ref(true) // Toggle for timeline
 let scrollTimeout: ReturnType<typeof setTimeout> | null = null
+
+const moveCopyDialog = ref({
+  isOpen: false,
+  mode: 'move' as 'move' | 'copy'
+})
 
 // ── Context Menu ───────────────────────────────────────────────────────────
 const ctxMenu = ref({
@@ -251,6 +271,26 @@ async function onContextMenu(e: MouseEvent, id: number) {
       label: t('contextMenu.showInExplorer') || '在文件夹中显示',
       icon: markRaw(FolderOpen),
       action: () => invoke(IPC.SHOW_IN_EXPLORER, { itemId: id })
+    },
+    {
+      id: 'move_to',
+      label: '移动到...',
+      icon: markRaw(FolderInput),
+      action: () => {
+        selection.clearSelection()
+        selection.toggleSelect(id)
+        startBatchMove()
+      }
+    },
+    {
+      id: 'copy_to',
+      label: '复制到...',
+      icon: markRaw(Copy),
+      action: () => {
+        selection.clearSelection()
+        selection.toggleSelect(id)
+        startBatchCopy()
+      }
     }
   ]
 
@@ -553,11 +593,88 @@ async function batchDelete() {
   }
 }
 
+function startBatchMove() {
+  const ids = Array.from(selection.selectedIds.value)
+  if (ids.length === 0) return
+  moveCopyDialog.value.mode = 'move'
+  moveCopyDialog.value.isOpen = true
+}
+
+function startBatchCopy() {
+  const ids = Array.from(selection.selectedIds.value)
+  if (ids.length === 0) return
+  moveCopyDialog.value.mode = 'copy'
+  moveCopyDialog.value.isOpen = true
+}
+
+async function onMoveCopyConfirm(targetNode: any) {
+  const ids = Array.from(selection.selectedIds.value)
+  if (ids.length === 0 || (!targetNode.absPath && !targetNode.relPath)) return
+  
+  const targetDir = targetNode.absPath || targetNode.relPath
+  moveCopyDialog.value.isOpen = false
+  const cmd = moveCopyDialog.value.mode === 'move' ? 'move_media_items' : 'copy_media_items'
+  
+  try {
+    await invoke(cmd, { mediaIds: ids, targetDir })
+    if (typeof (ui as any).showToast === 'function') {
+      ;(ui as any).showToast(moveCopyDialog.value.mode === 'move' ? `已移动 ${ids.length} 项` : `已复制 ${ids.length} 项`, 'success')
+    }
+    selection.clearSelection()
+    
+    // For move, remove items from view immediately
+    if (moveCopyDialog.value.mode === 'move') {
+      await compute()
+      updateVisible()
+      
+      // Manually decrement source node count if possible
+      if (ui.activeDirectoryId) {
+        const srcNode = folderTree.nodes.value.find(n => n.id === ui.activeDirectoryId)
+        if (srcNode) {
+          srcNode.mediaCount = Math.max(0, srcNode.mediaCount - ids.length)
+        }
+      }
+    }
+    
+    // Manually increment target node count
+    if (targetNode) {
+      targetNode.mediaCount += ids.length
+    }
+    
+    // Let backend trigger a scan update, but we can also manually tell store to refresh
+    await media.loadStats()
+
+    // Important: trigger background scan on target root to ingest new files into DB
+    if (targetNode.rootId) {
+      scan.startScan(targetNode.rootId, async () => {
+        window.dispatchEvent(new CustomEvent('folder-stats-changed'))
+      })
+    }
+  } catch (e) {
+    if (typeof (ui as any).showToast === 'function') {
+      ;(ui as any).showToast(`操作失败: ${e}`, 'error')
+    }
+  }
+}
+
 function onKeyDown(e: KeyboardEvent) {
   selection.onKeyDown(e, getAllVisibleItemIds)
 }
-onMounted(() => document.addEventListener('keydown', onKeyDown))
-onBeforeUnmount(() => document.removeEventListener('keydown', onKeyDown))
+
+function onFolderStatsChanged() {
+  // Re-fetch gallery to show newly ingested items (if any are applicable to current view)
+  compute()
+  media.loadStats()
+}
+
+onMounted(() => {
+  document.addEventListener('keydown', onKeyDown)
+  window.addEventListener('folder-stats-changed', onFolderStatsChanged)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('keydown', onKeyDown)
+  window.removeEventListener('folder-stats-changed', onFolderStatsChanged)
+})
 
 // ── Listen to enrichment events ────────────────────────────────────────────
 // ── 监听增强事件 ────────────────────────────────────────────

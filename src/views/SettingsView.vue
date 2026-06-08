@@ -390,6 +390,16 @@
 
         <div class="settings-card__item">
           <div class="settings-card__info">
+            <div class="settings-card__label">{{ $t('settings.clearAllThumbnails') || '清除所有缩略图' }}</div>
+            <div class="settings-card__desc">{{ $t('settings.clearAllThumbnailsDesc') || '删除所有已生成的缩略图文件，并重置数据库状态。' }}</div>
+          </div>
+          <button class="btn btn-danger" @click="clearAllThumbnails">
+            <RotateCcw :size="14" /> {{ $t('settings.clearAllThumbnailsBtn') || '清除缩略图' }}
+          </button>
+        </div>
+
+        <div class="settings-card__item">
+          <div class="settings-card__info">
             <div class="settings-card__label">{{ $t('settings.clearBrowserCache') }}</div>
             <div class="settings-card__desc">{{ $t('settings.clearBrowserCacheDesc') }}</div>
           </div>
@@ -713,6 +723,17 @@ async function clearLogs() {
     ui.addToast('success', t('settings.clearLogsSuccess') || '日志文件已清除')
   } catch (e) {
     ui.addToast('error', `清除日志失败: ${e}`)
+  }
+}
+
+async function clearAllThumbnails() {
+  if (!confirm(t('sidebar.clearThumbnailsConfirm') || '确定要清除所有缩略图？此操作不可撤销，且后续浏览时会重新生成。')) return
+  try {
+    await invoke('clear_all_thumbnails')
+    media.invalidateLayout()
+    ui.addToast('success', t('sidebar.clearThumbnailsSuccess') || '所有缩略图已清除')
+  } catch (e) {
+    ui.addToast('error', `清除缩略图失败: ${e}`)
   }
 }
 

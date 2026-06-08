@@ -414,7 +414,12 @@ watch(() => state.scale.value, () => {
 // (Teleport 使组件保持活动状态)。
 function onKeydown(e: KeyboardEvent) {
   if (!media.isDetailOpen) return
-  if (e.key === 'Escape') { close(); return }
+  if (e.key === 'Escape') { 
+    e.preventDefault()
+    e.stopImmediatePropagation()
+    close()
+    return 
+  }
   if (e.key === '+' || e.key === '=') { state.zoomIn(); return }
   if (e.key === '-')                   { state.zoomOut(); return }
   if (e.key === 'i' || e.key === 'I') { state.toggleInfo(); return }

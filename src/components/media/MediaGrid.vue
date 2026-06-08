@@ -69,6 +69,7 @@
           >
             <MediaThumb
               :id="item.id"
+              :item="item"
               :w="item.w"
               :h="item.h"
               :media-type="item.mediaType"
@@ -556,7 +557,6 @@ async function batchFavorite() {
   if (typeof (ui as any).showToast === 'function') {
     ;(ui as any).showToast(t('selection.favorited', { count: ids.length }))
   }
-  selection.clearSelection()
 }
 
 async function batchUnfavorite() {
@@ -577,7 +577,6 @@ async function batchUnfavorite() {
   if (typeof (ui as any).showToast === 'function') {
     ;(ui as any).showToast(`已取消收藏 ${ids.length} 项`)
   }
-  selection.clearSelection()
 }
 
 async function batchDelete() {
@@ -658,6 +657,7 @@ async function onMoveCopyConfirm(targetNode: any) {
 }
 
 function onKeyDown(e: KeyboardEvent) {
+  if (media.isDetailOpen) return
   selection.onKeyDown(e, getAllVisibleItemIds)
 }
 

@@ -238,6 +238,10 @@ export function useSelection() {
   // ── Keyboard handling | 键盘处理 ──
 
   function onKeyDown(event: KeyboardEvent, getAllVisibleIds: () => number[]) {
+    const target = event.target as HTMLElement | null
+    if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) {
+      return
+    }
     if (event.key === 'Escape' && isSelectionMode.value) {
       clearSelection()
       event.preventDefault()

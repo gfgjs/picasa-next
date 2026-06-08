@@ -115,6 +115,15 @@ pub struct LayoutItem {
     pub file_name:     String,
     pub dir_id:        Option<i64>,
     pub similarity:    Option<f64>,
+    pub gps_lat:       Option<f64>,
+    pub gps_lng:       Option<f64>,
+    pub exif_make:     Option<String>,
+    pub exif_model:    Option<String>,
+    pub exif_lens:     Option<String>,
+    pub exif_focal_length: Option<f64>,
+    pub exif_aperture: Option<f64>,
+    pub exif_shutter:  Option<String>,
+    pub exif_iso:      Option<i64>,
 }
 
 // ── Image meta ───────────────────────────────────────────────────────────────

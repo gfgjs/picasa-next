@@ -10,6 +10,8 @@ import type { MediaDetail, AppStats, ThumbResult } from '../types/media'
 import { IPC } from '../constants/ipc'
 import { DEFAULTS } from '../constants/defaults'
 
+import { useUiStore } from './uiStore'
+
 export const useMediaStore = defineStore('media', () => {
   // ── Layout state ────────────────────────────────────────────────────────
   // ── 布局状态 ────────────────────────────────────────────────────────
@@ -62,6 +64,9 @@ export const useMediaStore = defineStore('media', () => {
     }
     isComputingLayout.value = true
     rowCache.value.clear()
+    const ui = useUiStore()
+    const needsMeta = ui.thumbInfoElements.some(el => ['geo', 'camera', 'params'].includes(el))
+
     try {
       layoutSummary.value = await invoke<LayoutSummary>(IPC.COMPUTE_LAYOUT, {
         params: {
@@ -73,6 +78,7 @@ export const useMediaStore = defineStore('media', () => {
           groupBy:       params.groupBy ?? 'date',
           sortWithinGroup: params.sortWithinGroup ?? 'datetime',
           sortOrder:     params.sortOrder ?? 'desc',
+          includeMeta:   needsMeta,
         }
       })
 

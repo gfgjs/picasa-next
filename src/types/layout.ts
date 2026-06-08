@@ -16,6 +16,21 @@ export interface LayoutRowItem {
   thumbPath:   string | null
   thumbhash:   number[] | null
   similarity?: number
+  isFavorited: boolean
+  originalWidth: number
+  originalHeight: number
+  fileName: string
+  dirPath: string | null
+  sortDatetime: number
+  gpsLat: number | null
+  gpsLng: number | null
+  exifMake: string | null
+  exifModel: string | null
+  exifLens: string | null
+  exifFocalLength: number | null
+  exifAperture: number | null
+  exifShutter: string | null
+  exifIso: number | null
 }
 
 export interface LayoutRowNormal {

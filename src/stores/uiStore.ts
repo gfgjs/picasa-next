@@ -234,6 +234,52 @@ export const useUiStore = defineStore('ui', () => {
   // ── Settings ───────────────────────────────────────────────────────────
   const isSettingsOpen = ref(false)
 
+  // ── Pinned Settings ──────────────────────────────────────────────────────
+  const pinnedSettings = ref<string[]>([])
+  
+  function togglePinnedSetting(key: string) {
+    const idx = pinnedSettings.value.indexOf(key)
+    if (idx >= 0) {
+      pinnedSettings.value.splice(idx, 1)
+    } else {
+      pinnedSettings.value.push(key)
+    }
+    invoke(IPC.SET_APP_CONFIG, { key: 'pinned_settings', value: JSON.stringify(pinnedSettings.value) }).catch(console.error)
+  }
+
+  invoke<string | null>(IPC.GET_APP_CONFIG, { key: 'pinned_settings' })
+    .then(saved => {
+      if (saved) {
+        try { pinnedSettings.value = JSON.parse(saved) } catch {}
+      }
+    }).catch(console.error)
+
+  // ── Thumbnail Info Overlays ──────────────────────────────────────────────
+  const showThumbInfo = ref<boolean>(false)
+  const thumbInfoElements = ref<string[]>([])
+
+  function setShowThumbInfo(val: boolean) {
+    showThumbInfo.value = val
+    invoke(IPC.SET_APP_CONFIG, { key: 'show_thumb_info', value: String(val) }).catch(console.error)
+  }
+
+  function setThumbInfoElements(elements: string[]) {
+    thumbInfoElements.value = elements
+    invoke(IPC.SET_APP_CONFIG, { key: 'thumb_info_elements', value: JSON.stringify(elements) }).catch(console.error)
+  }
+
+  invoke<string | null>(IPC.GET_APP_CONFIG, { key: 'show_thumb_info' })
+    .then(saved => {
+      if (saved) showThumbInfo.value = saved === 'true'
+    }).catch(console.error)
+
+  invoke<string | null>(IPC.GET_APP_CONFIG, { key: 'thumb_info_elements' })
+    .then(saved => {
+      if (saved) {
+        try { thumbInfoElements.value = JSON.parse(saved) } catch {}
+      }
+    }).catch(console.error)
+
   return {
     // theme & language
     // 主题与语言
@@ -276,5 +322,10 @@ export const useUiStore = defineStore('ui', () => {
     closeBehavior, showCloseConfirmDialog, setCloseBehavior,
     // settings
     isSettingsOpen,
+    // pinned settings
+    pinnedSettings, togglePinnedSetting,
+    // thumb info
+    showThumbInfo, setShowThumbInfo,
+    thumbInfoElements, setThumbInfoElements,
   }
 })

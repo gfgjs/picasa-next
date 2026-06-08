@@ -37,16 +37,19 @@
     <!-- Overlays -->
     <!-- 覆盖层 -->
     <div class="media-thumb__overlays">
-      <!-- Source / Thumb indicator -->
-      <!-- 源文件 / 缩略图 指示器 -->
-      <span v-if="similarity == null && isLoaded && thumbStatus === 3" class="badge badge-source" title="直接渲染原图">ORIG</span>
-      <span v-if="similarity == null && isLoaded && thumbStatus === 1" class="badge badge-thumb" title="渲染缩略图">THUMB</span>
-      
-      <!-- Top Left Badges (Size + Live) -->
-      <div class="media-thumb__top-left">
-        <span v-if="similarity == null && fileSize" class="badge badge-size">{{ formatFileSize(fileSize) }}</span>
-        <span v-if="similarity != null" class="badge badge-similarity">{{ Math.round(similarity * 100) }}%</span>
-        <span v-if="isLivePhoto" class="badge badge-live">LIVE</span>
+      <!-- Advanced Info Overlay & Badges -->
+      <div 
+        v-if="thumbInfoLines.length > 0 || (similarity == null && isLoaded && thumbStatus === 3 && ui.showThumbInfo && ui.thumbInfoElements.includes('status')) || (similarity == null && isLoaded && thumbStatus === 1 && ui.showThumbInfo && ui.thumbInfoElements.includes('status')) || (similarity == null && fileSize && ui.showThumbInfo && ui.thumbInfoElements.includes('size')) || similarity != null || isLivePhoto"
+        class="media-thumb__info-overlay"
+      >
+        <div class="media-thumb__badges" style="display: flex; gap: 4px; margin-bottom: 2px; flex-wrap: wrap;">
+          <span v-if="similarity == null && isLoaded && thumbStatus === 3 && ui.showThumbInfo && ui.thumbInfoElements.includes('status')" class="badge badge-source" title="直接渲染原图">ORIG</span>
+          <span v-if="similarity == null && isLoaded && thumbStatus === 1 && ui.showThumbInfo && ui.thumbInfoElements.includes('status')" class="badge badge-thumb" title="渲染缩略图">THUMB</span>
+          <span v-if="similarity == null && fileSize && ui.showThumbInfo && ui.thumbInfoElements.includes('size')" class="badge badge-size">{{ formatFileSize(fileSize) }}</span>
+          <span v-if="similarity != null" class="badge badge-similarity">{{ Math.round(similarity * 100) }}%</span>
+          <span v-if="isLivePhoto" class="badge badge-live">LIVE</span>
+        </div>
+        <div v-for="(line, idx) in thumbInfoLines" :key="idx" class="info-line">{{ line }}</div>
       </div>
 
       <!-- Video play -->
@@ -59,10 +62,10 @@
       <!-- 收藏 -->
       <button
         class="media-thumb__fav"
-        :class="{ active: isFavorited, 'fav-animate': favAnimating }"
+        :class="{ active: isFavorited, 'fav-always-visible': isFavorited && ui.showThumbInfo && ui.thumbInfoElements.includes('favorite') }"
         @click.stop="toggleFav"
         title="收藏"
-      ><Heart :size="16" :fill="isFavorited ? 'currentColor' : 'none'" :stroke-width="isFavorited ? 0 : 2" /></button>
+      ><Heart :size="14" :fill="isFavorited ? '#ff4757' : 'none'" :color="isFavorited ? '#ff4757' : '#fff'" :stroke-width="isFavorited ? 0 : 2" /></button>
       <!-- Selection checkbox -->
       <!-- 选择复选框 -->
       <div
@@ -85,6 +88,8 @@ import { Play, Heart, Check } from '@lucide/vue'
 import { thumbhashToAverageColor } from '../../utils/thumbhash'
 import { formatDuration, formatFileSize } from '../../utils/format'
 
+import { useUiStore } from '../../stores/uiStore'
+
 interface Props {
   id:              number
   w:               number
@@ -103,6 +108,7 @@ interface Props {
   isSelectionMode?: boolean
   isDragHover?:    boolean
   cacheDir:        string
+  item?:           any
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -124,6 +130,8 @@ const emit = defineEmits<{
   (e: 'cancel-thumb', id: number): void
 }>()
 
+const ui = useUiStore()
+
 const urlParams = new URLSearchParams(window.location.search)
 const cacheBuster = urlParams.get('clear') ? `?t=${urlParams.get('clear')}` : ''
 
@@ -137,6 +145,44 @@ const thumbStyle = computed(() => ({
   width:  `${props.w}px`,
   height: `${props.h}px`,
 }))
+
+const thumbInfoLines = computed(() => {
+  if (!ui.showThumbInfo || !props.item) return []
+  const lines: string[] = []
+  const elements = ui.thumbInfoElements
+  const it = props.item
+
+  if (elements.includes('filename') && it.fileName) {
+    lines.push(it.fileName)
+  }
+  if (elements.includes('date') && it.sortDatetime) {
+    lines.push(new Date(it.sortDatetime * 1000).toLocaleString())
+  }
+  if (elements.includes('resolution') && it.originalWidth && it.originalHeight) {
+    lines.push(`${it.originalWidth} × ${it.originalHeight}`)
+  }
+  if (elements.includes('path') && it.dirPath) {
+    lines.push(it.dirPath)
+  }
+  if (elements.includes('geo') && it.gpsLat != null && it.gpsLng != null) {
+    lines.push(`${it.gpsLat.toFixed(4)}, ${it.gpsLng.toFixed(4)}`)
+  }
+  if (elements.includes('camera') && (it.exifMake || it.exifModel)) {
+    const make = it.exifMake || ''
+    const model = it.exifModel || ''
+    lines.push(`${make} ${model}`.trim())
+  }
+  if (elements.includes('params')) {
+    const params = []
+    if (it.exifFocalLength) params.push(`${it.exifFocalLength}mm`)
+    if (it.exifAperture) params.push(`f/${it.exifAperture}`)
+    if (it.exifShutter) params.push(`${it.exifShutter}s`)
+    if (it.exifIso) params.push(`ISO${it.exifIso}`)
+    if (params.length > 0) lines.push(params.join(' '))
+  }
+
+  return lines
+})
 
 const placeholderBgColor = computed(() =>
   props.thumbhash ? thumbhashToAverageColor(props.thumbhash) : 'var(--color-bg-elevated)'
@@ -335,15 +381,13 @@ onBeforeUnmount(() => {
   -webkit-backdrop-filter: blur(4px);
 }
 .badge-source {
-  top: 6px;
-  right: 6px;
+  position: static;
   background: rgba(30, 136, 229, 0.85); /* Blue for orig */
   color: #fff;
   font-size: 9px;
 }
 .badge-thumb {
-  top: 6px;
-  right: 6px;
+  position: static;
   background: rgba(67, 160, 71, 0.85); /* Green for thumb */
   color: #fff;
   font-size: 9px;
@@ -362,16 +406,13 @@ onBeforeUnmount(() => {
 }
 .badge-size {
   position: static;
-  background: rgba(0, 0, 0, 0.4);
+  background: var(--color-badge-size);
   color: #fff;
-  font-family: var(--font-mono);
-  font-size: 9px;
 }
 .badge-similarity {
   position: static;
   background: rgba(138, 43, 226, 0.85); /* Purple for AI */
   color: #fff;
-  font-family: var(--font-mono);
   font-size: 9px;
 }
 .badge-video {
@@ -397,19 +438,23 @@ onBeforeUnmount(() => {
 .media-thumb__fav {
   position: absolute;
   bottom: 4px;
-  left: 4px;
+  right: 4px;
   background: transparent;
-  font-size: 16px;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   opacity: 0;
   pointer-events: auto;
-  transition: opacity var(--transition-fast);
-  padding: 2px;
-  line-height: 1;
+  transition: opacity var(--transition-fast), transform var(--transition-fast);
+  padding: 4px;
+  border: none;
+  filter: drop-shadow(0 1px 3px rgba(0,0,0,0.6));
 }
-.media-thumb__fav.active { opacity: 1; }
-.media-thumb__fav.fav-animate {
-  animation: fav-spring 300ms cubic-bezier(0.34, 1.56, 0.64, 1);
+.media-thumb__fav:hover {
+  transform: scale(1.1);
 }
+.media-thumb__fav.fav-always-visible { opacity: 1; }
 
 .media-thumb__checkbox {
   position: absolute;
@@ -437,13 +482,6 @@ onBeforeUnmount(() => {
 .checkbox.checked {
   background: var(--color-accent);
   border-color: var(--color-accent);
-}
-
-@keyframes fav-spring {
-  0%   { transform: scale(1); }
-  40%  { transform: scale(1.5); }
-  70%  { transform: scale(0.9); }
-  100% { transform: scale(1.2); }
 }
 
 /* ── Selection visual states | 选择视觉状态 ─────────────────────── */
@@ -493,5 +531,30 @@ onBeforeUnmount(() => {
 /* 选择模式：也始终显示收藏按钮 */
 .media-thumb--selection-mode .media-thumb__fav {
   opacity: 1;
+}
+
+.media-thumb__info-overlay {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.5) 70%, transparent 100%);
+  color: #fff;
+  padding: 24px 6px 6px 6px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity var(--transition-fast);
+}
+
+.info-line {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.8);
 }
 </style>

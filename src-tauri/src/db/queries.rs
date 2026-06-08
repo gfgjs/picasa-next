@@ -82,6 +82,15 @@ fn map_layout_item(row: &Row<'_>) -> rusqlite::Result<LayoutItem> {
         file_name:     row.get(15)?,
         dir_id:        row.get(16)?,
         similarity:    row.get(17)?,
+        gps_lat:       row.get(18)?,
+        gps_lng:       row.get(19)?,
+        exif_make:     row.get(20)?,
+        exif_model:    row.get(21)?,
+        exif_lens:     row.get(22)?,
+        exif_focal_length: row.get(23)?,
+        exif_aperture: row.get(24)?,
+        exif_shutter:  row.get(25)?,
+        exif_iso:      row.get(26)?,
     })
 }
 
@@ -418,22 +427,29 @@ pub fn query_layout_items(
     group_by: Option<&str>,
     sort_within: Option<&str>,
     sort_order: Option<&str>,
+    include_meta: bool,
 ) -> Result<Vec<LayoutItem>> {
     let mut sql = String::from(
         "SELECT m.id, m.width, m.height, m.file_size, m.sort_datetime, m.file_format, m.media_type, m.is_live_photo,
                 m.duration_ms, m.thumb_status, m.thumb_path, m.thumbhash, m.is_favorited,
-                d.rel_path as dir_path, d.name as dir_name, m.file_name, m.directory_id as dir_id, "
+                CASE WHEN d.rel_path = '' THEN r.path ELSE r.path || '/' || d.rel_path END as dir_path, d.name as dir_name, m.file_name, m.directory_id as dir_id, "
     );
 
     if filter.ai_search == Some(true) {
-        sql.push_str("ai.similarity\n");
+        sql.push_str("ai.similarity, ");
     } else {
-        sql.push_str("NULL as similarity\n");
+        sql.push_str("NULL as similarity, ");
     }
 
-    sql.push_str("         FROM media_items m\n         JOIN directories d ON m.directory_id = d.id");
+    if include_meta {
+        sql.push_str("im.exif_gps_lat, im.exif_gps_lng, im.exif_make, im.exif_model, im.exif_lens, im.exif_focal_length, im.exif_aperture, im.exif_shutter, im.exif_iso\n");
+    } else {
+        sql.push_str("NULL as exif_gps_lat, NULL as exif_gps_lng, NULL as exif_make, NULL as exif_model, NULL as exif_lens, NULL as exif_focal_length, NULL as exif_aperture, NULL as exif_shutter, NULL as exif_iso\n");
+    }
 
-    let mut needs_meta_join = false;
+    sql.push_str("         FROM media_items m\n         JOIN directories d ON m.directory_id = d.id\n         JOIN scan_roots r ON d.root_id = r.id");
+
+    let mut needs_meta_join = include_meta;
     if let Some(ref q) = filter.search_query {
         if !q.trim().is_empty() {
             let scope = filter.search_scope.as_deref().unwrap_or("filename");

@@ -9,9 +9,11 @@
       </div>
     </div>
 
-    <!-- Smart albums -->
-    <!-- 智能相册 -->
-    <section class="sidebar__section">
+    <!-- Scrollable content area -->
+    <div class="sidebar__scroll-area">
+      <!-- Smart albums -->
+      <!-- 智能相册 -->
+      <section class="sidebar__section">
       <div class="sidebar__section-label" @click="isLibraryExpanded = !isLibraryExpanded" style="cursor: pointer; display: flex; align-items: center; gap: 4px; justify-content: flex-start; user-select: none;">
         <ChevronRight :size="14" style="transition: transform 0.2s" :style="{ transform: isLibraryExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }" />
         {{ $t('sidebar.library') }}
@@ -44,31 +46,52 @@
         工具 / TOOLS
       </div>
       <transition name="collapse" @enter="onEnter" @after-enter="onAfterEnter" @leave="onLeave">
-        <ul class="sidebar__nav" v-show="isToolsExpanded">
-          <li>
-            <div class="sidebar__nav-item" style="flex-direction: column; align-items: flex-start; gap: 8px; cursor: default;">
-              <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
-                <div style="display: flex; align-items: center; gap: 8px;">
-                  <span class="sidebar__nav-icon"><Zap :size="18" /></span>
-                  <span class="sidebar__nav-label">全量生成缩略图</span>
+        <div v-show="isToolsExpanded">
+          <ul class="sidebar__nav sidebar__nav--tools" style="padding-bottom: 4px;">
+            <template v-for="key in ui.pinnedSettings" :key="key">
+            <!-- 特殊处理：全量生成缩略图 -->
+            <li v-if="key === 'fullThumbGen'">
+              <div class="sidebar__nav-item" style="flex-direction: column; align-items: flex-start; gap: 8px; cursor: default;">
+                <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <span class="sidebar__nav-icon"><Zap :size="18" /></span>
+                    <span class="sidebar__nav-label">全量生成缩略图</span>
+                  </div>
+                  <button class="btn-icon" @click="toggleThumbGen" :title="scan.thumbGenProgress.isRunning ? '停止生成' : '开始生成'">
+                    <Square v-if="scan.thumbGenProgress.isRunning" :size="14" color="var(--color-error)" fill="var(--color-error)" />
+                    <Play v-else :size="14" />
+                  </button>
                 </div>
-                <button class="btn-icon" @click="toggleThumbGen" :title="scan.thumbGenProgress.isRunning ? '停止生成' : '开始生成'">
-                  <Square v-if="scan.thumbGenProgress.isRunning" :size="14" color="var(--color-error)" fill="var(--color-error)" />
-                  <Play v-else :size="14" />
-                </button>
+                
+                <div v-if="scan.thumbGenProgress.isRunning || scan.thumbGenProgress.status === 'completed'" style="width: 100%; font-size: 12px; color: var(--color-text-tertiary);">
+                  <div v-if="scan.thumbGenProgress.isRunning" class="progress-bar" style="margin-bottom: 4px;">
+                    <div class="progress-bar__fill" style="background: var(--color-accent);" :style="{ width: ((scan.thumbGenProgress.generated / Math.max(scan.thumbGenProgress.total, 1)) * 100) + '%' }" />
+                  </div>
+                  <div style="display: flex; justify-content: space-between;">
+                    <span>{{ scan.thumbGenProgress.generated }} / {{ scan.thumbGenProgress.total }}</span>
+                    <span v-if="elapsedTimeStr" style="font-family: monospace;">{{ elapsedTimeStr }}</span>
+                  </div>
+                </div>
               </div>
-              
-              <div v-if="scan.thumbGenProgress.isRunning || scan.thumbGenProgress.status === 'completed'" style="width: 100%; font-size: 12px; color: var(--color-text-tertiary);">
-                <div v-if="scan.thumbGenProgress.isRunning" class="progress-bar" style="margin-bottom: 4px;">
-                  <div class="progress-bar__fill" style="background: var(--color-accent);" :style="{ width: ((scan.thumbGenProgress.generated / Math.max(scan.thumbGenProgress.total, 1)) * 100) + '%' }" />
+            </li>
+            
+            <!-- 动态渲染其他设置项 -->
+            <li v-else-if="SETTINGS_MAP[key]">
+              <div class="sidebar__nav-item" style="flex-direction: column; align-items: flex-start; gap: 4px; cursor: default;">
+                <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
+                  <div style="display: flex; align-items: center; gap: 8px; flex: 1; margin-bottom: 4px;">
+                    <span class="sidebar__nav-icon"><component :is="SETTINGS_MAP[key].icon" :size="18" /></span>
+                    <span class="sidebar__nav-label" style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                      {{ $t(SETTINGS_MAP[key].label) }}
+                    </span>
+                  </div>
                 </div>
-                <div style="display: flex; justify-content: space-between;">
-                  <span>{{ scan.thumbGenProgress.generated }} / {{ scan.thumbGenProgress.total }}</span>
-                  <span v-if="elapsedTimeStr" style="font-family: monospace;">{{ elapsedTimeStr }}</span>
-                </div>
+                <DynamicSettingControl :setting-key="key" compact />
               </div>
-            </div>
-          </li>
+            </li>
+          </template>
+
+          <!-- 全量 AI 分析 (未在设置页提供图钉，这里作为常驻核心项) -->
           <li>
             <div class="sidebar__nav-item" style="flex-direction: column; align-items: flex-start; gap: 8px; cursor: default;">
               <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
@@ -95,7 +118,8 @@
               </div>
             </div>
           </li>
-        </ul>
+          </ul>
+        </div>
       </transition>
     </section>
 
@@ -125,7 +149,7 @@
       </div>
 
       <transition name="collapse" @enter="onEnter" @after-enter="onAfterEnter" @leave="onLeave">
-        <div v-show="isFoldersExpanded" style="display: flex; flex-direction: column; flex: 1; overflow: hidden; min-height: 0;">
+        <div v-show="isFoldersExpanded">
           <div v-if="folderTree.nodes.value.length === 0 && !scan.hasScanRoots" class="sidebar__empty">
             <span>{{ $t('sidebar.noFolders') }}</span>
           </div>
@@ -219,6 +243,7 @@
         </div>
       </transition>
     </section>
+    </div>
 
     <!-- Settings / footer -->
     <!-- 设置 / 页脚 -->
@@ -281,12 +306,14 @@ import { useScanStore } from '../../stores/scanStore'
 import { useMediaStore } from '../../stores/mediaStore'
 import { useAiStore } from '../../stores/aiStore'
 import { useFolderTree } from '../../composables/useFolderTree'
+import { SETTINGS_MAP } from '../../constants/settingsMap'
+import DynamicSettingControl from '../settings/DynamicSettingControl.vue'
 import ContextMenu, { ContextMenuItem } from '../common/ContextMenu.vue'
 import FolderCreateDialog from '../common/FolderCreateDialog.vue'
 import {
   Aperture, FolderPlus, FolderSearch, ChevronRight, Folder,
   Square, RefreshCw, Trash2, Settings,
-  Sun, Moon, Monitor, ImageIcon, Heart, Sparkles, Clock, Play, Zap
+  Sun, Moon, Monitor, ImageIcon, Heart, Sparkles, Clock, Play, Zap, RotateCcw, Database
 } from '@lucide/vue'
 
 const ui       = useUiStore()
@@ -627,6 +654,17 @@ async function toggleScan(rootId: number) {
   }
 }
 
+async function clearDb() {
+  if (!confirm(t('sidebar.clearDbConfirm') || '确定要清除所有数据？此操作不可撤销。')) return
+  try {
+    await scan.clearDatabase()
+    media.loadStats()
+    ui.addToast('success', t('sidebar.clearDbSuccess') || '数据已清除')
+  } catch (e) {
+    ui.addToast('error', `清除数据失败: ${e}`)
+  }
+}
+
 export interface OverlapInfo {
   id: number
   path: string
@@ -757,6 +795,33 @@ onMounted(async () => {
   height: 100%;
   overflow: hidden;
 }
+.sidebar__scroll-area {
+  flex: 1;
+  overflow-y: overlay; /* Use overlay to prevent layout shift */
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  scrollbar-gutter: stable; /* Fallback for modern Chrome to prevent shift */
+}
+
+/* VS Code style floating scrollbar for sidebar */
+.sidebar__scroll-area::-webkit-scrollbar {
+  width: 6px;
+  background: transparent;
+}
+.sidebar__scroll-area::-webkit-scrollbar-track {
+  background: transparent;
+}
+.sidebar__scroll-area::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 3px;
+}
+.sidebar__scroll-area:hover::-webkit-scrollbar-thumb {
+  background: var(--color-scrollbar-thumb);
+}
+.sidebar__scroll-area::-webkit-scrollbar-thumb:hover {
+  background: var(--color-scrollbar-thumb-hover);
+}
 
 /* ── Header ───────────────────────────────────────────────────────────── */
 /* ── 头部 ───────────────────────────────────────────────────────────── */
@@ -787,21 +852,23 @@ onMounted(async () => {
   flex-shrink: 0;
 }
 .sidebar__section--tree {
-  flex: 1;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
+  /* Just a regular section now, no flex constraints needed */
 }
 .sidebar__section-label {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 4px var(--spacing-md);
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--color-text-tertiary);
+  padding: 8px var(--spacing-md);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--color-text-secondary);
+  transition: color 0.2s, background-color 0.2s;
+  cursor: pointer;
+}
+.sidebar__section-label:hover {
+  color: var(--color-text-primary);
+  background-color: var(--color-bg-hover);
 }
 .sidebar__divider {
   height: 1px;
@@ -836,6 +903,21 @@ onMounted(async () => {
   flex-direction: column;
   gap: 2px;
   padding: 0 var(--spacing-xs);
+}
+.sidebar__nav--tools {
+  gap: 8px;
+  padding: 4px var(--spacing-xs) 8px;
+}
+.sidebar__nav--tools .sidebar__nav-item {
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 10px var(--spacing-sm);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+}
+.sidebar__nav--tools .sidebar__nav-item:hover {
+  background: var(--color-bg-hover);
+  border-color: var(--color-border-strong);
 }
 .sidebar__nav-item {
   display: flex;
@@ -877,8 +959,6 @@ onMounted(async () => {
   text-align: center;
 }
 .sidebar__tree {
-  flex: 1;
-  overflow-y: auto;
   padding: 0 var(--spacing-xs);
 }
 .sidebar__tree-item {

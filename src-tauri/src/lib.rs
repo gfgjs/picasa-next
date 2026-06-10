@@ -157,6 +157,29 @@ pub fn run() {
                 .unwrap_or_else(|| app_data_dir.join("cache"));
             std::fs::create_dir_all(&cache_dir).unwrap_or_default();
 
+            // ── Asset-protocol scope (E1) ─────────────────────────────────────
+            // Grant read access only to the thumbnail cache + actual scan roots, rather
+            // than blanket whole-drive globs. Source images live under arbitrary scan-root
+            // paths, so they're granted at runtime here (and on add_scan_root).
+            // 仅授予缩略图缓存 + 实际扫描根目录的读取权限，取代整盘通配。
+            // 源图位于任意扫描根路径下，故在此（及 add_scan_root 时）运行时授权。
+            {
+                let scope = app.asset_protocol_scope();
+                if let Err(e) = scope.allow_directory(&cache_dir, true) {
+                    tracing::warn!("Failed to allow cache_dir in asset scope | 缓存目录授权失败: {}", e);
+                }
+                if let Ok(pool) = db_read_pool.get() {
+                    if let Ok(roots) = crate::db::queries::list_scan_roots(&pool) {
+                        for r in &roots {
+                            if let Err(e) = scope.allow_directory(&r.path, true) {
+                                tracing::warn!("Failed to allow scan root {} in asset scope | 扫描根授权失败: {}", r.path, e);
+                            }
+                        }
+                        info!("Asset scope granted for {} scan root(s) + cache dir | 已为 {} 个扫描根 + 缓存目录授予 asset 权限", roots.len(), roots.len());
+                    }
+                }
+            }
+
             // ── Logging ───────────────────────────────────────────────────────────
             // ── 日志记录 ───────────────────────────────────────────────────────────
             let log_dir = custom_log_dir

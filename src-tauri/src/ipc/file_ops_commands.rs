@@ -1,7 +1,7 @@
 // src-tauri/src/ipc/file_ops_commands.rs
 use std::sync::Arc;
 use std::path::PathBuf;
-use tauri::State;
+use tauri::{AppHandle, State};
 use tracing::info;
 
 use crate::error::{AppError, Result};
@@ -12,6 +12,7 @@ use crate::ipc::scan_commands::add_scan_root;
 
 #[tauri::command]
 pub async fn create_physical_folder(
+    app: AppHandle,
     base_path: String,
     folder_name: String,
     state: State<'_, Arc<AppState>>,
@@ -41,7 +42,7 @@ pub async fn create_physical_folder(
     
     if !is_within_existing {
         // 自动纳入 Scan Roots
-        add_scan_root(path_str.clone(), None, state.clone()).await?;
+        add_scan_root(app.clone(), path_str.clone(), None, state.clone()).await?;
     }
     
     Ok(path_str)

@@ -22,8 +22,8 @@
 | E2 合并 3×`get_summary` | ✅ 已完成（随 A3） | cargo check 通过 |
 | B1 滚动坐标平移 | ⚠️ 已实现，平移模式有滚动错位 bug（已搁置） | vue-tsc 通过 |
 | C1 embedding 常驻 f16 + rayon | ✅ 已完成 | cargo check 通过 |
-| D3 收藏/删除 O(1) 缓存同步 | ⬜ 待做 | — |
-| E1 安全收敛、README/architecture_notes | ⬜ 待做 | — |
+| D3 收藏/删除 O(1) 缓存同步 | ✅ 已完成 | cargo check + 3 单元测试通过 |
+| E1 安全收敛、README/architecture_notes | ✅ 已完成（asset scope 待运行时验证） | cargo check 通过 |
 
 > **M1（地基）+ M2（破百万）已完成（代码层）**：常驻内存大幅下降、滚动写锁 O(N×M) 与方向键 O(N) 根除、损坏文件不再中止进程、退出不再泄漏 WAL、突破浏览器 ~1677 万 px 高度上限。
 >
@@ -32,6 +32,10 @@
 > **B1 已知 bug（已搁置）**：将 `SAFE_MAX` 调小（10000）实测平移模式滚动错位 —— 滚动条忽长忽短跳动、内容错位、直接跳到底部。普通模式（`SAFE_MAX=10M`，<25 万项不激活）不受影响。待修：怀疑是 native 惯性滚动与每帧 `syncTransform` 重写 transform 的反馈环 / 比例映射在小 `physMax` 下放大误差所致。其它已知点：平移模式滚动条粒度变粗（技术固有）；文件夹分组 sticky 头本就因绝对定位近乎失效，无新增回归。
 >
 > **C1 实现要点**：`AppState.ai_embedding_cache: RwLock<Option<EmbeddingCache>>` 常驻 f16 连续缓冲；首次搜索从读连接池一次性加载，rayon 跨全部行并行点积；写锁仅在持久化结果时短暂持有（打分阶段不再阻塞 DB 写）。嵌入向量每批写入/重置时 `invalidate_embedding_cache()`。百万项常驻约 1GB（若超预算再上 C2 ANN）。
+>
+> **D3 实现要点**：收藏（单个 + 批量）经 `set_favorite_in_cache` O(1) 同步常驻布局缓存的 `is_favorited`，修复"滚出再滚回收藏标记回退"。软删除/恢复改变项集（位置重排），前端 `batchDelete` 已 `compute()` 重算，无需后端原地改。写锁均在缓存同步前释放（保持 db_writer→layout_cache 锁序）。
+>
+> **E1 实现要点 + ⚠️待验证**：① `tauri.conf.json` 移除整盘通配 `C:/** … G:/**`，保留 `$PICTURE/$APPDATA/...` 等用户目录；② 扫描根 + 缓存目录改为**运行时**经 `app.asset_protocol_scope().allow_directory(path, true)` 授权（`lib.rs` 启动时遍历授权 + `add_scan_root` 新增时授权）；③ CSP `unsafe-eval` 经排查为 **vue-i18n 运行时消息编译所需**，保留（移除需预编译 locale）。**⚠️ 运行时验证**：`tauri dev` 后确认各扫描根（尤其非用户目录、如 `D:\Photos`）的图片能正常加载；若裂图，说明运行时授权未覆盖该路径 → `git revert` E1 的 tauri.conf.json 改动恢复整盘通配。
 
 ---
 

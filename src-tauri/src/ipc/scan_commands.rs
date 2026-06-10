@@ -22,11 +22,20 @@ use crate::utils::path::normalize_db_path;
 /// 添加新的扫描根目录。
 #[tauri::command]
 pub async fn add_scan_root(
+    app: AppHandle,
     path: String,
     alias: Option<String>,
     state: State<'_, Arc<AppState>>,
 ) -> Result<ScanRoot> {
     let norm = normalize_db_path(&path);
+
+    // Grant asset-protocol read access to this root so its images load via convertFileSrc
+    // (the static config no longer opens whole drives). See E1 in perf_hardening_plan_v2.md.
+    // 为该根目录授予 asset 协议读取权限，使其图片可经 convertFileSrc 加载
+    // （静态配置不再开放整盘）。见 perf_hardening_plan_v2.md 的 E1。
+    if let Err(e) = app.asset_protocol_scope().allow_directory(&norm, true) {
+        tracing::warn!("Failed to allow scan root {} in asset scope | 扫描根授权失败: {}", norm, e);
+    }
 
     // Check if the root already exists
     // 检查根目录是否已存在

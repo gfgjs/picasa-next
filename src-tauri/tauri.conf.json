@@ -44,18 +44,12 @@
         "enable": true,
         "scope": [
           "$APPDATA/**",
-          "$HOME/**",
           "$PICTURE/**",
           "$DESKTOP/**",
           "$DOCUMENT/**",
           "$DOWNLOAD/**",
           "$VIDEO/**",
-          "$AUDIO/**",
-          "C:/**",
-          "D:/**",
-          "E:/**",
-          "F:/**",
-          "G:/**"
+          "$AUDIO/**"
         ]
       }
     }

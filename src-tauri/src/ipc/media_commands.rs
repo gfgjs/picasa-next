@@ -116,8 +116,15 @@ pub async fn get_companion_video_url(
 /// 切换媒体项的收藏状态。
 #[tauri::command]
 pub async fn toggle_favorite(item_id: i64, state: State<'_, Arc<AppState>>) -> Result<bool> {
-    let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    q::toggle_favorite(&conn, item_id)
+    let new_val = {
+        let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        q::toggle_favorite(&conn, item_id)?
+    };
+    // Keep the resident layout cache consistent so the star doesn't revert on
+    // scroll-out/scroll-in (D3). Write lock released above before this.
+    // 同步常驻布局缓存，避免滚出再滚回时收藏标记回退（D3）。写锁已在上方释放。
+    crate::layout::cache::set_favorite_in_cache(&state.layout_cache, &[item_id], new_val);
+    Ok(new_val)
 }
 
 /// Batch set favorite status for multiple items.
@@ -132,33 +139,39 @@ pub async fn batch_toggle_favorite(
         return Ok(0);
     }
 
-    let writer = state.db_writer.lock()
-        .map_err(|e| AppError::Db(format!("Lock error: {} | 锁错误: {}", e, e)))?;
+    let affected = {
+        let writer = state.db_writer.lock()
+            .map_err(|e| AppError::Db(format!("Lock error: {} | 锁错误: {}", e, e)))?;
 
-    // Use a single UPDATE with IN clause for efficiency
-    // 使用单个 UPDATE + IN 子句以提高效率
-    let placeholders: String = item_ids.iter()
-        .enumerate()
-        .map(|(i, _)| format!("?{}", i + 2))
-        .collect::<Vec<_>>()
-        .join(", ");
+        // Use a single UPDATE with IN clause for efficiency
+        // 使用单个 UPDATE + IN 子句以提高效率
+        let placeholders: String = item_ids.iter()
+            .enumerate()
+            .map(|(i, _)| format!("?{}", i + 2))
+            .collect::<Vec<_>>()
+            .join(", ");
 
-    let sql = format!(
-        "UPDATE media_items SET is_favorited = ?1 WHERE id IN ({}) AND is_deleted = 0",
-        placeholders
-    );
+        let sql = format!(
+            "UPDATE media_items SET is_favorited = ?1 WHERE id IN ({}) AND is_deleted = 0",
+            placeholders
+        );
 
-    let mut params: Vec<rusqlite::types::Value> = vec![
-        rusqlite::types::Value::Integer(if value { 1 } else { 0 }),
-    ];
-    for id in &item_ids {
-        params.push(rusqlite::types::Value::Integer(*id));
-    }
+        let mut params: Vec<rusqlite::types::Value> = vec![
+            rusqlite::types::Value::Integer(if value { 1 } else { 0 }),
+        ];
+        for id in &item_ids {
+            params.push(rusqlite::types::Value::Integer(*id));
+        }
 
-    let affected = writer.execute(
-        &sql,
-        rusqlite::params_from_iter(params.iter()),
-    )? as u64;
+        writer.execute(
+            &sql,
+            rusqlite::params_from_iter(params.iter()),
+        )? as u64
+    };
+
+    // Sync the resident layout cache so favorites survive scroll-out/scroll-in (D3).
+    // 同步常驻布局缓存，使收藏在滚出再滚回后仍保持（D3）。
+    crate::layout::cache::set_favorite_in_cache(&state.layout_cache, &item_ids, value);
 
     tracing::info!(
         "Batch favorite: set {}/{} items to {} | 批量收藏：设置 {}/{} 项为 {}",

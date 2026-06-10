@@ -131,6 +131,28 @@ pub fn apply_thumb_results(cache: &LayoutCache, results: &[ThumbResult]) {
     }
 }
 
+/// O(1)-per-id update of `is_favorited` in the cached layout, mirroring a DB write so
+/// `get_rows_by_y` returns fresh state after the row scrolls out and back in (D3).
+///
+/// 以每 id O(1) 更新缓存布局中的 is_favorited，与数据库写入保持一致，
+/// 使行滚出再滚回时 `get_rows_by_y` 仍返回最新状态（D3）。
+pub fn set_favorite_in_cache(cache: &LayoutCache, ids: &[i64], value: bool) {
+    if ids.is_empty() {
+        return;
+    }
+    let mut guard = cache.write().unwrap();
+    let Some(data) = guard.as_mut() else { return };
+    for &id in ids {
+        let Some(&flat) = data.id_to_flat.get(&id) else { continue };
+        let Some(&(ri, ii)) = data.flat_rowcol.get(flat) else { continue };
+        if let Some(LayoutRow::Normal { items, .. }) = data.rows.get_mut(ri as usize) {
+            if let Some(item) = items.get_mut(ii as usize) {
+                item.is_favorited = value;
+            }
+        }
+    }
+}
+
 /// Retrieve a slice of rows from the cache.
 /// 从缓存中检索行切片。
 /// Returns `None` if the cache is empty or the version doesn't match.
@@ -322,5 +344,27 @@ mod tests {
         assert_eq!(get_adjacent_item(&cache, 11, -1), Some(10));
         assert_eq!(get_adjacent_item(&cache, 10, -1), None); // before start
         assert_eq!(get_adjacent_item(&cache, 999, 1), None); // unknown id
+    }
+
+    #[test]
+    fn test_set_favorite_in_cache_targets_correct_items() {
+        let cache = new_layout_cache();
+        store_layout(&cache, sample_layout(), 240.0);
+
+        set_favorite_in_cache(&cache, &[11, 12], true);
+
+        let guard = cache.read().unwrap();
+        let data = guard.as_ref().unwrap();
+        match &data.rows[1] {
+            LayoutRow::Normal { items, .. } => {
+                assert!(!items[0].is_favorited, "id 10 should be untouched");
+                assert!(items[1].is_favorited, "id 11 should be favorited");
+            }
+            _ => panic!("expected normal row"),
+        }
+        match &data.rows[2] {
+            LayoutRow::Normal { items, .. } => assert!(items[0].is_favorited, "id 12 should be favorited"),
+            _ => panic!("expected normal row"),
+        }
     }
 }

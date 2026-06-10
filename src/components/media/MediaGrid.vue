@@ -539,7 +539,7 @@ function handleCardClick(id: number, event: MouseEvent) {
 
   // Normal mode OR normal click in selection mode: open detail
   // 普通模式 或 选择模式下的普通单击：打开详情
-  media.openDetailFromLayout(id)
+  media.openDetail(id, true)
 }
 
 /**
@@ -862,6 +862,19 @@ watch(() => ui.pendingScrollLabel, async (label) => {
 .media-grid__content {
   position: relative;
   width: 100%;
+  /* Clip the transformed render layer to this box (B1). In coordinate-translation
+     mode the buffer rows are transform-positioned slightly outside [0, spacerHeight];
+     without clipping they leak into the scroller's scrollable overflow, ballooning
+     scrollHeight past spacerHeight — which breaks the physical↔logical scroll mapping
+     (scrollbar jitter, jump-to-bottom, misalignment). Clipping pins scrollHeight to
+     spacerHeight. Visible rows always fall within [0, spacerHeight], so nothing on
+     screen is ever clipped; only off-viewport buffer rows are.
+     裁剪被 transform 定位的渲染层到本盒子（B1）。坐标平移模式下缓冲行会被定位到
+     [0, spacerHeight] 之外，不裁剪会泄漏进滚动容器的可滚动溢出区，使 scrollHeight
+     超过 spacerHeight，从而破坏物理↔逻辑映射（滚动条抖动、跳到底部、错位）。
+     裁剪后 scrollHeight 恒等于 spacerHeight；可视行始终落在 [0, spacerHeight] 内，
+     屏幕上不会被裁剪，仅裁剪视口外的缓冲行。 */
+  overflow: hidden;
 }
 
 .media-grid__loading {

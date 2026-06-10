@@ -78,6 +78,14 @@ export function useRequestQueue() {
         })
       })
       .finally(() => {
+        batch.forEach(id => {
+          inFlight.delete(id)
+          const cbs = resolvers.get(id)
+          if (cbs) {
+            cbs.forEach(cb => cb.reject(new Error('Batch finished without result')))
+            resolvers.delete(id)
+          }
+        })
         isFlushing = false
         scan.autoThumbInFlight = inFlight.size
         if (queue.value.length > 0) scheduleFlush()

@@ -3,7 +3,7 @@
 // AI store — 管理引擎状态、语义搜索状态和分析进度。
 
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useMediaStore } from './mediaStore'
 import { useUiStore } from './uiStore'
@@ -32,10 +32,16 @@ export const useAiStore = defineStore('ai', () => {
   const searchError = ref<string | null>(null)
   const previousGroupBy = ref<'date' | 'folder' | 'none'>('date')
 
-  // Auto-refresh interval handle
-  // 自动刷新间隔句柄
-  let _statusInterval: ReturnType<typeof setInterval> | null = null
-
+  // Auto-refresh using reactive watcher
+  // 使用响应式侦听器自动刷新
+  watch(() => status.value.isAnalyzing, (isAnalyzing, _, onCleanup) => {
+    if (isAnalyzing) {
+      const interval = setInterval(async () => {
+        await fetchStatus()
+      }, 2000)
+      onCleanup(() => clearInterval(interval))
+    }
+  })
   // ── Computed ──────────────────────────────────────────────────────────────
   const analyzeProgress = computed(() => {
     if (status.value.totalItems === 0) return 0
@@ -92,7 +98,6 @@ export const useAiStore = defineStore('ai', () => {
       // Embeddings are reset server-side — clear stale search results immediately
       // 服务端已重置嵌入向量，立即清除前端过时的搜索结果
       searchError.value = null
-      startStatusPolling()
     } catch (e) {
       console.error('[AI] Start analysis error | 启动分析错误:', e)
     }
@@ -103,7 +108,6 @@ export const useAiStore = defineStore('ai', () => {
     try {
       await invoke('stop_ai_analysis')
       status.value.isAnalyzing = false
-      stopStatusPolling()
       await fetchStatus()
     } catch (e) {
       console.error('[AI] Stop analysis error | 停止分析错误:', e)
@@ -219,23 +223,6 @@ export const useAiStore = defineStore('ai', () => {
     useMediaStore().invalidateLayout()
   }
 
-  /** Poll AI status every 2 seconds during analysis | 分析期间每 2 秒轮询 AI 状态 */
-  function startStatusPolling() {
-    stopStatusPolling()
-    _statusInterval = setInterval(async () => {
-      await fetchStatus()
-      if (!status.value.isAnalyzing) {
-        stopStatusPolling()
-      }
-    }, 2000)
-  }
-
-  function stopStatusPolling() {
-    if (_statusInterval !== null) {
-      clearInterval(_statusInterval)
-      _statusInterval = null
-    }
-  }
 
   /** List available AI models | 列出可用的 AI 模型 */
   async function listAiModels(): Promise<string[]> {
@@ -287,8 +274,6 @@ export const useAiStore = defineStore('ai', () => {
     setNormalSearchQueryInMixedMode,
     toggleSearchMode,
     setSearchMode,
-    startStatusPolling,
-    stopStatusPolling,
     listAiModels,
     importAiModel,
     reloadAiEngine,

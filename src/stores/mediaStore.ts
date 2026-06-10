@@ -107,6 +107,10 @@ export const useMediaStore = defineStore('media', () => {
     // Drop stale viewport metadata — the visible window will re-fetch what it needs.
     // 丢弃过时的可视区元数据 —— 可视窗口会按需重新拉取。
     if (viewportMeta.value.size > 0) viewportMeta.value = new Map()
+    if (metaTimer) {
+      clearTimeout(metaTimer)
+      metaTimer = null
+    }
     pendingMetaIds.clear()
     const ui = useUiStore()
     const needsMeta = ui.thumbInfoElements.some(el => ['geo', 'camera', 'params'].includes(el))
@@ -167,12 +171,6 @@ export const useMediaStore = defineStore('media', () => {
     }
   }
 
-  async function openDetailFromLayout(id: number) {
-    navContext.value = null
-    detailItem.value = await invoke<MediaDetail>(IPC.GET_MEDIA_DETAIL, { id })
-    isDetailOpen.value = true
-  }
-
   async function openDetailFromSearch(id: number, resultIds: number[]) {
     navContext.value = {
       type: 'search',
@@ -183,7 +181,10 @@ export const useMediaStore = defineStore('media', () => {
     isDetailOpen.value = true
   }
 
-  async function openDetail(id: number) {
+  async function openDetail(id: number, fromLayout = false) {
+    if (fromLayout) {
+      navContext.value = null
+    }
     detailItem.value = await invoke<MediaDetail>(IPC.GET_MEDIA_DETAIL, { id })
     isDetailOpen.value = true
   }
@@ -264,7 +265,7 @@ export const useMediaStore = defineStore('media', () => {
     detailItem, isDetailOpen, navContext,
     stats, viewportMeta,
     totalItems, viewTotalItems, totalHeight, totalRows, layoutVersion,
-    computeLayout, fetchRows, fetchRowsByY, ensureMeta, openDetail, openDetailFromLayout, openDetailFromSearch, closeDetail, navigateDetail,
+    computeLayout, fetchRows, fetchRowsByY, ensureMeta, openDetail, openDetailFromSearch, closeDetail, navigateDetail,
     loadStats, toggleFavorite, setRating, invalidateLayout, consumeLayoutDirty,
   }
 })

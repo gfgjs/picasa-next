@@ -103,7 +103,7 @@ export function useJustifiedLayout(containerWidthRef: () => number) {
       () => ai.similarityThreshold,
     ],
     () => compute(),
-    { deep: true }
+    { flush: 'post' }
   )
 
   onBeforeUnmount(() => {

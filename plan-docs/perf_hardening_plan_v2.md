@@ -20,7 +20,7 @@
 | D1 `panic=abort`→`unwind` + 解码 `catch_unwind` | ✅ 已完成 | cargo check 通过 |
 | D2 退出前 `wal_checkpoint(TRUNCATE)` | ✅ 已完成 | cargo check 通过 |
 | E2 合并 3×`get_summary` | ✅ 已完成（随 A3） | cargo check 通过 |
-| B1 滚动坐标平移 | ⚠️ 已实现，平移模式有滚动错位 bug（已搁置） | vue-tsc 通过 |
+| B1 滚动坐标平移 | 🔧 已实现 + 已尝试修复溢出泄漏 bug（待运行时验证） | vue-tsc 通过 |
 | C1 embedding 常驻 f16 + rayon | ✅ 已完成 | cargo check 通过 |
 | D3 收藏/删除 O(1) 缓存同步 | ✅ 已完成 | cargo check + 3 单元测试通过 |
 | E1 安全收敛、README/architecture_notes | ✅ 已完成（asset scope 待运行时验证） | cargo check 通过 |
@@ -29,7 +29,9 @@
 >
 > **B1 实现要点**：`useVirtualScroll` 内置物理↔逻辑线性映射；物理占位封顶 `SAFE_MAX=10,000,000`；行渲染在一个"渲染层"中，层 transform **命令式**（直接写 `style.transform`，不触发每帧 Vue 重渲染）把可视窗口钉到视口；逐行偏移锚定到窗口顶部以保证 4000 万 px 尺度下的精度。普通模式（≤25 万张）δ=0，行为与改造前完全一致。所有"逻辑坐标"入口（`scrollToY`/`scrollToLabel`/活动分隔符判定）均经映射转换。
 >
-> **B1 已知 bug（已搁置）**：将 `SAFE_MAX` 调小（10000）实测平移模式滚动错位 —— 滚动条忽长忽短跳动、内容错位、直接跳到底部。普通模式（`SAFE_MAX=10M`，<25 万项不激活）不受影响。待修：怀疑是 native 惯性滚动与每帧 `syncTransform` 重写 transform 的反馈环 / 比例映射在小 `physMax` 下放大误差所致。其它已知点：平移模式滚动条粒度变粗（技术固有）；文件夹分组 sticky 头本就因绝对定位近乎失效，无新增回归。
+> **B1 bug 根因 + 修复（待运行时验证）**：根因 —— 平移模式下缓冲行被 transform 定位到 `[0, spacerHeight]` 之外（如底部附近 ~11200 > 10000），而行是 `.media-grid__content`（无裁剪）的绝对定位后代，其 transform 后位置**泄漏进滚动容器的可滚动溢出区**，使 `scrollHeight` 超过 `spacerHeight` → `scrollTop` 超出映射假设的 `physMax` → 失控（滚动条忽长忽短、跳到底部、错位）。普通模式行落在 `spacerHeight` 内故不触发。**修复**：给 `.media-grid__content` 加 `overflow: hidden` 裁剪渲染层，使 `scrollHeight` 恒等于 `spacerHeight`；可视行始终在 `[0, spacerHeight]` 内不被裁剪，仅裁剪视口外缓冲行。其它固有点：平移模式滚动条粒度随比例变粗（`SAFE_MAX` 越小越粗，10M 下百万项 ~4x 比例较平滑）；文件夹分组 sticky 头本就近乎失效，无新增回归。
+>
+> **验证方法**：临时将 `SAFE_MAX` 设为略小于当前库总高度的值（使比例 ~2–4x，贴近百万级真实情形），`tauri dev` 后确认：滚动条尺寸稳定、能顺滑滚到真正底部（最后一批照片）、无跳底、行不重叠/不错位、顶/底位置映射正确。`SAFE_MAX=10000` 也应正确（仅因比例极大而很粗，属预期）。
 >
 > **C1 实现要点**：`AppState.ai_embedding_cache: RwLock<Option<EmbeddingCache>>` 常驻 f16 连续缓冲；首次搜索从读连接池一次性加载，rayon 跨全部行并行点积；写锁仅在持久化结果时短暂持有（打分阶段不再阻塞 DB 写）。嵌入向量每批写入/重置时 `invalidate_embedding_cache()`。百万项常驻约 1GB（若超预算再上 C2 ANN）。
 >

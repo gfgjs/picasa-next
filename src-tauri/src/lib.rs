@@ -269,7 +269,10 @@ pub fn run() {
 
             // ── Background Tasks ──────────────────────────────────────────
             // ── 后台任务 ──────────────────────────────────────────
-            tauri::async_runtime::spawn(async move {
+            let handles_pool: Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+            app.manage(handles_pool.clone());
+
+            let h1 = tauri::async_runtime::spawn(async move {
                 // Delay first run by 3 minutes so it doesn't block cold start | 延迟 3 分钟执行，避免影响冷启动
                 tokio::time::sleep(std::time::Duration::from_secs(3 * 60)).await;
                 loop {
@@ -285,13 +288,15 @@ pub fn run() {
                     tokio::time::sleep(std::time::Duration::from_secs(24 * 3600)).await;
                 }
             });
+            handles_pool.lock().unwrap().push(h1);
 
             let cache_dir_clone = cache_dir_for_task;
-            tauri::async_runtime::spawn(async move {
+            let h2 = tauri::async_runtime::spawn(async move {
                 // Delay cache enforcement by 1 minute | 延迟 1 分钟执行缓存清理
                 tokio::time::sleep(std::time::Duration::from_secs(60)).await;
                 crate::thumbnail::cache::enforce_cache_limit(&cache_dir_clone, thumb_cache_max_mb);
             });
+            handles_pool.lock().unwrap().push(h2);
 
             // Force-hide the main window regardless of what tauri-plugin-window-state
             // may have restored from the previous session (it saves visible:true after
@@ -465,6 +470,27 @@ pub fn run() {
                             }
                         }
                     }
+
+                    if let Some(handles_pool) = app_handle.try_state::<Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>>() {
+                        if let Ok(mut lock) = handles_pool.lock() {
+                            let handles: Vec<_> = lock.drain(..).collect();
+                            for h in &handles {
+                                h.abort();
+                            }
+                            let _ = tauri::async_runtime::block_on(async move {
+                                let _ = tokio::time::timeout(
+                                    std::time::Duration::from_secs(3),
+                                    async {
+                                        for h in handles {
+                                            let _ = h.await;
+                                        }
+                                    }
+                                ).await;
+                            });
+                            info!("Background tasks gracefully stopped | 后台任务已优雅停止");
+                        }
+                    }
+
                     std::process::exit(0);
                 }
                 _ => {}

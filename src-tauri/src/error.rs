@@ -1,5 +1,4 @@
 // src-tauri/src/error.rs
-// src-tauri/src/error.rs
 //! Unified application error type.
 //! 统一的应用程序错误类型。
 //! All variants are serialisable so they can be forwarded to the frontend via IPC.
@@ -8,29 +7,28 @@
 use serde::Serialize;
 use thiserror::Error;
 
-#[derive(Debug, Error, Serialize)]
-#[serde(tag = "code", content = "message")]
+#[derive(Debug, Error)]
 pub enum AppError {
     #[error("IO error: {0}")]
-    Io(String),
+    Io(#[from] std::io::Error),
 
     #[error("Database error: {0}")]
-    Db(String),
+    Db(#[from] rusqlite::Error),
 
     #[error("Connection pool error: {0}")]
-    Pool(String),
+    Pool(#[from] r2d2::Error),
 
     #[error("EXIF parse error: {0}")]
-    Exif(String),
+    Exif(#[from] exif::Error),
 
     #[error("XMP parse error: {0}")]
-    Xmp(String),
+    Xmp(#[from] quick_xml::Error),
 
     #[error("Unsupported format: {0}")]
     UnsupportedFormat(String),
 
     #[error("Image engine error: {0}")]
-    Engine(String),
+    Engine(#[from] image::ImageError),
 
     #[error("Path resolution error: {0}")]
     PathResolution(String),
@@ -57,7 +55,7 @@ pub enum AppError {
     Cancelled,
 
     #[error("AI inference error: {0}")]
-    Ai(String),
+    Ai(#[from] ort::Error),
 
     #[error("AI model not loaded: {0}")]
     AiModelNotLoaded(String),
@@ -72,51 +70,46 @@ pub enum AppError {
     CopyFile(String),
 }
 
-// ── Conversions ────────────────────────────────────────────────────────────
-// ── 转换 ────────────────────────────────────────────────────────────
+impl Serialize for AppError {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        // 将底层真实错误（包含 Stack Trace / Source）打印在后端日志中
+        tracing::error!("AppError occurred (to frontend): {:?}", self);
 
-impl From<std::io::Error> for AppError {
-    fn from(e: std::io::Error) -> Self {
-        AppError::Io(e.to_string())
-    }
-}
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("AppError", 2)?;
+        
+        let (code, msg) = match self {
+            AppError::Io(_) => ("Io", "文件读写异常 | IO error"),
+            AppError::Db(_) => ("Db", "数据库访问异常 | Database error"),
+            AppError::Pool(_) => ("Pool", "数据库连接池异常 | Connection pool error"),
+            AppError::Exif(_) => ("Exif", "照片元数据解析异常 | EXIF parse error"),
+            AppError::Xmp(_) => ("Xmp", "XMP 数据解析异常 | XMP parse error"),
+            AppError::UnsupportedFormat(m) => ("UnsupportedFormat", m.as_str()),
+            AppError::Engine(_) => ("Engine", "图像处理引擎异常 | Image engine error"),
+            AppError::PathResolution(m) => ("PathResolution", m.as_str()),
+            AppError::FFmpeg(m) => ("FFmpeg", m.as_str()),
+            AppError::AudioMetadata(m) => ("AudioMetadata", m.as_str()),
+            AppError::DocumentRender(m) => ("DocumentRender", m.as_str()),
+            AppError::LayoutNotReady => ("LayoutNotReady", "布局未就绪，请先计算布局 | Layout cache not ready"),
+            AppError::ScanRootNotFound(_) => ("ScanRootNotFound", "未找到扫描目录 | Scan root not found"),
+            AppError::MediaNotFound(_) => ("MediaNotFound", "未找到媒体文件 | Media item not found"),
+            AppError::Cancelled => ("Cancelled", "操作已取消 | Operation cancelled"),
+            AppError::Ai(_) => ("Ai", "AI 推理异常 | AI inference error"),
+            AppError::AiModelNotLoaded(m) => ("AiModelNotLoaded", m.as_str()),
+            AppError::CreateFolder(m) => ("CreateFolder", m.as_str()),
+            AppError::MoveFile(m) => ("MoveFile", m.as_str()),
+            AppError::CopyFile(m) => ("CopyFile", m.as_str()),
+        };
 
-impl From<rusqlite::Error> for AppError {
-    fn from(e: rusqlite::Error) -> Self {
-        AppError::Db(e.to_string())
-    }
-}
-
-impl From<r2d2::Error> for AppError {
-    fn from(e: r2d2::Error) -> Self {
-        AppError::Pool(e.to_string())
-    }
-}
-
-impl From<image::ImageError> for AppError {
-    fn from(e: image::ImageError) -> Self {
-        AppError::Engine(e.to_string())
-    }
-}
-
-impl From<exif::Error> for AppError {
-    fn from(e: exif::Error) -> Self {
-        AppError::Exif(e.to_string())
-    }
-}
-
-impl From<quick_xml::Error> for AppError {
-    fn from(e: quick_xml::Error) -> Self {
-        AppError::Xmp(e.to_string())
+        state.serialize_field("code", code)?;
+        state.serialize_field("message", msg)?;
+        state.end()
     }
 }
 
 /// Convenience alias used throughout the codebase.
 /// 整个代码库中使用的便捷别名。
 pub type Result<T> = std::result::Result<T, AppError>;
-
-impl From<ort::Error> for AppError {
-    fn from(e: ort::Error) -> Self {
-        AppError::Ai(e.to_string())
-    }
-}

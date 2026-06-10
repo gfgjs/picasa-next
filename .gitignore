@@ -1,3 +1,5 @@
+whale-windows-amd64.exe
+codewhale-tui-windows-x64.exe
 models
 # Logs
 logs
@@ -27,3 +29,7 @@ dist-ssr
 # Python environments
 venv/
 Chinese-CLIP/
+
+# Temporary models and executables
+temp_*.onnx
+codewhale-tui-*.exe

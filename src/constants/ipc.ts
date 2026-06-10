@@ -23,6 +23,7 @@ export const IPC = {
   // ── Media ─────────────────────────────────────────────────────────────
   // ── 媒体 ─────────────────────────────────────────────────────────────
   GET_MEDIA_DETAIL:          'get_media_detail',
+  GET_META_FOR_VIEWPORT:     'get_meta_for_viewport',
   GET_COMPANION_VIDEO_URL:   'get_companion_video_url',
   TOGGLE_FAVORITE:           'toggle_favorite',
   SET_RATING:                'set_rating',

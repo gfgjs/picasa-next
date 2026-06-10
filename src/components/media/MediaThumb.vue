@@ -89,6 +89,7 @@ import { thumbhashToAverageColor } from '../../utils/thumbhash'
 import { formatDuration, formatFileSize } from '../../utils/format'
 
 import { useUiStore } from '../../stores/uiStore'
+import { useMediaStore } from '../../stores/mediaStore'
 
 interface Props {
   id:              number
@@ -131,6 +132,13 @@ const emit = defineEmits<{
 }>()
 
 const ui = useUiStore()
+const media = useMediaStore()
+
+// Heavy metadata (fileName / dirPath / EXIF / GPS) is no longer carried on the
+// layout row item; it is fetched lazily for the visible viewport into the store.
+// 重型元数据（fileName/dirPath/EXIF/GPS）不再随布局行项携带；
+// 改为按可视区懒加载到 store 中。
+const meta = computed(() => (props.id != null ? media.viewportMeta.get(props.id) : undefined))
 
 const urlParams = new URLSearchParams(window.location.search)
 const cacheBuster = urlParams.get('clear') ? `?t=${urlParams.get('clear')}` : ''
@@ -150,10 +158,11 @@ const thumbInfoLines = computed(() => {
   if (!ui.showThumbInfo || !props.item) return []
   const lines: string[] = []
   const elements = ui.thumbInfoElements
-  const it = props.item
+  const it = props.item        // cheap, resident fields (date / resolution)
+  const m  = meta.value        // heavy fields, lazily fetched per viewport
 
-  if (elements.includes('filename') && it.fileName) {
-    lines.push(it.fileName)
+  if (elements.includes('filename') && m?.fileName) {
+    lines.push(m.fileName)
   }
   if (elements.includes('date') && it.sortDatetime) {
     lines.push(new Date(it.sortDatetime * 1000).toLocaleString())
@@ -161,23 +170,23 @@ const thumbInfoLines = computed(() => {
   if (elements.includes('resolution') && it.originalWidth && it.originalHeight) {
     lines.push(`${it.originalWidth} × ${it.originalHeight}`)
   }
-  if (elements.includes('path') && it.dirPath) {
-    lines.push(it.dirPath)
+  if (elements.includes('path') && m?.dirPath) {
+    lines.push(m.dirPath)
   }
-  if (elements.includes('geo') && it.gpsLat != null && it.gpsLng != null) {
-    lines.push(`${it.gpsLat.toFixed(4)}, ${it.gpsLng.toFixed(4)}`)
+  if (elements.includes('geo') && m?.gpsLat != null && m?.gpsLng != null) {
+    lines.push(`${m.gpsLat.toFixed(4)}, ${m.gpsLng.toFixed(4)}`)
   }
-  if (elements.includes('camera') && (it.exifMake || it.exifModel)) {
-    const make = it.exifMake || ''
-    const model = it.exifModel || ''
+  if (elements.includes('camera') && (m?.exifMake || m?.exifModel)) {
+    const make = m?.exifMake || ''
+    const model = m?.exifModel || ''
     lines.push(`${make} ${model}`.trim())
   }
-  if (elements.includes('params')) {
+  if (elements.includes('params') && m) {
     const params = []
-    if (it.exifFocalLength) params.push(`${it.exifFocalLength}mm`)
-    if (it.exifAperture) params.push(`f/${it.exifAperture}`)
-    if (it.exifShutter) params.push(`${it.exifShutter}s`)
-    if (it.exifIso) params.push(`ISO${it.exifIso}`)
+    if (m.exifFocalLength) params.push(`${m.exifFocalLength}mm`)
+    if (m.exifAperture) params.push(`f/${m.exifAperture}`)
+    if (m.exifShutter) params.push(`${m.exifShutter}s`)
+    if (m.exifIso) params.push(`ISO${m.exifIso}`)
     if (params.length > 0) lines.push(params.join(' '))
   }
 

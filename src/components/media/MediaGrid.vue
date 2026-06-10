@@ -27,8 +27,20 @@
     <div 
       v-if="media.totalRows > 0"
       class="media-grid__content"
-      :style="{ height: media.totalHeight + 'px' }"
+      :style="{ height: spacerHeight + 'px', position: 'relative' }"
     >
+      <!-- Render layer: in translated mode (>SAFE_MAX) its transform pins the -->
+      <!-- visible window to the viewport; in normal mode it is a static offset. -->
+      <!-- 渲染层：平移模式（>SAFE_MAX）下其 transform 把可视窗口钉到视口；普通模式下为静态偏移。 -->
+      <div
+        ref="layerRef"
+        class="media-grid__layer"
+        :style="{
+          position: 'absolute',
+          top: 0, left: 0, right: 0,
+          willChange: 'transform'
+        }"
+      >
       <div
         v-for="(row, ri) in visibleRows"
         :key="row.rowType === 'separator' ? `sep-${row.y}` : `row-${row.y}`"
@@ -36,7 +48,7 @@
         :style="{
           position: 'absolute',
           top: 0,
-          transform: `translate3d(0, ${(row as any).y}px, 0)`,
+          transform: `translate3d(0, ${(row as any).y - renderAnchor}px, 0)`,
           willChange: 'transform',
           left: 0,
           right: 0,
@@ -93,6 +105,7 @@
           </div>
         </template>
       </div> <!-- Close v-for row -->
+      </div> <!-- Close render layer -->
     </div> <!-- Close media-grid-content -->
   </div> <!-- Close media-grid -->
 </div> <!-- Close media-grid-wrapper -->
@@ -320,7 +333,9 @@ async function onContextMenu(e: MouseEvent, id: number) {
 
 function scrollToY(y: number) {
   if (gridRef.value) {
-    gridRef.value.scrollTo({ top: y, behavior: 'smooth' })
+    // `y` is a LOGICAL coordinate — map to physical for the scroll container.
+    // `y` 是逻辑坐标 — 映射到物理坐标供滚动容器使用。
+    gridRef.value.scrollTo({ top: logicalToPhysical(y), behavior: 'smooth' })
   }
 }
 
@@ -331,13 +346,17 @@ function getViewKey() {
   return ui.activeDirectoryId ? `dir-${ui.activeDirectoryId}` : `album-${ui.activeSmartAlbum}`
 }
 
+const layerRef = ref<HTMLElement | null>(null)
+
 const {
   visibleRows, paddingTop, paddingBottom, updateVisible, onScroll,
+  spacerHeight, renderAnchor, logicalScrollTop, logicalToPhysical,
 } = useVirtualScroll({
   totalHeight:   () => media.totalHeight,
   totalRows:     () => media.totalRows,
   fetchRowsByY:  (topY, bottomY) => media.fetchRowsByY(topY, bottomY),
   containerRef:  () => gridRef.value,
+  layerRef:      () => layerRef.value,
 })
 
 function onGridScroll(e: Event) {
@@ -347,7 +366,10 @@ function onGridScroll(e: Event) {
   }
   
   if (gridRef.value) {
-    const scrollTop = gridRef.value.scrollTop
+    // separator y values are LOGICAL — compare against logicalScrollTop, not the
+    // physical scrollTop (they diverge once coordinate translation is active).
+    // 分隔符 y 是逻辑坐标 — 与 logicalScrollTop 比较，而非物理 scrollTop（平移激活后二者不同）。
+    const scrollTop = logicalScrollTop.value
     if (media.layoutSummary?.separators) {
       let activeSep = null
       for (const sep of media.layoutSummary.separators) {
@@ -747,14 +769,36 @@ watch(
   }
 )
 
+// When the info overlay is on, lazily fetch heavy metadata (EXIF/GPS/name/path)
+// for the visible items only — these fields were stripped from the resident
+// layout cache (A1) and are served on demand via get_meta_for_viewport.
+// 当信息浮层开启时，仅为可视项懒加载重型元数据（EXIF/GPS/名称/路径）——
+// 这些字段已从常驻布局缓存剥离（A1），经 get_meta_for_viewport 按需提供。
+watch(
+  [visibleRows, () => ui.showThumbInfo],
+  () => {
+    if (!ui.showThumbInfo) return
+    const ids: number[] = []
+    for (const row of visibleRows.value) {
+      if (row.rowType === 'normal') {
+        for (const it of row.items) ids.push(it.id)
+      }
+    }
+    if (ids.length > 0) media.ensureMeta(ids)
+  },
+  { immediate: true }
+)
+
 // ── Pending scroll (e.g. from sidebar folder click) ────────────────────────
 async function scrollToLabel(label: string) {
   try {
     const y = await invoke<number | null>(IPC.GET_SEPARATOR_Y_BY_LABEL, { label })
     if (y !== null && gridRef.value) {
-      const targetY = Math.max(0, y)
-      gridRef.value.scrollTo({ top: targetY, behavior: 'smooth' })
-      scrollCache.set(getViewKey(), targetY)
+      // `y` is LOGICAL; scrollCache stores PHYSICAL scrollTop → map through.
+      // `y` 是逻辑坐标；scrollCache 存物理 scrollTop → 需映射。
+      const physY = logicalToPhysical(Math.max(0, y))
+      gridRef.value.scrollTo({ top: physY, behavior: 'smooth' })
+      scrollCache.set(getViewKey(), physY)
     }
   } catch (e) {
     console.error('Failed to get separator y:', e)

@@ -353,6 +353,7 @@ pub fn run() {
             // media
             // media
             ipc::media_commands::get_media_detail,
+            ipc::media_commands::get_meta_for_viewport,
             ipc::media_commands::get_adjacent_media,
             ipc::media_commands::get_companion_video_url,
             ipc::media_commands::toggle_favorite,
@@ -426,14 +427,21 @@ pub fn run() {
         })
         .build(tauri::generate_context!())
         .expect("Error while building Tauri application")
-        .run(|_app_handle, event| {
+        .run(|app_handle, event| {
             match event {
-                tauri::RunEvent::ExitRequested { .. } => {
-                    info!("Application exit requested, forcing process termination.");
-                    std::process::exit(0);
-                }
-                tauri::RunEvent::Exit => {
-                    info!("Application exiting, forcing process termination.");
+                tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit => {
+                    info!("Application exiting — checkpointing WAL before termination | 退出前检查点 WAL");
+                    // Truncate the WAL so it doesn't grow unbounded across sessions.
+                    // `process::exit` skips Drop, so we must checkpoint explicitly here.
+                    // 截断 WAL，避免跨会话无限增长。process::exit 会跳过 Drop，
+                    // 因此必须在此显式检查点。
+                    if let Some(state) = app_handle.try_state::<Arc<AppState>>() {
+                        if let Ok(conn) = state.db_writer.lock() {
+                            if let Err(e) = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);") {
+                                tracing::warn!("WAL checkpoint on exit failed | 退出时 WAL 检查点失败: {}", e);
+                            }
+                        }
+                    }
                     std::process::exit(0);
                 }
                 _ => {}

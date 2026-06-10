@@ -20,6 +20,20 @@ pub async fn get_media_detail(id: i64, state: State<'_, Arc<AppState>>) -> Resul
     q::get_media_detail(&pool, id)
 }
 
+/// Fetch heavy per-item metadata (file name, dir path, EXIF, GPS) for the visible
+/// viewport only — stripped from the resident layout cache for million-item memory.
+///
+/// 仅为可视区批量获取重型逐项元数据（文件名、目录路径、EXIF、GPS）——
+/// 这些字段已从常驻布局缓存剥离，以支撑百万项内存目标。
+#[tauri::command]
+pub async fn get_meta_for_viewport(
+    ids: Vec<i64>,
+    state: State<'_, Arc<AppState>>,
+) -> Result<Vec<crate::db::models::MediaMeta>> {
+    let pool = state.db_read_pool.get().map_err(AppError::from)?;
+    q::get_media_meta_batch(&pool, &ids)
+}
+
 /// Get the adjacent media item detail.
 /// 获取相邻的媒体项详细信息。
 #[tauri::command]

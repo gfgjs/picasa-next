@@ -32,6 +32,26 @@ pub fn snap_to_tier(size: u32) -> u32 {
         .unwrap_or(240)
 }
 
+/// Run a decode/encode step under `catch_unwind` so a panic in a third-party
+/// image codec (corrupt / malformed file) fails just that one item instead of
+/// aborting the whole process. Requires `panic = "unwind"` (see Cargo.toml).
+///
+/// `AssertUnwindSafe` is sound here: a panic mid-decode leaves no shared mutable
+/// state inconsistent — we only lose the in-flight image and report it as failed.
+///
+/// 在 `catch_unwind` 下运行解码/编码步骤，使第三方图像编解码器在处理
+/// 损坏/畸形文件时的 panic 仅令该项失败，而非中止整个进程。
+/// 需要 `panic = "unwind"`（见 Cargo.toml）。
+fn panic_guard<T>(label: &str, f: impl FnOnce() -> Result<T>) -> Result<T> {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+        Ok(r) => r,
+        Err(_) => {
+            warn!("[ThumbGen] PANIC caught in {label} — item failed, process kept alive | 已捕获 panic，单项失败但进程存活");
+            Err(AppError::Engine(format!("panic during {label}")))
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct ThumbConfig {
     pub cache_dir:       std::path::PathBuf,
@@ -89,6 +109,15 @@ pub fn process_deferred_cpu(
     arena: &EngineArena,
     config: &ThumbConfig,
 ) -> Result<ThumbResult> {
+    panic_guard("process_deferred_cpu", || process_deferred_cpu_inner(item, abs_path, arena, config))
+}
+
+fn process_deferred_cpu_inner(
+    item: &crate::db::models::MediaItem,
+    abs_path: &Path,
+    arena: &EngineArena,
+    config: &ThumbConfig,
+) -> Result<ThumbResult> {
     let mut snapped_config = config.clone();
     snapped_config.size = snap_to_tier(config.size);
     let config = &snapped_config;
@@ -103,6 +132,15 @@ pub fn process_deferred_cpu(
 }
 
 pub fn decode_media_step(
+    item: &crate::db::models::MediaItem,
+    abs_path: &Path,
+    arena: &EngineArena,
+    config: &ThumbConfig,
+) -> Result<DecodeResult> {
+    panic_guard("decode_media_step", || decode_media_step_inner(item, abs_path, arena, config))
+}
+
+fn decode_media_step_inner(
     item: &crate::db::models::MediaItem,
     abs_path: &Path,
     arena: &EngineArena,
@@ -264,6 +302,15 @@ fn try_cpu_decode(
 }
 
 pub fn encode_media_step(
+    item_id: i64,
+    cache_key: i64,
+    decoded: crate::engine::traits::DecodedImage,
+    config: &ThumbConfig,
+) -> Result<ThumbResult> {
+    panic_guard("encode_media_step", move || encode_media_step_inner(item_id, cache_key, decoded, config))
+}
+
+fn encode_media_step_inner(
     item_id: i64,
     cache_key: i64,
     mut decoded: crate::engine::traits::DecodedImage,

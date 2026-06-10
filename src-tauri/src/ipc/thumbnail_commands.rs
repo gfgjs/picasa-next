@@ -82,20 +82,8 @@ pub async fn batch_request_thumbnails(
     // 将快速路径结果同步到 layout_cache，使 fetchRowsByY 返回
     // 最新的 thumb_status（避免先前生成后仍返回陈旧的 status=0）。
     if !fast_results.is_empty() {
-        let mut cache_guard = state.layout_cache.write().unwrap();
-        if let Some(layout) = cache_guard.as_mut() {
-            for row in layout.rows.iter_mut() {
-                if let crate::layout::justified::LayoutRow::Normal { items, .. } = row {
-                    for item in items.iter_mut() {
-                        if let Some(r) = fast_results.get(&item.id) {
-                            item.thumb_status = r.thumb_status;
-                            item.thumb_path = r.thumb_path.clone();
-                            item.thumbhash = r.thumbhash.clone();
-                        }
-                    }
-                }
-            }
-        }
+        let fast_vec: Vec<ThumbResult> = fast_results.values().cloned().collect();
+        crate::layout::cache::apply_thumb_results(&state.layout_cache, &fast_vec);
     }
 
     info!("batch_request_thumbnails: total={} needs_gen={} | 批量请求缩略图: 总计={} 需要生成={}", item_ids.len(), needs_gen.len(), item_ids.len(), needs_gen.len());
@@ -215,20 +203,7 @@ pub async fn batch_request_thumbnails(
                     }
                     // Sync results into layout_cache so fetchRowsByY returns fresh data
                     // 同步结果到 layout_cache，使 fetchRowsByY 返回最新数据
-                    let mut cache_guard = state_arc.layout_cache.write().unwrap();
-                    if let Some(layout) = cache_guard.as_mut() {
-                        for row in layout.rows.iter_mut() {
-                            if let crate::layout::justified::LayoutRow::Normal { items, .. } = row {
-                                for item in items.iter_mut() {
-                                    if let Some(r) = results.iter().find(|res| res.item_id == item.id) {
-                                        item.thumb_status = r.thumb_status;
-                                        item.thumb_path = r.thumb_path.clone();
-                                        item.thumbhash = r.thumbhash.clone();
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    crate::layout::cache::apply_thumb_results(&state_arc.layout_cache, &results);
                 }
                 info!("batch_request_thumbnails: finished parallel block | 批量请求生成完成 (Rayon Scheme 1)");
                 return;
@@ -341,20 +316,7 @@ pub async fn batch_request_thumbnails(
                 }
                 // Sync results into layout_cache so fetchRowsByY returns fresh data
                 // 同步结果到 layout_cache，使 fetchRowsByY 返回最新数据
-                let mut cache_guard = state_arc.layout_cache.write().unwrap();
-                if let Some(layout) = cache_guard.as_mut() {
-                    for row in layout.rows.iter_mut() {
-                        if let crate::layout::justified::LayoutRow::Normal { items, .. } = row {
-                            for item in items.iter_mut() {
-                                if let Some(r) = results.iter().find(|res| res.item_id == item.id) {
-                                    item.thumb_status = r.thumb_status;
-                                    item.thumb_path = r.thumb_path.clone();
-                                    item.thumbhash = r.thumbhash.clone();
-                                }
-                            }
-                        }
-                    }
-                }
+                crate::layout::cache::apply_thumb_results(&state_arc.layout_cache, &results);
             }
 
             info!("batch_request_thumbnails: finished pipeline | 批量请求生成完成 (Pipeline Scheme 2)");
@@ -511,20 +473,7 @@ pub async fn start_full_thumbnail_generation(
                 }
 
                 if !successful_results.is_empty() {
-                    let mut cache_guard = state_arc.layout_cache.write().unwrap();
-                    if let Some(layout) = cache_guard.as_mut() {
-                        for row in layout.rows.iter_mut() {
-                            if let crate::layout::justified::LayoutRow::Normal { items, .. } = row {
-                                for item in items.iter_mut() {
-                                    if let Some(res) = successful_results.iter().find(|r| r.item_id == item.id) {
-                                        item.thumb_status = res.thumb_status;
-                                        item.thumb_path = res.thumb_path.clone();
-                                        item.thumbhash = res.thumbhash.clone();
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    crate::layout::cache::apply_thumb_results(&state_arc.layout_cache, &successful_results);
                 }
 
                 let current_gen = generated_count.load(std::sync::atomic::Ordering::Relaxed);
@@ -674,20 +623,7 @@ pub async fn start_full_thumbnail_generation(
                         }
                     }
 
-                    let mut cache_guard = state_arc.layout_cache.write().unwrap();
-                    if let Some(layout) = cache_guard.as_mut() {
-                        for row in layout.rows.iter_mut() {
-                            if let crate::layout::justified::LayoutRow::Normal { items, .. } = row {
-                                for item in items.iter_mut() {
-                                    if let Some(r) = successful_results.iter().find(|res| res.item_id == item.id) {
-                                        item.thumb_status = r.thumb_status;
-                                        item.thumb_path = r.thumb_path.clone();
-                                        item.thumbhash = r.thumbhash.clone();
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    crate::layout::cache::apply_thumb_results(&state_arc.layout_cache, &successful_results);
                     successful_results.clear();
                 }
             }
@@ -702,20 +638,7 @@ pub async fn start_full_thumbnail_generation(
                         let _ = tx.commit();
                     }
                 }
-                let mut cache_guard = state_arc.layout_cache.write().unwrap();
-                if let Some(layout) = cache_guard.as_mut() {
-                    for row in layout.rows.iter_mut() {
-                        if let crate::layout::justified::LayoutRow::Normal { items, .. } = row {
-                            for item in items.iter_mut() {
-                                if let Some(r) = successful_results.iter().find(|res| res.item_id == item.id) {
-                                    item.thumb_status = r.thumb_status;
-                                    item.thumb_path = r.thumb_path.clone();
-                                    item.thumbhash = r.thumbhash.clone();
-                                }
-                            }
-                        }
-                    }
-                }
+                crate::layout::cache::apply_thumb_results(&state_arc.layout_cache, &successful_results);
             }
 
             // Phase 2: CPU processing for deferred items

@@ -100,7 +100,12 @@ opt-level = 1
 opt-level = 3
 
 [profile.release]
-panic    = "abort"
+# `unwind` (the default) is required so catch_unwind can contain panics from
+# third-party image codecs on corrupt/malformed files — see thumbnail/generator.rs.
+# With `panic = "abort"` a single bad image would abort the whole process.
+# 必须用默认的 `unwind`，使 catch_unwind 能拦截第三方图像编解码器在
+# 损坏/畸形文件上的 panic（见 thumbnail/generator.rs）；
+# `panic = "abort"` 下单张坏图会中止整个进程。
 # Use multiple codegen units for faster parallel builds (default is 16)
 # codegen-units = 1
 # Use thin LTO instead of fat LTO (huge speedup in link time)

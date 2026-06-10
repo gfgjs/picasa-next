@@ -5,7 +5,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import type { LayoutRow, LayoutSummary } from '../types/layout'
+import type { LayoutRow, LayoutSummary, MediaMeta } from '../types/layout'
 import type { MediaDetail, AppStats, ThumbResult } from '../types/media'
 import { IPC } from '../constants/ipc'
 import { DEFAULTS } from '../constants/defaults'
@@ -19,6 +19,46 @@ export const useMediaStore = defineStore('media', () => {
   const rowCache        = ref<Map<number, LayoutRow>>(new Map())
   const isComputingLayout = ref(false)
   const layoutDirty       = ref(false)
+
+  // ── Lazy viewport metadata (EXIF / GPS / file name / dir path) ──────────────
+  // Heavy fields stripped from the resident layout cache; fetched per-window
+  // only when the card info overlay is enabled.
+  // ── 可视区懒加载元数据（EXIF / GPS / 文件名 / 目录路径） ──────────────────
+  // 重型字段已从常驻布局缓存剥离；仅在卡片信息浮层开启时按窗口拉取。
+  const viewportMeta = ref<Map<number, MediaMeta>>(new Map())
+  const pendingMetaIds = new Set<number>()
+  let metaTimer: ReturnType<typeof setTimeout> | null = null
+
+  async function flushMeta() {
+    metaTimer = null
+    if (pendingMetaIds.size === 0) return
+    const ids = Array.from(pendingMetaIds)
+    pendingMetaIds.clear()
+    try {
+      const metas = await invoke<MediaMeta[]>(IPC.GET_META_FOR_VIEWPORT, { ids })
+      // Reassign the Map so the ref triggers reactivity in consuming components.
+      // 重新赋值 Map，使 ref 在消费组件中触发响应式更新。
+      const next = new Map(viewportMeta.value)
+      for (const m of metas) next.set(m.id, m)
+      viewportMeta.value = next
+    } catch (e) {
+      console.error('[MediaStore] get_meta_for_viewport FAILED:', e)
+    }
+  }
+
+  /** Ensure metadata is loaded for the given ids (debounced, fetch-once). */
+  /** 确保给定 id 的元数据已加载（防抖、只取一次）。 */
+  function ensureMeta(ids: number[]) {
+    let added = false
+    for (const id of ids) {
+      if (!viewportMeta.value.has(id) && !pendingMetaIds.has(id)) {
+        pendingMetaIds.add(id)
+        added = true
+      }
+    }
+    if (!added) return
+    if (metaTimer === null) metaTimer = setTimeout(flushMeta, 120)
+  }
 
   // ── Detail view ─────────────────────────────────────────────────────────
   // ── 详情视图 ─────────────────────────────────────────────────────────
@@ -64,6 +104,10 @@ export const useMediaStore = defineStore('media', () => {
     }
     isComputingLayout.value = true
     rowCache.value.clear()
+    // Drop stale viewport metadata — the visible window will re-fetch what it needs.
+    // 丢弃过时的可视区元数据 —— 可视窗口会按需重新拉取。
+    if (viewportMeta.value.size > 0) viewportMeta.value = new Map()
+    pendingMetaIds.clear()
     const ui = useUiStore()
     const needsMeta = ui.thumbInfoElements.some(el => ['geo', 'camera', 'params'].includes(el))
 
@@ -218,9 +262,9 @@ export const useMediaStore = defineStore('media', () => {
   return {
     layoutSummary, rowCache, isComputingLayout, layoutDirty,
     detailItem, isDetailOpen, navContext,
-    stats,
+    stats, viewportMeta,
     totalItems, viewTotalItems, totalHeight, totalRows, layoutVersion,
-    computeLayout, fetchRows, fetchRowsByY, openDetail, openDetailFromLayout, openDetailFromSearch, closeDetail, navigateDetail,
+    computeLayout, fetchRows, fetchRowsByY, ensureMeta, openDetail, openDetailFromLayout, openDetailFromSearch, closeDetail, navigateDetail,
     loadStats, toggleFavorite, setRating, invalidateLayout, consumeLayoutDirty,
   }
 })

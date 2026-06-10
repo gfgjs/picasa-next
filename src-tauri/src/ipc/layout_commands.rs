@@ -48,52 +48,57 @@ pub async fn compute_layout(
         f
     };
 
-    // Query layout items from the read pool
-    // 从读取池查询布局项
-    let items = {
-        let pool = state.db_read_pool.get().map_err(AppError::from)?;
-        query_layout_items(&pool, &filter, params.group_by.as_deref(), params.sort_within_group.as_deref(), params.sort_order.as_deref(), params.include_meta.unwrap_or(false))?
-    };
+    // Run BOTH the (potentially multi-hundred-thousand row) query and the CPU-bound
+    // layout algorithm inside one blocking task, so neither blocks a tokio worker.
+    // 把（可能数十万行的）查询与受限于 CPU 的布局算法放进同一个阻塞任务，
+    // 二者均不阻塞 tokio 工作线程。
+    let state_arc = state.inner().clone();
+    let group_by = params.group_by.clone();
+    let sort_within = params.sort_within_group.clone();
+    let sort_order = params.sort_order.clone();
+    let container_width = params.container_width.max(100.0);
+    let target_row_height = params.row_height.max(50.0);
+    let gap = params.gap.max(0.0);
 
-    if items.is_empty() {
-        // Store empty layout
-        // 存储空布局
-        let version = store_layout(&state.layout_cache, vec![], 0.0);
-        return Ok(LayoutSummary {
-            total_rows: 0,
-            total_height: 0.0,
-            layout_version: version,
-            total_items: 0,
-            separators: vec![],
-        });
-    }
+    let (rows, total_height): (Vec<LayoutRow>, f64) = tokio::task::spawn_blocking(move || -> Result<(Vec<LayoutRow>, f64)> {
+        let pool = state_arc.db_read_pool.get().map_err(AppError::from)?;
+        let items = query_layout_items(
+            &pool,
+            &filter,
+            group_by.as_deref(),
+            sort_within.as_deref(),
+            sort_order.as_deref(),
+            false,
+        )?;
+        if items.is_empty() {
+            return Ok((vec![], 0.0));
+        }
 
-    // Run layout algorithm (CPU-bound) in a blocking task
-    // 在阻塞任务中运行布局算法（受限于 CPU）
-    let layout_params = LayoutParams {
-        container_width:   params.container_width.max(100.0),
-        target_row_height: params.row_height.max(50.0),
-        gap:               params.gap.max(0.0),
-        group_by:          params.group_by.unwrap_or_else(|| "date".to_string()),
-        sort_within_group: params.sort_within_group.unwrap_or_else(|| "datetime".to_string()),
-    };
-
-    let rows: Vec<LayoutRow> = tokio::task::spawn_blocking(move || {
-        compute_justified_layout(&items, &layout_params)
+        let layout_params = LayoutParams {
+            container_width,
+            target_row_height,
+            gap,
+            group_by:          group_by.unwrap_or_else(|| "date".to_string()),
+            sort_within_group: sort_within.unwrap_or_else(|| "datetime".to_string()),
+        };
+        let rows = compute_justified_layout(&items, &layout_params);
+        let total_height = rows.last().map(|r| r.y() + r.height()).unwrap_or(0.0);
+        Ok((rows, total_height))
     })
     .await
-    .map_err(|e| AppError::Engine(e.to_string()))?;
+    .map_err(|e| AppError::Engine(e.to_string()))??;
 
-    let total_height: f64 = rows.last().map(|r| r.y() + r.height()).unwrap_or(0.0);
     let version = store_layout(&state.layout_cache, rows, total_height);
 
-    Ok(LayoutSummary {
-        total_rows:     get_summary(&state.layout_cache).map(|s| s.total_rows).unwrap_or(0),
+    // Single read-lock pass for the summary (was three separate get_summary calls).
+    // 单次读锁取摘要（此前是三次独立的 get_summary 调用）。
+    Ok(get_summary(&state.layout_cache).unwrap_or(LayoutSummary {
+        total_rows: 0,
         total_height,
         layout_version: version,
-        total_items:    get_summary(&state.layout_cache).map(|s| s.total_items).unwrap_or(0),
-        separators:     get_summary(&state.layout_cache).map(|s| s.separators.clone()).unwrap_or_default(),
-    })
+        total_items: 0,
+        separators: vec![],
+    }))
 }
 
 /// Fetch a slice of layout rows from the in-memory cache.

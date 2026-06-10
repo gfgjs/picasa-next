@@ -8,7 +8,7 @@
 use rusqlite::{params, Connection, OptionalExtension, Row};
 
 use crate::db::models::{
-    AppStats, DirNode, ImageMeta, LayoutItem, MediaDetail, MediaFilter, MediaItem,
+    AppStats, DirNode, ImageMeta, LayoutItem, MediaDetail, MediaFilter, MediaItem, MediaMeta,
     ScanRoot, SearchResult, ThumbResult,
 };
 use crate::error::{AppError, Result};
@@ -79,18 +79,8 @@ fn map_layout_item(row: &Row<'_>) -> rusqlite::Result<LayoutItem> {
         is_favorited:  row.get::<_, i64>(12)? != 0,
         dir_path:      row.get(13)?,
         dir_name:      row.get(14)?,
-        file_name:     row.get(15)?,
-        dir_id:        row.get(16)?,
-        similarity:    row.get(17)?,
-        gps_lat:       row.get(18)?,
-        gps_lng:       row.get(19)?,
-        exif_make:     row.get(20)?,
-        exif_model:    row.get(21)?,
-        exif_lens:     row.get(22)?,
-        exif_focal_length: row.get(23)?,
-        exif_aperture: row.get(24)?,
-        exif_shutter:  row.get(25)?,
-        exif_iso:      row.get(26)?,
+        dir_id:        row.get(15)?,
+        similarity:    row.get(16)?,
     })
 }
 
@@ -427,29 +417,29 @@ pub fn query_layout_items(
     group_by: Option<&str>,
     sort_within: Option<&str>,
     sort_order: Option<&str>,
-    include_meta: bool,
+    _include_meta: bool, // retained for call-site compatibility; EXIF is no longer selected here
 ) -> Result<Vec<LayoutItem>> {
     let mut sql = String::from(
         "SELECT m.id, m.width, m.height, m.file_size, m.sort_datetime, m.file_format, m.media_type, m.is_live_photo,
                 m.duration_ms, m.thumb_status, m.thumb_path, m.thumbhash, m.is_favorited,
-                CASE WHEN d.rel_path = '' THEN r.path ELSE r.path || '/' || d.rel_path END as dir_path, d.name as dir_name, m.file_name, m.directory_id as dir_id, "
+                CASE WHEN d.rel_path = '' THEN r.path ELSE r.path || '/' || d.rel_path END as dir_path, d.name as dir_name, m.directory_id as dir_id, "
     );
 
+    // similarity is the final SELECT column — heavy EXIF/GPS/file_name columns are
+    // no longer selected here; they are fetched lazily via get_meta_for_viewport.
+    // similarity 是最后一个 SELECT 列 — 重型 EXIF/GPS/文件名列不再在此查询，
+    // 改为经 get_meta_for_viewport 按需拉取。
     if filter.ai_search == Some(true) {
-        sql.push_str("ai.similarity, ");
+        sql.push_str("ai.similarity\n");
     } else {
-        sql.push_str("NULL as similarity, ");
-    }
-
-    if include_meta {
-        sql.push_str("im.exif_gps_lat, im.exif_gps_lng, im.exif_make, im.exif_model, im.exif_lens, im.exif_focal_length, im.exif_aperture, im.exif_shutter, im.exif_iso\n");
-    } else {
-        sql.push_str("NULL as exif_gps_lat, NULL as exif_gps_lng, NULL as exif_make, NULL as exif_model, NULL as exif_lens, NULL as exif_focal_length, NULL as exif_aperture, NULL as exif_shutter, NULL as exif_iso\n");
+        sql.push_str("NULL as similarity\n");
     }
 
     sql.push_str("         FROM media_items m\n         JOIN directories d ON m.directory_id = d.id\n         JOIN scan_roots r ON d.root_id = r.id");
 
-    let mut needs_meta_join = include_meta;
+    // image_meta is only needed when a search scope filters on EXIF/GPS columns.
+    // image_meta 仅在按 EXIF/GPS 列过滤的搜索范围下才需要连接。
+    let mut needs_meta_join = false;
     if let Some(ref q) = filter.search_query {
         if !q.trim().is_empty() {
             let scope = filter.search_scope.as_deref().unwrap_or("filename");
@@ -638,6 +628,51 @@ pub fn query_layout_items(
     let mut stmt = conn.prepare(&sql)?;
     let refs: Vec<&dyn rusqlite::ToSql> = extras.iter().map(|b| b.as_ref()).collect();
     let rows = stmt.query_map(refs.as_slice(), map_layout_item)?;
+    rows.map(|r| r.map_err(AppError::from)).collect()
+}
+
+/// Fetch heavy per-item metadata (file name, dir path, EXIF, GPS) for a set of ids.
+/// Backs `get_meta_for_viewport`, which lazily populates only the visible window.
+///
+/// 为一组 id 批量获取重型逐项元数据（文件名、目录路径、EXIF、GPS）。
+/// 支撑 `get_meta_for_viewport` —— 仅懒填充可视窗口。
+pub fn get_media_meta_batch(conn: &Connection, ids: &[i64]) -> Result<Vec<MediaMeta>> {
+    if ids.is_empty() {
+        return Ok(vec![]);
+    }
+    // ids are i64 — safe to inline; avoids SQLite's bound-parameter limit on large windows.
+    // id 为 i64 — 内联安全；规避大窗口下 SQLite 的绑定参数数量上限。
+    let in_clause = ids.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(",");
+    let sql = format!(
+        "SELECT m.id,
+                m.file_name,
+                CASE WHEN d.rel_path = '' THEN r.path ELSE r.path || '/' || d.rel_path END AS dir_path,
+                im.exif_gps_lat, im.exif_gps_lng,
+                im.exif_make, im.exif_model, im.exif_lens,
+                im.exif_focal_length, im.exif_aperture, im.exif_shutter, im.exif_iso
+         FROM media_items m
+         JOIN directories d ON m.directory_id = d.id
+         JOIN scan_roots r ON d.root_id = r.id
+         LEFT JOIN image_meta im ON m.id = im.item_id
+         WHERE m.id IN ({in_clause})"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map([], |row| {
+        Ok(MediaMeta {
+            id:                row.get(0)?,
+            file_name:         row.get(1)?,
+            dir_path:          row.get(2)?,
+            gps_lat:           row.get(3)?,
+            gps_lng:           row.get(4)?,
+            exif_make:         row.get(5)?,
+            exif_model:        row.get(6)?,
+            exif_lens:         row.get(7)?,
+            exif_focal_length: row.get(8)?,
+            exif_aperture:     row.get(9)?,
+            exif_shutter:      row.get(10)?,
+            exif_iso:          row.get(11)?,
+        })
+    })?;
     rows.map(|r| r.map_err(AppError::from)).collect()
 }
 

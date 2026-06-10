@@ -7,11 +7,13 @@
 //! A `layout_version` counter prevents stale reads.
 //! `layout_version` 计数器用于防止读取过期数据。
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::RwLock;
 
 use serde::{Deserialize, Serialize};
 
+use crate::db::models::ThumbResult;
 use crate::layout::justified::LayoutRow;
 
 static LAYOUT_VERSION_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -36,11 +38,29 @@ pub struct LayoutSummary {
 
 /// Data stored in the in-memory layout cache.
 /// 存储在内存布局缓存中的数据。
+///
+/// The flat indices below turn two hot operations from O(N) into O(1):
+///   - thumbnail result write-back (was a full rows×items scan under the write lock)
+///   - adjacent-item lookup for detail navigation (was a full flatten per arrow key)
+///
+/// 下面的扁平索引把两个热点操作从 O(N) 降到 O(1)：
+///   - 缩略图结果回写（原先在写锁下全表 rows×items 扫描）
+///   - 详情页相邻项查找（原先每按一次方向键都展平全表）
 pub struct LayoutCacheData {
     pub rows:           Vec<LayoutRow>,
     pub total_height:   f64,
     pub layout_version: u64,
     pub total_items:    usize,
+
+    /// Layout-order item ids (one entry per image item, separators excluded).
+    /// 按布局顺序排列的项 id（每个图片项一个，不含分隔符）。
+    pub flat_ids:       Vec<i64>,
+    /// Parallel to `flat_ids`: flat index → (row index, item index within row).
+    /// 与 `flat_ids` 并行：扁平下标 → (行下标, 行内项下标)。
+    pub flat_rowcol:    Vec<(u32, u32)>,
+    /// item id → flat index. The single source of truth for both hot paths.
+    /// 项 id → 扁平下标。两个热点路径的唯一索引来源。
+    pub id_to_flat:     HashMap<i64, usize>,
 }
 
 /// The layout cache — stored behind an `RwLock` in `AppState`.
@@ -57,18 +77,58 @@ pub fn new_layout_cache() -> LayoutCache {
 /// 存储新的布局，自动递增版本号。
 pub fn store_layout(cache: &LayoutCache, rows: Vec<LayoutRow>, total_height: f64) -> u64 {
     let version = LAYOUT_VERSION_COUNTER.fetch_add(1, Ordering::SeqCst) + 1;
-    let total_items = rows.iter().map(|r| match r {
-        LayoutRow::Normal { items, .. } => items.len(),
-        _ => 0,
-    }).sum();
+
+    // Build the flat indices in a single pass while we still own `rows`.
+    // 在仍持有 `rows` 时一次遍历构建扁平索引。
+    let mut flat_ids: Vec<i64> = Vec::new();
+    let mut flat_rowcol: Vec<(u32, u32)> = Vec::new();
+    let mut id_to_flat: HashMap<i64, usize> = HashMap::new();
+    for (ri, row) in rows.iter().enumerate() {
+        if let LayoutRow::Normal { items, .. } = row {
+            for (ii, item) in items.iter().enumerate() {
+                id_to_flat.insert(item.id, flat_ids.len());
+                flat_ids.push(item.id);
+                flat_rowcol.push((ri as u32, ii as u32));
+            }
+        }
+    }
+    let total_items = flat_ids.len();
+
     let mut guard = cache.write().unwrap();
     *guard = Some(LayoutCacheData {
         rows,
         total_height,
         layout_version: version,
         total_items,
+        flat_ids,
+        flat_rowcol,
+        id_to_flat,
     });
     version
+}
+
+/// Apply a batch of thumbnail results to the cached layout in O(batch) using the
+/// id index — replaces the previous O(rows × items × results) write-lock scan.
+///
+/// 使用 id 索引以 O(batch) 复杂度将一批缩略图结果写回缓存布局 —
+/// 取代原先 O(行数 × 项数 × 结果数) 的写锁全表扫描。
+pub fn apply_thumb_results(cache: &LayoutCache, results: &[ThumbResult]) {
+    if results.is_empty() {
+        return;
+    }
+    let mut guard = cache.write().unwrap();
+    let Some(data) = guard.as_mut() else { return };
+    for r in results {
+        let Some(&flat) = data.id_to_flat.get(&r.item_id) else { continue };
+        let Some(&(ri, ii)) = data.flat_rowcol.get(flat) else { continue };
+        if let Some(LayoutRow::Normal { items, .. }) = data.rows.get_mut(ri as usize) {
+            if let Some(item) = items.get_mut(ii as usize) {
+                item.thumb_status = r.thumb_status;
+                item.thumb_path = r.thumb_path.clone();
+                item.thumbhash = r.thumbhash.clone();
+            }
+        }
+    }
 }
 
 /// Retrieve a slice of rows from the cache.
@@ -158,22 +218,15 @@ pub fn get_summary(cache: &LayoutCache) -> Option<LayoutSummary> {
 pub fn get_adjacent_item(cache: &LayoutCache, current_id: i64, offset: isize) -> Option<i64> {
     let guard = cache.read().unwrap();
     let data = guard.as_ref()?;
-    
-    // Flatten all items
-    // 展平所有项目
-    let mut all_ids = Vec::new();
-    for row in &data.rows {
-        if let LayoutRow::Normal { items, .. } = row {
-            for item in items {
-                all_ids.push(item.id);
-            }
-        }
+
+    // O(1) via the id index — no full flatten per navigation step.
+    // 通过 id 索引 O(1) 完成 — 不再每步导航都展平全表。
+    let current_idx = *data.id_to_flat.get(&current_id)?;
+    let target_idx = current_idx as isize + offset;
+    if target_idx < 0 {
+        return None;
     }
-    
-    let current_idx = all_ids.iter().position(|&id| id == current_id)?;
-    let target_idx = (current_idx as isize + offset) as usize;
-    
-    all_ids.get(target_idx).copied()
+    data.flat_ids.get(target_idx as usize).copied()
 }
 
 /// Find the Y coordinate of a separator row by matching its label
@@ -190,4 +243,84 @@ pub fn get_separator_y_by_label(cache: &LayoutCache, label_substring: &str) -> O
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::layout::justified::{LayoutRow, LayoutRowItem};
+
+    fn mk_item(id: i64) -> LayoutRowItem {
+        LayoutRowItem {
+            id,
+            x: 0.0,
+            w: 100.0,
+            h: 100.0,
+            file_size: 0,
+            file_format: String::new(),
+            media_type: "image".into(),
+            is_live_photo: false,
+            duration_ms: None,
+            thumb_status: 0,
+            thumb_path: None,
+            thumbhash: None,
+            is_favorited: false,
+            similarity: None,
+            original_width: 100,
+            original_height: 100,
+            sort_datetime: 0,
+        }
+    }
+
+    /// Separator + two Normal rows; flat item order is [10, 11, 12].
+    /// 分隔符 + 两个普通行；扁平项顺序为 [10, 11, 12]。
+    fn sample_layout() -> Vec<LayoutRow> {
+        vec![
+            LayoutRow::Separator { y: 0.0, height: 36.0, separator_label: "d1".into(), group_id: None },
+            LayoutRow::Normal { y: 36.0, height: 100.0, items: vec![mk_item(10), mk_item(11)] },
+            LayoutRow::Normal { y: 140.0, height: 100.0, items: vec![mk_item(12)] },
+        ]
+    }
+
+    #[test]
+    fn test_apply_thumb_results_updates_correct_item() {
+        let cache = new_layout_cache();
+        store_layout(&cache, sample_layout(), 240.0);
+
+        apply_thumb_results(&cache, &[ThumbResult {
+            item_id: 11,
+            thumb_status: 1,
+            thumb_path: Some("a/b.webp".into()),
+            thumbhash: Some(vec![1, 2, 3]),
+        }]);
+
+        let guard = cache.read().unwrap();
+        let data = guard.as_ref().unwrap();
+        assert_eq!(data.flat_ids, vec![10, 11, 12]);
+        assert_eq!(data.total_items, 3);
+        match &data.rows[1] {
+            LayoutRow::Normal { items, .. } => {
+                assert_eq!(items[1].id, 11);
+                assert_eq!(items[1].thumb_status, 1);
+                assert_eq!(items[1].thumb_path.as_deref(), Some("a/b.webp"));
+                assert_eq!(items[1].thumbhash, Some(vec![1, 2, 3]));
+                // Sibling untouched.
+                assert_eq!(items[0].thumb_status, 0);
+            }
+            _ => panic!("expected normal row"),
+        }
+    }
+
+    #[test]
+    fn test_get_adjacent_item_is_correct_at_boundaries() {
+        let cache = new_layout_cache();
+        store_layout(&cache, sample_layout(), 240.0);
+
+        assert_eq!(get_adjacent_item(&cache, 10, 1), Some(11));
+        assert_eq!(get_adjacent_item(&cache, 11, 1), Some(12));
+        assert_eq!(get_adjacent_item(&cache, 12, 1), None); // past end
+        assert_eq!(get_adjacent_item(&cache, 11, -1), Some(10));
+        assert_eq!(get_adjacent_item(&cache, 10, -1), None); // before start
+        assert_eq!(get_adjacent_item(&cache, 999, 1), None); // unknown id
+    }
 }

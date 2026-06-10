@@ -92,8 +92,13 @@ pub struct MediaItem {
     pub updated_at:       i64,
 }
 
-/// Minimal item used for layout computation (only fields Justified Layout needs).
-/// 用于布局计算的最小化项（仅 Justified Layout 需要的字段）。
+/// Minimal item used for layout computation (only fields Justified Layout +
+/// card-skeleton rendering need). Heavy metadata (file name, dir path, EXIF, GPS)
+/// is intentionally excluded and fetched on demand via `get_meta_for_viewport`.
+///
+/// 用于布局计算的最小化项（仅 Justified Layout 与卡片骨架渲染所需字段）。
+/// 重型元数据（文件名、目录路径、EXIF、GPS）有意排除，按需经
+/// `get_meta_for_viewport` 拉取。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LayoutItem {
@@ -110,20 +115,32 @@ pub struct LayoutItem {
     pub thumb_path:    Option<String>,
     pub thumbhash:     Option<Vec<u8>>,
     pub is_favorited:  bool,
+    // Grouping fields — used by the layout algorithm (folder separators), not
+    // copied into the resident per-item row data.
+    // 分组字段 — 供布局算法使用（文件夹分隔符），不复制进常驻的逐项行数据。
     pub dir_path:      Option<String>,
     pub dir_name:      Option<String>,
-    pub file_name:     String,
     pub dir_id:        Option<i64>,
     pub similarity:    Option<f64>,
-    pub gps_lat:       Option<f64>,
-    pub gps_lng:       Option<f64>,
-    pub exif_make:     Option<String>,
-    pub exif_model:    Option<String>,
-    pub exif_lens:     Option<String>,
+}
+
+/// Heavy per-item metadata fetched lazily for the visible viewport only.
+/// 仅为可视区按需拉取的逐项重型元数据。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaMeta {
+    pub id:                i64,
+    pub file_name:         String,
+    pub dir_path:          Option<String>,
+    pub gps_lat:           Option<f64>,
+    pub gps_lng:           Option<f64>,
+    pub exif_make:         Option<String>,
+    pub exif_model:        Option<String>,
+    pub exif_lens:         Option<String>,
     pub exif_focal_length: Option<f64>,
-    pub exif_aperture: Option<f64>,
-    pub exif_shutter:  Option<String>,
-    pub exif_iso:      Option<i64>,
+    pub exif_aperture:     Option<f64>,
+    pub exif_shutter:      Option<String>,
+    pub exif_iso:          Option<i64>,
 }
 
 // ── Image meta ───────────────────────────────────────────────────────────────

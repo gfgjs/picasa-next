@@ -64,6 +64,12 @@ impl LayoutRow {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Resident per-item row data — kept small so the whole layout fits in memory at
+/// the million-item scale. Heavy metadata (file name, dir path, EXIF, GPS) lives
+/// in `MediaMeta` and is fetched on demand for the visible viewport only.
+///
+/// 常驻的逐项行数据 —— 保持精简，使整份布局在百万项规模下仍可驻留内存。
+/// 重型元数据（文件名、目录路径、EXIF、GPS）放在 `MediaMeta`，仅为可视区按需拉取。
 pub struct LayoutRowItem {
     pub id:            i64,
     pub x:             f64,
@@ -81,18 +87,7 @@ pub struct LayoutRowItem {
     pub similarity:    Option<f64>,
     pub original_width: i64,
     pub original_height: i64,
-    pub file_name:     String,
-    pub dir_path:      Option<String>,
     pub sort_datetime: i64,
-    pub gps_lat:       Option<f64>,
-    pub gps_lng:       Option<f64>,
-    pub exif_make:     Option<String>,
-    pub exif_model:    Option<String>,
-    pub exif_lens:     Option<String>,
-    pub exif_focal_length: Option<f64>,
-    pub exif_aperture: Option<f64>,
-    pub exif_shutter:  Option<String>,
-    pub exif_iso:      Option<i64>,
 }
 
 // ── Layout parameters ─────────────────────────────────────────────────────────
@@ -241,18 +236,7 @@ pub fn compute_justified_layout(items: &[LayoutItem], params: &LayoutParams) -> 
                 similarity:    item.similarity,
                 original_width: item.width,
                 original_height: item.height,
-                file_name:     item.file_name.clone(),
-                dir_path:      item.dir_path.clone(),
                 sort_datetime: item.sort_datetime,
-                gps_lat:       item.gps_lat,
-                gps_lng:       item.gps_lng,
-                exif_make:     item.exif_make.clone(),
-                exif_model:    item.exif_model.clone(),
-                exif_lens:     item.exif_lens.clone(),
-                exif_focal_length: item.exif_focal_length,
-                exif_aperture: item.exif_aperture,
-                exif_shutter:  item.exif_shutter.clone(),
-                exif_iso:      item.exif_iso,
             });
 
             x += item_w + params.gap;

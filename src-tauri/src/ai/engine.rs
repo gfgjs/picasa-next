@@ -92,12 +92,17 @@ impl SessionPool {
         let _ = self.tx.send(session);
     }
 
-    pub fn get(&self) -> SessionGuard {
+    pub fn get(&self) -> Option<SessionGuard> {
         // Block until a session is available
-        let session = self.rx.recv().expect("Session pool channel disconnected");
-        SessionGuard {
-            session: Some(session),
-            tx: self.tx.clone(),
+        match self.rx.recv() {
+            Ok(session) => Some(SessionGuard {
+                session: Some(session),
+                tx: self.tx.clone(),
+            }),
+            Err(e) => {
+                tracing::error!("Session pool channel disconnected: {}", e);
+                None
+            }
         }
     }
 }
@@ -119,13 +124,13 @@ impl Drop for SessionGuard {
 impl std::ops::Deref for SessionGuard {
     type Target = Session;
     fn deref(&self) -> &Self::Target {
-        self.session.as_ref().unwrap()
+        self.session.as_ref().expect("SessionGuard accessed after drop")
     }
 }
 
 impl std::ops::DerefMut for SessionGuard {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.session.as_mut().unwrap()
+        self.session.as_mut().expect("SessionGuard accessed after drop")
     }
 }
 
@@ -204,22 +209,18 @@ impl AiEnginePool {
         // ── 步骤 2：加载 CLIP 模型 ──────────────────────────────────────
         let mut clip_image_session = load_session_pool(&image_path, &provider_info.provider, "CLIP image encoder | CLIP 图像编码器", pool_size);
 
-        // Fallback to CPU if GPU failed to load the image encoder
-        if clip_image_session.is_none() && provider_info.provider != AiProvider::Cpu {
-            tracing::warn!("GPU acceleration failed, falling back to CPU... | GPU 加速失败，正在回退至 CPU...");
-            provider_info.provider = AiProvider::Cpu;
-            provider_info.gpu_name = String::new();
-            let cpu_pool_size = std::thread::available_parallelism().map(|n| n.get().min(8)).unwrap_or(4);
-            clip_image_session = load_session_pool(&image_path, &AiProvider::Cpu, "CLIP image encoder (CPU) | CLIP 图像编码器 (CPU)", cpu_pool_size);
-        }
-
         let mut clip_text_session = load_session_pool(&text_path, &provider_info.provider, "CLIP text encoder | CLIP 文本编码器", pool_size);
 
-        // Fallback to CPU if GPU failed to load the text encoder
-        if clip_text_session.is_none() && provider_info.provider != AiProvider::Cpu {
-            tracing::warn!("GPU acceleration failed, falling back to CPU... | GPU 加速失败，正在回退至 CPU...");
+        // Fallback to CPU if GPU failed to load EITHER encoder
+        if (clip_image_session.is_none() || clip_text_session.is_none()) && provider_info.provider != AiProvider::Cpu {
+            tracing::warn!("GPU acceleration failed for one or more models, falling back to CPU for both... | GPU 加速失败，正在将两者统一回退至 CPU...");
             provider_info.provider = AiProvider::Cpu;
             provider_info.gpu_name = String::new();
+            
+            // Clear any partially loaded GPU sessions
+            clip_image_session = None;
+            clip_text_session = None;
+            
             let cpu_pool_size = std::thread::available_parallelism().map(|n| n.get().min(8)).unwrap_or(4);
             clip_image_session = load_session_pool(&image_path, &AiProvider::Cpu, "CLIP image encoder (CPU) | CLIP 图像编码器 (CPU)", cpu_pool_size);
             clip_text_session = load_session_pool(&text_path, &AiProvider::Cpu, "CLIP text encoder (CPU) | CLIP 文本编码器 (CPU)", cpu_pool_size);
@@ -305,20 +306,27 @@ fn load_session_pool(
             }
             Ok(Err(e)) => {
                 warn!("Failed to load {} [{}/{}], AI feature degraded | {} 加载失败 [{}/{}], AI 功能降级: {}", label, i + 1, pool_size, label, i + 1, pool_size, e);
-                return None;
+                break;
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 warn!("Timeout loading {} [{}/{}] after {:?} | {} 加载超时 [{}/{}] ({:?})", label, i + 1, pool_size, SESSION_LOAD_TIMEOUT, label, i + 1, pool_size, SESSION_LOAD_TIMEOUT);
-                return None;
+                break;
             }
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                 warn!("Session loader thread panicked while loading {} [{}/{}] | 加载 {} 时 Session 加载线程崩溃 [{}/{}]", label, i + 1, pool_size, label, i + 1, pool_size);
-                return None;
+                break;
             }
         }
     }
 
-    Some(pool)
+    if pool.rx.is_empty() {
+        None
+    } else {
+        if pool.rx.len() < pool_size {
+            warn!("{} pool loaded with degraded capacity: {}/{}", label, pool.rx.len(), pool_size);
+        }
+        Some(pool)
+    }
 }
 
 /// Build a Session with the appropriate EP for the selected provider.

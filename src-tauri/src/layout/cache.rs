@@ -196,7 +196,7 @@ pub fn get_rows_by_y(
         }
     }
 
-    let start_idx = match data.rows.binary_search_by(|r| r.y().partial_cmp(&top_y).unwrap()) {
+    let start_idx = match data.rows.binary_search_by(|r| r.y().partial_cmp(&top_y).unwrap_or(std::cmp::Ordering::Equal)) {
         Ok(idx) => idx,
         Err(idx) => idx.saturating_sub(1),
     };

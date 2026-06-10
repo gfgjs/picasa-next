@@ -38,20 +38,16 @@ pub async fn batch_request_thumbnails(
     {
         // Check cache in batch
         let conn = state.db_read_pool.get().map_err(|e| AppError::Db(e.to_string()))?;
-        let in_clause = item_ids
-            .iter()
-            .map(|id| id.to_string())
-            .collect::<Vec<_>>()
-            .join(",");
+        let placeholders = item_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
 
-        if !in_clause.is_empty() {
+        if !placeholders.is_empty() {
             let sql = format!(
                 "SELECT id, thumb_status, thumb_path, thumbhash FROM media_items WHERE id IN ({})",
-                in_clause
+                placeholders
             );
             let mut stmt = conn.prepare(&sql).map_err(|e| AppError::Db(e.to_string()))?;
             let rows = stmt
-                .query_map([], |row| {
+                .query_map(rusqlite::params_from_iter(&item_ids), |row| {
                     Ok(ThumbResult {
                         item_id:      row.get(0)?,
                         thumb_status: row.get(1)?,
@@ -71,7 +67,9 @@ pub async fn batch_request_thumbnails(
 
     for &id in &item_ids {
         if let Some(r) = fast_results.get(&id) {
-            let _ = on_result.send(r.clone());
+            if let Err(_) = on_result.send(r.clone()) {
+                tracing::debug!("Channel disconnected, ignoring thumb result send");
+            }
         } else {
             needs_gen.push(id);
         }
@@ -97,7 +95,7 @@ pub async fn batch_request_thumbnails(
                 let intermediate: Vec<Result<ThumbResultOrDeferred>> = needs_gen
                     .par_iter()
                     .filter_map(|&id| {
-                        if state_arc.cancelled_thumb_ids.lock().unwrap().remove(&id) {
+                        if state_arc.cancelled_thumb_ids.lock().unwrap_or_else(|e| e.into_inner()).remove(&id) {
                             return None;
                         }
 
@@ -137,7 +135,9 @@ pub async fn batch_request_thumbnails(
                 for (id, res) in needs_gen.iter().zip(intermediate) {
                     match res {
                         Ok(ThumbResultOrDeferred::Done(r)) => {
-                            let _ = on_result.send(r.clone());
+                            if let Err(_) = on_result.send(r.clone()) {
+                                tracing::debug!("Channel disconnected, ignoring thumb result send");
+                            }
                             results.push(r);
                         }
                         Ok(ThumbResultOrDeferred::Deferred { item, abs_path }) => {
@@ -150,7 +150,9 @@ pub async fn batch_request_thumbnails(
                                 thumb_path:   None,
                                 thumbhash:    None,
                             };
-                            let _ = on_result.send(r.clone());
+                            if let Err(_) = on_result.send(r.clone()) {
+                                tracing::debug!("Channel disconnected, ignoring thumb result send");
+                            }
                             error!("Thumbnail gen failed for id={id}: {e}");
                             results.push(r);
                         }
@@ -161,12 +163,14 @@ pub async fn batch_request_thumbnails(
                     let cpu_results: Vec<ThumbResult> = deferred
                         .into_par_iter()
                         .filter_map(|(item, abs_path)| {
-                            if state_arc.cancelled_thumb_ids.lock().unwrap().remove(&item.id) {
+                            if state_arc.cancelled_thumb_ids.lock().unwrap_or_else(|e| e.into_inner()).remove(&item.id) {
                                 return None;
                             }
                             match process_deferred_cpu(&item, &abs_path, &state_arc.engine_arena, &config) {
                                 Ok(r) => {
-                                    let _ = on_result.send(r.clone());
+                                    if let Err(_) = on_result.send(r.clone()) {
+                                        tracing::debug!("Channel disconnected, ignoring thumb result send");
+                                    }
                                     Some(r)
                                 }
                                 Err(e) => {
@@ -176,7 +180,9 @@ pub async fn batch_request_thumbnails(
                                         thumb_path:   None,
                                         thumbhash:    None,
                                     };
-                                    let _ = on_result.send(r.clone());
+                                    if let Err(_) = on_result.send(r.clone()) {
+                                        tracing::debug!("Channel disconnected, ignoring thumb result send");
+                                    }
                                     error!("Thumbnail cpu gen failed for id={}: {}", item.id, e);
                                     Some(r)
                                 }
@@ -218,7 +224,7 @@ pub async fn batch_request_thumbnails(
             let state_dispatcher = state_arc.clone();
             std::thread::spawn(move || {
                 for id in needs_gen_clone {
-                    if state_dispatcher.cancelled_thumb_ids.lock().unwrap().contains(&id) {
+                    if state_dispatcher.cancelled_thumb_ids.lock().unwrap_or_else(|e| e.into_inner()).contains(&id) {
                         continue;
                     }
                     if let Ok(pool) = state_dispatcher.db_read_pool.get() {
@@ -295,7 +301,9 @@ pub async fn batch_request_thumbnails(
 
             let mut results = Vec::new();
             while let Ok(res) = result_rx.recv() {
-                let _ = on_result.send(res.clone());
+                if let Err(_) = on_result.send(res.clone()) {
+                    tracing::debug!("Channel disconnected, ignoring thumb result send");
+                }
                 results.push(res);
             }
 
@@ -722,7 +730,7 @@ pub async fn start_full_thumbnail_generation(
         // Clear the token after completion/cancellation so AI pipeline won't yield forever.
         // This mirrors how the AI pipeline itself clears ai_analysis_token on completion.
         // 清除 token，防止 AI pipeline 永远让步（与 AI pipeline 的 cancel_ai_analysis() 模式一致）。
-        *state_arc.thumb_gen_token.lock().unwrap() = None;
+        *state_arc.thumb_gen_token.lock().unwrap_or_else(|e| e.into_inner()) = None;
         tracing::info!("Thumbnail gen token cleared after completion | 全量缩略图 token 已清除");
 
         // Invalidate layout cache so the next compute_layout reads fresh
@@ -747,7 +755,7 @@ pub fn stop_full_thumbnail_generation(state: State<'_, Arc<AppState>>) -> Result
 
 #[tauri::command]
 pub async fn cancel_thumbnail_request(id: i64, state: State<'_, Arc<AppState>>) -> Result<()> {
-    state.cancelled_thumb_ids.lock().unwrap().insert(id);
+    state.cancelled_thumb_ids.lock().unwrap_or_else(|e| e.into_inner()).insert(id);
     Ok(())
 }
 

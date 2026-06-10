@@ -205,7 +205,8 @@ fn run_image_inference(
     let tensor = Tensor::from_array((shape, flat_data))
         .map_err(|e| AppError::Ai(format!("Build image tensor failed | 构建图像张量失败: {e}")))?;
 
-    let mut guard = session_pool.get();
+    let mut guard = session_pool.get()
+        .ok_or_else(|| AppError::Ai("Session pool disconnected".into()))?;
     let outputs = guard
         .run(ort::inputs!["pixel_values" => tensor])
         .map_err(|e| AppError::Ai(format!("CLIP image inference failed | CLIP 图像推理失败: {e}")))?;
@@ -237,7 +238,8 @@ pub fn encode_image_batch(
     let tensor = Tensor::from_array((shape, flat_data))
         .map_err(|e| AppError::Ai(format!("Build image batch tensor failed | 构建图像批处理张量失败: {e}")))?;
 
-    let mut guard = session_pool.get();
+    let mut guard = session_pool.get()
+        .ok_or_else(|| AppError::Ai("Session pool disconnected".into()))?;
     let outputs = guard
         .run(ort::inputs!["pixel_values" => tensor])
         .map_err(|e| AppError::Ai(format!("CLIP image batch inference failed | CLIP 图像批量推理失败: {e}")))?;
@@ -254,7 +256,9 @@ pub fn encode_image_batch(
     for i in 0..n {
         let start = i * EMBED_DIM;
         let end = start + EMBED_DIM;
-        let embedding: Vec<f32> = raw_slice[start..end].to_vec();
+        let embedding: Vec<f32> = raw_slice.get(start..end)
+            .ok_or_else(|| AppError::Ai(format!("Batch output tensor out of bounds | 批处理输出张量越界: start={}, end={}, len={}", start, end, raw_slice.len())))?
+            .to_vec();
         results.push(l2_normalize(embedding));
     }
 
@@ -343,9 +347,11 @@ pub fn preprocess_decoded(decoded: &DecodedImage) -> Array4<f32> {
             let src_y = cy + y;
             // RGBA stride: 4 bytes per pixel
             let idx = (src_y * w + src_x) * 4;
-            for c in 0..3usize {
-                let val = decoded.pixels[idx + c] as f32 / 255.0;
-                tensor[[0, c, y, x]] = (val - MEAN[c]) / STD[c];
+            if idx + 2 < decoded.pixels.len() {
+                for c in 0..3usize {
+                    let val = decoded.pixels[idx + c] as f32 / 255.0;
+                    tensor[[0, c, y, x]] = (val - MEAN[c]) / STD[c];
+                }
             }
         }
     }
@@ -527,7 +533,8 @@ pub fn encode_text(
     let token_type_ids = Tensor::from_array((shape, types))
         .map_err(|e| AppError::Ai(e.to_string()))?;
 
-    let mut guard = session_pool.get();
+    let mut guard = session_pool.get()
+        .ok_or_else(|| AppError::Ai("Session pool disconnected".into()))?;
     let outputs = guard
         .run(ort::inputs![
             "input_ids" => input_ids,

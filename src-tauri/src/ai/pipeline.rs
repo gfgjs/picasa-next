@@ -480,6 +480,10 @@ fn flush_batch(
             }
             *total_written += ids.len() as u64;
             debug!("Flushed {} embeddings to DB | 已将 {} 个嵌入向量刷新到 DB", ids.len(), ids.len());
+            // New embeddings landed — invalidate the resident cache so the next search reloads.
+            // 新嵌入向量已写入 —— 使常驻缓存失效，下次搜索将重新加载。
+            drop(conn);
+            state.invalidate_embedding_cache();
         }
         Err(e) => {
             warn!("Batch embedding write failed | 批量嵌入向量写入失败: {}", e);

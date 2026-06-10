@@ -75,6 +75,10 @@ ort       = { version = "2.0.0-rc.12", features = ["load-dynamic", "directml", "
 # ort       = { version = "2.0.0-rc.12", features = ["load-dynamic", "directml"] }
 
 ndarray   = "0.16"
+# Half-precision storage for the in-memory embedding cache (C1) — halves resident
+# RAM vs f32 (1M×512 ≈ 1GB instead of 2GB). Already in the dependency tree.
+# 嵌入向量内存缓存的半精度存储（C1）—— 相比 f32 内存减半（百万×512 ≈ 1GB 而非 2GB）。
+half      = "2"
 # HuggingFace tokenizers — BERT WordPiece for Chinese-CLIP text encoder
 # HuggingFace tokenizers — 用于 Chinese-CLIP 文本编码器的 BERT WordPiece
 tokenizers = { version = "0.21", default-features = false, features = ["fancy-regex"] }

@@ -11,6 +11,7 @@ use std::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use crate::ai::engine::AiEnginePool;
+use crate::ai::search::EmbeddingCache;
 use crate::db::{DbPool, DbWriter};
 use crate::engine::EngineArena;
 use crate::layout::LayoutCache;
@@ -58,6 +59,11 @@ pub struct AppState {
     /// AI 推理引擎池（懒加载，首次使用前为 None）。
     pub ai_engine: RwLock<Option<AiEnginePool>>,
 
+    /// Resident half-precision embedding cache for semantic search (C1).
+    /// Loaded once from SQLite, reused across queries, invalidated on embedding writes.
+    /// 语义搜索的常驻半精度嵌入缓存（C1）。一次性从 SQLite 加载，跨查询复用，写入时失效。
+    pub ai_embedding_cache: RwLock<Option<EmbeddingCache>>,
+
     /// Cancellation token for the background AI analysis pipeline.
     /// 后台 AI 分析流水线的取消令牌。
     pub ai_analysis_token: Mutex<Option<CancellationToken>>,
@@ -98,9 +104,17 @@ impl AppState {
             cancelled_thumb_ids: Mutex::new(HashSet::new()),
             log_dir,
             ai_engine: RwLock::new(None),
+            ai_embedding_cache: RwLock::new(None),
             ai_analysis_token: Mutex::new(None),
             startup_instant: Instant::now(),
         }
+    }
+
+    /// Drop the resident embedding cache so the next semantic search reloads it.
+    /// Called whenever embeddings are written or reset.
+    /// 丢弃常驻嵌入缓存，使下次语义搜索重新加载。在嵌入向量写入或重置时调用。
+    pub fn invalidate_embedding_cache(&self) {
+        *self.ai_embedding_cache.write().unwrap() = None;
     }
 
     /// Create a new cancellation token for the AI analysis pipeline.

@@ -20,8 +20,8 @@
 | D1 `panic=abort`→`unwind` + 解码 `catch_unwind` | ✅ 已完成 | cargo check 通过 |
 | D2 退出前 `wal_checkpoint(TRUNCATE)` | ✅ 已完成 | cargo check 通过 |
 | E2 合并 3×`get_summary` | ✅ 已完成（随 A3） | cargo check 通过 |
-| B1 滚动坐标平移 | ✅ 已完成（待运行时验证） | vue-tsc 通过 |
-| C1 embedding 常驻 f16 + rayon | ⬜ 待做（M3） | — |
+| B1 滚动坐标平移 | ⚠️ 已实现，平移模式有滚动错位 bug（已搁置） | vue-tsc 通过 |
+| C1 embedding 常驻 f16 + rayon | ✅ 已完成 | cargo check 通过 |
 | D3 收藏/删除 O(1) 缓存同步 | ⬜ 待做 | — |
 | E1 安全收敛、README/architecture_notes | ⬜ 待做 | — |
 
@@ -29,7 +29,9 @@
 >
 > **B1 实现要点**：`useVirtualScroll` 内置物理↔逻辑线性映射；物理占位封顶 `SAFE_MAX=10,000,000`；行渲染在一个"渲染层"中，层 transform **命令式**（直接写 `style.transform`，不触发每帧 Vue 重渲染）把可视窗口钉到视口；逐行偏移锚定到窗口顶部以保证 4000 万 px 尺度下的精度。普通模式（≤25 万张）δ=0，行为与改造前完全一致。所有"逻辑坐标"入口（`scrollToY`/`scrollToLabel`/活动分隔符判定）均经映射转换。
 >
-> **B1 待验证/已知点**：① 平移模式仅在 >~25 万项时激活，需大库或临时调小 `SAFE_MAX` 验证；② 平移模式下滚动条粒度变粗（每 px 对应多行，技术固有）；③ 文件夹分组 sticky 头本就因绝对定位近乎失效，无新增回归。
+> **B1 已知 bug（已搁置）**：将 `SAFE_MAX` 调小（10000）实测平移模式滚动错位 —— 滚动条忽长忽短跳动、内容错位、直接跳到底部。普通模式（`SAFE_MAX=10M`，<25 万项不激活）不受影响。待修：怀疑是 native 惯性滚动与每帧 `syncTransform` 重写 transform 的反馈环 / 比例映射在小 `physMax` 下放大误差所致。其它已知点：平移模式滚动条粒度变粗（技术固有）；文件夹分组 sticky 头本就因绝对定位近乎失效，无新增回归。
+>
+> **C1 实现要点**：`AppState.ai_embedding_cache: RwLock<Option<EmbeddingCache>>` 常驻 f16 连续缓冲；首次搜索从读连接池一次性加载，rayon 跨全部行并行点积；写锁仅在持久化结果时短暂持有（打分阶段不再阻塞 DB 写）。嵌入向量每批写入/重置时 `invalidate_embedding_cache()`。百万项常驻约 1GB（若超预算再上 C2 ANN）。
 
 ---
 

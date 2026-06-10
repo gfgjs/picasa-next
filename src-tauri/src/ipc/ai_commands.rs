@@ -232,12 +232,13 @@ pub async fn semantic_search_cmd(
             None => return Err("Text encoder not loaded | 文本编码器未加载".to_string()),
         };
 
-        let mut conn = state.db_writer.lock().unwrap();
-
-        // Use cached tokenizer if available, otherwise load from disk.
-        // 使用缓存的分词器，如果没有则从磁盘加载。
+        // semantic_search manages its own connections: it loads the resident embedding
+        // cache from the READ pool and only takes the write lock briefly to persist
+        // results — so scoring no longer blocks all DB writes.
+        // semantic_search 自行管理连接：从读连接池加载常驻嵌入缓存，仅在持久化结果时
+        // 短暂持有写锁 —— 打分阶段不再阻塞所有数据库写入。
         if let Some(tokenizer) = engine.clip_tokenizer.as_ref() {
-            semantic_search(&mut conn, text_session, tokenizer, &query, top_k)
+            semantic_search(&state, text_session, tokenizer, &query, top_k)
                 .map_err(|e| e.to_string())
         } else {
             // Fallback: load tokenizer from disk (happens if vocab.txt wasn't present at init time)
@@ -246,7 +247,7 @@ pub async fn semantic_search_cmd(
             let vocab_path = models.join("vocab.txt");
             let tokenizer = crate::ai::clip::ClipTokenizer::from_vocab(&vocab_path)
                 .map_err(|e| e.to_string())?;
-            semantic_search(&mut conn, text_session, &tokenizer, &query, top_k)
+            semantic_search(&state, text_session, &tokenizer, &query, top_k)
                 .map_err(|e| e.to_string())
         }
     })
@@ -293,6 +294,10 @@ pub async fn start_ai_analysis(
     .await
     .map_err(|e| e.to_string())?
     .map_err(|e| e.to_string())?;
+
+    // Embeddings were just wiped — drop the resident cache so search reflects the reset.
+    // 嵌入向量刚被清空 —— 丢弃常驻缓存，使搜索反映重置结果。
+    state_arc.invalidate_embedding_cache();
 
     let token = state_arc.new_ai_analysis_token();
     info!("Starting AI analysis pipeline (full reset) | 启动 AI 分析流水线（全量重置）");
@@ -389,10 +394,13 @@ pub async fn rebuild_embeddings(
     // 首先停止任何正在运行的流水线
     state_arc.cancel_ai_analysis();
 
-    tokio::task::spawn_blocking(move || {
-        let conn = state_arc.db_writer.lock().unwrap();
-        reset_ai_embeddings(&conn, MODEL_NAME)
-            .map_err(|e| e.to_string())
+    tokio::task::spawn_blocking(move || -> std::result::Result<(), String> {
+        {
+            let conn = state_arc.db_writer.lock().unwrap();
+            reset_ai_embeddings(&conn, MODEL_NAME).map_err(|e| e.to_string())?;
+        }
+        state_arc.invalidate_embedding_cache();
+        Ok(())
     })
     .await
     .map_err(|e| e.to_string())?

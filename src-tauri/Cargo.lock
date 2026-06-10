@@ -3012,6 +3012,7 @@ dependencies = [
  "chrono",
  "crossbeam-channel",
  "fast_image_resize",
+ "half",
  "image",
  "kamadak-exif",
  "lexicmp",

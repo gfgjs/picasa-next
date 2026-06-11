@@ -80,6 +80,12 @@ pub enum AppError {
 
     #[error("Failed to copy file: {0}")]
     CopyFile(String),
+
+    #[error("Invalid folder move: {0}")]
+    InvalidMove(String),
+
+    #[error("Target already has a folder named: {0}")]
+    DirectoryExists(String),
 }
 
 impl Serialize for AppError {
@@ -118,6 +124,8 @@ impl Serialize for AppError {
             AppError::CreateFolder(m) => ("CreateFolder", m.as_str()),
             AppError::MoveFile(m) => ("MoveFile", m.as_str()),
             AppError::CopyFile(m) => ("CopyFile", m.as_str()),
+            AppError::InvalidMove(m) => ("InvalidMove", m.as_str()),
+            AppError::DirectoryExists(m) => ("DirectoryExists", m.as_str()),
         };
 
         state.serialize_field("code", code)?;

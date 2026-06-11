@@ -236,7 +236,18 @@ export const useUiStore = defineStore('ui', () => {
 
   // ── Pinned Settings ──────────────────────────────────────────────────────
   const pinnedSettings = ref<string[]>([])
-  
+
+  // The "全量 AI 分析" tool is a permanent pinned entry (not a Settings-page item),
+  // rendered specially. We keep it inside `pinnedSettings` so it can be drag-sorted
+  // together with the other tools.
+  // 「全量 AI 分析」是常驻置顶项（非设置页条目），特殊渲染。将其纳入 `pinnedSettings`
+  // 以便与其他工具一起拖拽排序。
+  const AI_FULL_ANALYSIS_KEY = 'aiFullAnalysis'
+
+  function persistPinned() {
+    invoke(IPC.SET_APP_CONFIG, { key: 'pinned_settings', value: JSON.stringify(pinnedSettings.value) }).catch(console.error)
+  }
+
   function togglePinnedSetting(key: string) {
     const idx = pinnedSettings.value.indexOf(key)
     if (idx >= 0) {
@@ -244,13 +255,33 @@ export const useUiStore = defineStore('ui', () => {
     } else {
       pinnedSettings.value.push(key)
     }
-    invoke(IPC.SET_APP_CONFIG, { key: 'pinned_settings', value: JSON.stringify(pinnedSettings.value) }).catch(console.error)
+    persistPinned()
+  }
+
+  // Move a pinned tool from one position to another (drag-sort) and persist.
+  // 将置顶工具从一个位置移动到另一个位置（拖拽排序）并持久化。
+  function reorderPinnedSetting(fromIndex: number, toIndex: number) {
+    const arr = pinnedSettings.value
+    if (
+      fromIndex < 0 || fromIndex >= arr.length ||
+      toIndex < 0 || toIndex >= arr.length ||
+      fromIndex === toIndex
+    ) return
+    const [moved] = arr.splice(fromIndex, 1)
+    arr.splice(toIndex, 0, moved)
+    persistPinned()
   }
 
   invoke<string | null>(IPC.GET_APP_CONFIG, { key: 'pinned_settings' })
     .then(saved => {
       if (saved) {
         try { pinnedSettings.value = JSON.parse(saved) } catch {}
+      }
+      // Back-compat: the AI full-analysis tool used to be hardcoded at the bottom.
+      // Ensure it's always present so existing users still see it after this change.
+      // 向后兼容：AI 全量分析工具过去硬编码在底部。确保其始终存在，使老用户在本次改动后仍能看到。
+      if (!pinnedSettings.value.includes(AI_FULL_ANALYSIS_KEY)) {
+        pinnedSettings.value.push(AI_FULL_ANALYSIS_KEY)
       }
     }).catch(console.error)
 
@@ -323,7 +354,7 @@ export const useUiStore = defineStore('ui', () => {
     // settings
     isSettingsOpen,
     // pinned settings
-    pinnedSettings, togglePinnedSetting,
+    pinnedSettings, togglePinnedSetting, reorderPinnedSetting,
     // thumb info
     showThumbInfo, setShowThumbInfo,
     thumbInfoElements, setThumbInfoElements,

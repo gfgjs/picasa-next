@@ -8,8 +8,8 @@
 use rusqlite::{params, Connection, OptionalExtension, Row};
 
 use crate::db::models::{
-    AppStats, DirNode, ImageMeta, LayoutItem, MediaDetail, MediaFilter, MediaItem, MediaMeta,
-    ScanRoot, SearchResult, ThumbResult,
+    AppStats, DirNode, Directory, ImageMeta, LayoutItem, MediaDetail, MediaFilter, MediaItem,
+    MediaMeta, ScanRoot, SearchResult, ThumbResult,
 };
 use crate::error::{AppError, Result};
 use crate::utils::path::resolve_media_path;
@@ -263,6 +263,132 @@ pub fn get_directory_ancestors(conn: &Connection, id: i64) -> Result<Vec<i64>> {
     ids.reverse();
     Ok(ids)
 }
+
+/// Fetch a single directory row by id.
+/// 按 id 获取单个目录行。
+pub fn get_directory(conn: &Connection, id: i64) -> Result<Directory> {
+    conn.query_row(
+        "SELECT id, root_id, parent_id, rel_path, name, depth, media_count, mtime, created_at
+         FROM directories WHERE id = ?1",
+        params![id],
+        |row| {
+            Ok(Directory {
+                id:          row.get(0)?,
+                root_id:     row.get(1)?,
+                parent_id:   row.get(2)?,
+                rel_path:    row.get(3)?,
+                name:        row.get(4)?,
+                depth:       row.get(5)?,
+                media_count: row.get(6)?,
+                mtime:       row.get(7)?,
+                created_at:  row.get(8)?,
+            })
+        },
+    )
+    .optional()?
+    .ok_or(AppError::Internal(format!("directory not found: id={id} | 未找到目录")))
+}
+
+/// Whether a directory already has a direct child folder with the given name.
+/// 给定父目录下是否已存在同名的直接子文件夹。
+pub fn dir_has_child_named(conn: &Connection, parent_id: i64, name: &str) -> Result<bool> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM directories WHERE parent_id = ?1 AND name = ?2",
+        params![parent_id, name],
+        |row| row.get(0),
+    )?;
+    Ok(count > 0)
+}
+
+/// One directory in a moved subtree (id + its current rel_path + depth).
+/// 被移动子树中的一个目录（id + 当前 rel_path + depth）。
+pub struct SubtreeDirRow {
+    pub id:       i64,
+    pub rel_path: String,
+    pub depth:    i64,
+}
+
+/// All directories in the subtree rooted at `root_dir_id`, including itself.
+/// 以 `root_dir_id` 为根的子树中的所有目录（含自身）。
+pub fn get_directory_subtree(conn: &Connection, root_dir_id: i64) -> Result<Vec<SubtreeDirRow>> {
+    let mut stmt = conn.prepare(
+        "WITH RECURSIVE subtree(id, rel_path, depth) AS (
+            SELECT id, rel_path, depth FROM directories WHERE id = ?1
+            UNION ALL
+            SELECT d.id, d.rel_path, d.depth FROM directories d
+            JOIN subtree s ON d.parent_id = s.id
+         )
+         SELECT id, rel_path, depth FROM subtree",
+    )?;
+    let rows = stmt.query_map(params![root_dir_id], |row| {
+        Ok(SubtreeDirRow {
+            id:       row.get(0)?,
+            rel_path: row.get(1)?,
+            depth:    row.get(2)?,
+        })
+    })?;
+    rows.map(|r| r.map_err(AppError::from)).collect()
+}
+
+/// Minimal media-item info needed to recompute cache_key / rename thumbnails on move.
+/// 移动时重算 cache_key / 重命名缩略图所需的最小媒体项信息。
+pub struct SubtreeMediaRow {
+    pub id:           i64,
+    pub directory_id: i64,
+    pub file_name:    String,
+    pub file_mtime:   i64,
+    pub cache_key:    i64,
+    pub thumb_status: i64,
+    pub thumb_path:   Option<String>,
+}
+
+/// All media items (including soft-deleted + companions) within a directory subtree.
+/// 目录子树内的所有媒体项（含软删除项与伴随项）。
+pub fn get_media_in_subtree(conn: &Connection, root_dir_id: i64) -> Result<Vec<SubtreeMediaRow>> {
+    let mut stmt = conn.prepare(
+        "WITH RECURSIVE subtree(id) AS (
+            SELECT id FROM directories WHERE id = ?1
+            UNION ALL
+            SELECT d.id FROM directories d JOIN subtree s ON d.parent_id = s.id
+         )
+         SELECT m.id, m.directory_id, m.file_name, m.file_mtime, m.cache_key, m.thumb_status, m.thumb_path
+         FROM media_items m
+         WHERE m.directory_id IN (SELECT id FROM subtree)",
+    )?;
+    let rows = stmt.query_map(params![root_dir_id], |row| {
+        Ok(SubtreeMediaRow {
+            id:           row.get(0)?,
+            directory_id: row.get(1)?,
+            file_name:    row.get(2)?,
+            file_mtime:   row.get(3)?,
+            cache_key:    row.get(4)?,
+            thumb_status: row.get(5)?,
+            thumb_path:   row.get(6)?,
+        })
+    })?;
+    rows.map(|r| r.map_err(AppError::from)).collect()
+}
+
+/// Delete a directory row (CASCADE removes descendant directories + their media).
+/// Returns the number of directory rows directly matched (0 or 1).
+/// 删除目录行（CASCADE 级联删除后代目录及其媒体）。返回直接匹配的目录行数（0 或 1）。
+pub fn delete_directory_by_id(conn: &Connection, id: i64) -> Result<usize> {
+    let n = conn.execute("DELETE FROM directories WHERE id = ?1", params![id])?;
+    Ok(n)
+}
+
+/// Find a directory id by (root_id, rel_path). Used by copy-undo to locate ingested rows.
+/// 按 (root_id, rel_path) 查找目录 id。供复制撤销定位已登记的行。
+pub fn find_directory_id(conn: &Connection, root_id: i64, rel_path: &str) -> Result<Option<i64>> {
+    conn.query_row(
+        "SELECT id FROM directories WHERE root_id = ?1 AND rel_path = ?2",
+        params![root_id, rel_path],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(AppError::from)
+}
+
 // ── Media items ───────────────────────────────────────────────────────────────
 // ── 媒体项 ───────────────────────────────────────────────────────────────
 

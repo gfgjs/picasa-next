@@ -48,10 +48,26 @@
       <transition name="collapse" @enter="onEnter" @after-enter="onAfterEnter" @leave="onLeave">
         <div v-show="isToolsExpanded">
           <ul class="sidebar__nav sidebar__nav--tools" style="padding-bottom: 4px;">
-            <template v-for="key in ui.pinnedSettings" :key="key">
-            <!-- 特殊处理：全量生成缩略图 -->
-            <li v-if="key === 'fullThumbGen'">
-              <div class="sidebar__nav-item" style="flex-direction: column; align-items: flex-start; gap: 8px; cursor: default;">
+            <li
+              v-for="(key, index) in ui.pinnedSettings"
+              :key="key"
+              class="tool-li"
+              :class="{ 'drop-target': toolDropIndex === index && toolDragIndex !== null && toolDragIndex !== index }"
+              @dragover.prevent="onToolDragOver(index)"
+              @drop.prevent="onToolDrop(index)"
+            >
+              <!-- Drag handle (only this initiates drag — keeps card controls usable) -->
+              <!-- 拖拽手柄（仅此处发起拖拽 — 保持卡片内控件可用） -->
+              <span
+                class="tool-drag-handle"
+                draggable="true"
+                title="拖拽排序 | Drag to reorder"
+                @dragstart="onToolDragStart(index, $event)"
+                @dragend="onToolDragEnd"
+              ><GripVertical :size="14" /></span>
+
+              <!-- 特殊处理：全量生成缩略图 -->
+              <div v-if="key === 'fullThumbGen'" class="sidebar__nav-item" style="flex: 1; flex-direction: column; align-items: flex-start; gap: 8px; cursor: default;">
                 <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
                   <div style="display: flex; align-items: center; gap: 8px;">
                     <span class="sidebar__nav-icon"><Zap :size="18" /></span>
@@ -62,7 +78,7 @@
                     <Play v-else :size="14" />
                   </button>
                 </div>
-                
+
                 <div v-if="scan.thumbGenProgress.isRunning || scan.thumbGenProgress.status === 'completed'" style="width: 100%; font-size: 12px; color: var(--color-text-tertiary);">
                   <div v-if="scan.thumbGenProgress.isRunning" class="progress-bar" style="margin-bottom: 4px;">
                     <div class="progress-bar__fill" style="background: var(--color-accent);" :style="{ width: ((scan.thumbGenProgress.generated / Math.max(scan.thumbGenProgress.total, 1)) * 100) + '%' }" />
@@ -73,11 +89,35 @@
                   </div>
                 </div>
               </div>
-            </li>
-            
-            <!-- 动态渲染其他设置项 -->
-            <li v-else-if="SETTINGS_MAP[key]">
-              <div class="sidebar__nav-item" style="flex-direction: column; align-items: flex-start; gap: 4px; cursor: default;">
+
+              <!-- 特殊处理：全量 AI 分析（常驻核心项，纳入可排序） -->
+              <div v-else-if="key === 'aiFullAnalysis'" class="sidebar__nav-item" style="flex: 1; flex-direction: column; align-items: flex-start; gap: 8px; cursor: default;">
+                <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <span class="sidebar__nav-icon"><Sparkles :size="18" /></span>
+                    <span class="sidebar__nav-label">全量 AI 分析</span>
+                  </div>
+                  <button class="btn-icon" @click="toggleAiAnalysis" :disabled="isAiInitialising" :title="ai.status.isAnalyzing ? '停止分析' : '开始分析'">
+                    <Square v-if="ai.status.isAnalyzing" :size="14" color="var(--color-error)" fill="var(--color-error)" />
+                    <RefreshCw v-else-if="isAiInitialising" :size="14" class="spinning" style="animation: spin 1s linear infinite;" />
+                    <Play v-else :size="14" />
+                  </button>
+                </div>
+
+                <div v-if="ai.status.isAnalyzing || ai.status.totalItems > 0" style="width: 100%; font-size: 12px; color: var(--color-text-tertiary);">
+                  <div v-if="ai.status.isAnalyzing" class="progress-bar" style="margin-bottom: 4px;">
+                    <div class="progress-bar__fill" style="background: var(--color-accent);" :style="{ width: ai.analyzeProgress + '%' }" />
+                  </div>
+                  <div style="display: flex; justify-content: space-between;">
+                    <span>{{ ai.status.analyzedItems }} / {{ ai.status.totalItems }}</span>
+                    <span v-if="aiElapsedTimeStr" style="font-family: monospace; margin-right: auto; margin-left: 8px;">{{ aiElapsedTimeStr }}</span>
+                    <span style="font-family: monospace;">{{ ai.analyzeProgress }}%</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 动态渲染其他设置项 -->
+              <div v-else-if="SETTINGS_MAP[key]" class="sidebar__nav-item" style="flex: 1; flex-direction: column; align-items: flex-start; gap: 4px; cursor: default;">
                 <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
                   <div style="display: flex; align-items: center; gap: 8px; flex: 1; margin-bottom: 4px;">
                     <span class="sidebar__nav-icon"><component :is="SETTINGS_MAP[key].icon" :size="18" /></span>
@@ -89,35 +129,6 @@
                 <DynamicSettingControl :setting-key="key" compact />
               </div>
             </li>
-          </template>
-
-          <!-- 全量 AI 分析 (未在设置页提供图钉，这里作为常驻核心项) -->
-          <li>
-            <div class="sidebar__nav-item" style="flex-direction: column; align-items: flex-start; gap: 8px; cursor: default;">
-              <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
-                <div style="display: flex; align-items: center; gap: 8px;">
-                  <span class="sidebar__nav-icon"><Sparkles :size="18" /></span>
-                  <span class="sidebar__nav-label">全量 AI 分析</span>
-                </div>
-                <button class="btn-icon" @click="toggleAiAnalysis" :disabled="isAiInitialising" :title="ai.status.isAnalyzing ? '停止分析' : '开始分析'">
-                  <Square v-if="ai.status.isAnalyzing" :size="14" color="var(--color-error)" fill="var(--color-error)" />
-                  <RefreshCw v-else-if="isAiInitialising" :size="14" class="spinning" style="animation: spin 1s linear infinite;" />
-                  <Play v-else :size="14" />
-                </button>
-              </div>
-              
-              <div v-if="ai.status.isAnalyzing || ai.status.totalItems > 0" style="width: 100%; font-size: 12px; color: var(--color-text-tertiary);">
-                <div v-if="ai.status.isAnalyzing" class="progress-bar" style="margin-bottom: 4px;">
-                  <div class="progress-bar__fill" style="background: var(--color-accent);" :style="{ width: ai.analyzeProgress + '%' }" />
-                </div>
-                <div style="display: flex; justify-content: space-between;">
-                  <span>{{ ai.status.analyzedItems }} / {{ ai.status.totalItems }}</span>
-                  <span v-if="aiElapsedTimeStr" style="font-family: monospace; margin-right: auto; margin-left: 8px;">{{ aiElapsedTimeStr }}</span>
-                  <span style="font-family: monospace;">{{ ai.analyzeProgress }}%</span>
-                </div>
-              </div>
-            </div>
-          </li>
           </ul>
         </div>
       </transition>
@@ -160,13 +171,21 @@
               :key="node.id"
               class="sidebar__tree-item"
               :data-dir-id="node.id"
+              :draggable="node.parentId !== null"
               :class="{
                 active:    (ui.groupBy === 'folder' ? ui.scrolledDirectoryId === node.id : ui.activeDirectoryId === node.id),
                 expanded:  node.expanded,
+                'drag-over': treeDropId === node.id,
+                'drag-source': treeDragId === node.id,
               }"
               :style="{ paddingLeft: (node.depth * 16 + 8) + 'px' }"
               @click="onNodeClick(node)"
               @contextmenu.prevent="onNodeContextMenu($event, node)"
+              @dragstart="onTreeDragStart(node, $event)"
+              @dragover="onTreeDragOver(node, $event)"
+              @dragleave="onTreeDragLeave(node)"
+              @drop.prevent="onTreeDrop(node, $event)"
+              @dragend="onTreeDragEnd"
             >
               <span class="sidebar__tree-arrow" @click.stop="folderTree.toggleNode(node)">
                 <ChevronRight v-if="node.hasChildren" :size="14" class="sidebar__tree-chevron" :class="{ expanded: node.expanded }" />
@@ -305,6 +324,7 @@ import { useUiStore } from '../../stores/uiStore'
 import { useScanStore } from '../../stores/scanStore'
 import { useMediaStore } from '../../stores/mediaStore'
 import { useAiStore } from '../../stores/aiStore'
+import { useHistoryStore } from '../../stores/historyStore'
 import { useFolderTree } from '../../composables/useFolderTree'
 import { SETTINGS_MAP } from '../../constants/settingsMap'
 import DynamicSettingControl from '../settings/DynamicSettingControl.vue'
@@ -312,7 +332,7 @@ import ContextMenu, { ContextMenuItem } from '../common/ContextMenu.vue'
 import FolderCreateDialog from '../common/FolderCreateDialog.vue'
 import {
   Aperture, FolderPlus, FolderSearch, ChevronRight, Folder,
-  Square, RefreshCw, Trash2, Settings,
+  Square, RefreshCw, Trash2, Settings, GripVertical,
   Sun, Moon, Monitor, ImageIcon, Heart, Sparkles, Clock, Play, Zap, RotateCcw, Database
 } from '@lucide/vue'
 
@@ -320,6 +340,7 @@ const ui       = useUiStore()
 const scan     = useScanStore()
 const media    = useMediaStore()
 const ai       = useAiStore()
+const history  = useHistoryStore()
 const folderTree = useFolderTree()
 const router   = useRouter()
 const route    = useRoute()
@@ -330,6 +351,141 @@ const isLibraryExpanded = ref(true)
 const isToolsExpanded = ref(true)
 const isFoldersExpanded = ref(true)
 const isManagementExpanded = ref(true)
+
+// ── TOOLS drag-sort ──────────────────────────────────────────────────────────
+// ── 工具区拖拽排序 ────────────────────────────────────────────────────────────
+const toolDragIndex = ref<number | null>(null)
+const toolDropIndex = ref<number | null>(null)
+
+function onToolDragStart(index: number, e: DragEvent) {
+  toolDragIndex.value = index
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', String(index))
+    // Use the whole card as the drag image rather than the tiny handle.
+    // 用整张卡片作为拖拽预览图，而非小手柄。
+    const li = (e.target as HTMLElement)?.closest('.tool-li') as HTMLElement | null
+    if (li) e.dataTransfer.setDragImage(li, 0, 0)
+  }
+}
+
+function onToolDragOver(index: number) {
+  if (toolDragIndex.value === null) return
+  toolDropIndex.value = index
+}
+
+function onToolDrop(index: number) {
+  if (toolDragIndex.value !== null && toolDragIndex.value !== index) {
+    ui.reorderPinnedSetting(toolDragIndex.value, index)
+  }
+  toolDragIndex.value = null
+  toolDropIndex.value = null
+}
+
+function onToolDragEnd() {
+  toolDragIndex.value = null
+  toolDropIndex.value = null
+}
+
+// ── Folder tree drag move / copy ───────────────────────────────────────────────
+// ── 文件夹树拖拽移动 / 复制 ───────────────────────────────────────────────────────
+const treeDragId = ref<number | null>(null)
+const treeDropId = ref<number | null>(null)
+
+/** Is `nodeId` inside the subtree rooted at `ancestorId`? | `nodeId` 是否在 `ancestorId` 子树内？ */
+function isDescendant(ancestorId: number, nodeId: number): boolean {
+  let cur = folderTree.nodes.value.find(n => n.id === nodeId)
+  while (cur && cur.parentId != null) {
+    if (cur.parentId === ancestorId) return true
+    cur = folderTree.nodes.value.find(n => n.id === cur!.parentId)
+  }
+  return false
+}
+
+/** Whether the currently-dragged node may drop onto `target`. | 当前拖拽节点能否落到 `target` 上。 */
+function canDropOn(target: any): boolean {
+  const srcId = treeDragId.value
+  if (srcId == null || target.id === srcId) return false
+  const src = folderTree.nodes.value.find(n => n.id === srcId)
+  if (!src) return false
+  if (src.parentId === target.id) return false        // already there (no-op) | 已在目标中
+  if (isDescendant(srcId, target.id)) return false     // would create a cycle | 会成环
+  return true
+}
+
+function onTreeDragStart(node: any, e: DragEvent) {
+  if (node.parentId === null) { e.preventDefault(); return } // scan roots are not movable
+  treeDragId.value = node.id
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'copyMove'
+    e.dataTransfer.setData('text/plain', String(node.id))
+  }
+}
+
+function onTreeDragOver(node: any, e: DragEvent) {
+  if (treeDragId.value == null) return
+  if (!canDropOn(node)) {
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'none'
+    treeDropId.value = null
+    return
+  }
+  e.preventDefault() // allow drop | 允许放置
+  const copy = e.ctrlKey || e.metaKey
+  if (e.dataTransfer) e.dataTransfer.dropEffect = copy ? 'copy' : 'move'
+  treeDropId.value = node.id
+}
+
+function onTreeDragLeave(node: any) {
+  if (treeDropId.value === node.id) treeDropId.value = null
+}
+
+async function onTreeDrop(node: any, e: DragEvent) {
+  const srcId = treeDragId.value
+  const ok = srcId != null && canDropOn(node) // validate while drag state is still set
+  const src = srcId != null ? folderTree.nodes.value.find(n => n.id === srcId) : undefined
+  treeDropId.value = null
+  treeDragId.value = null
+  if (!ok || !src || src.parentId == null) return
+
+  const copy = e.ctrlKey || e.metaKey
+  try {
+    if (copy) {
+      await history.copy(src.id, src.name, node.id)
+      ui.addToast('success', `已复制「${src.name}」到「${node.name}」`)
+    } else {
+      await history.move(src.id, src.name, src.parentId, node.id)
+      ui.addToast('success', `已移动「${src.name}」到「${node.name}」`)
+    }
+  } catch (err: any) {
+    if (err && err.code === 'DirectoryExists') {
+      ui.addToast('error', `目标已存在同名文件夹「${err.message}」，暂不支持合并`)
+    } else {
+      ui.addToast('error', `操作失败 | Failed: ${err?.message ?? err}`)
+    }
+  }
+}
+
+function onTreeDragEnd() {
+  treeDragId.value = null
+  treeDropId.value = null
+}
+
+/** Reload the folder tree, preserving expansion, then optionally select a directory. */
+/** 重载文件夹树并保留展开态，随后可选地选中某目录。 */
+async function reloadTreePreserveExpansion(selectDirId?: number | null) {
+  const expandedIds = folderTree.nodes.value.filter(n => n.expanded).map(n => n.id)
+  await folderTree.loadRoots(scan.scanRoots)
+  // Re-expand previously expanded nodes in tree order (parents load before children).
+  // 按树顺序重新展开之前展开的节点（父节点先于子节点加载）。
+  for (const id of expandedIds) {
+    const node = folderTree.nodes.value.find(n => n.id === id)
+    if (node && !node.expanded) await folderTree.loadChildren(id)
+  }
+  if (selectDirId != null) {
+    await folderTree.expandToNode(selectDirId)
+    ui.setActiveDirectory(selectDirId)
+  }
+}
 
 function onEnter(el: Element) {
   const htmlEl = el as HTMLElement
@@ -629,16 +785,13 @@ function progressPercent(rootId: number): number {
 // ── Folder tree refresh ────────────────────────────────────────────────────
 // ── 文件夹树刷新 ────────────────────────────────────────────────────
 onMounted(() => {
-  window.addEventListener('folder-stats-changed', () => {
-    // Refresh only the expanded nodes to preserve tree state
-    const expandedIds = folderTree.nodes.value.filter(n => n.expanded).map(n => n.id)
-    folderTree.loadRoots(scan.scanRoots).then(() => {
-      // Re-expand previously expanded nodes
-      expandedIds.forEach(id => {
-        const node = folderTree.nodes.value.find(n => n.id === id)
-        if (node) folderTree.toggleNode(node)
-      })
-    })
+  window.addEventListener('folder-stats-changed', (e: Event) => {
+    // Reload the tree preserving expansion; select detail.selectDirId if provided
+    // (used by folder move to auto-select the moved folder).
+    // 重载树并保留展开态；若提供 detail.selectDirId 则选中它
+    // （文件夹移动用于自动选中移动后的文件夹）。
+    const selectDirId = (e as CustomEvent).detail?.selectDirId ?? null
+    reloadTreePreserveExpansion(selectDirId)
   })
 })
 
@@ -919,6 +1072,40 @@ onMounted(async () => {
   background: var(--color-bg-hover);
   border-color: var(--color-border-strong);
 }
+
+/* ── TOOLS drag-sort ──────────────────────────────────────────────────── */
+/* ── 工具区拖拽排序 ──────────────────────────────────────────────────── */
+.tool-li {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  position: relative;
+  list-style: none;
+}
+.tool-drag-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  flex-shrink: 0;
+  color: var(--color-text-tertiary);
+  cursor: grab;
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+.tool-li:hover .tool-drag-handle { opacity: 0.6; }
+.tool-drag-handle:hover { opacity: 1; }
+.tool-drag-handle:active { cursor: grabbing; }
+.tool-li.drop-target::before {
+  content: '';
+  position: absolute;
+  top: -5px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--color-accent);
+  border-radius: 1px;
+}
 .sidebar__nav-item {
   display: flex;
   align-items: center;
@@ -981,6 +1168,15 @@ onMounted(async () => {
 .sidebar__tree-item.active {
   background: var(--color-sidebar-active-bg);
   color: var(--color-sidebar-active-text);
+}
+/* ── Folder tree drag move/copy ───────────────────────────────────────── */
+/* ── 文件夹树拖拽移动/复制 ───────────────────────────────────────────── */
+.sidebar__tree-item.drag-over {
+  background: var(--color-sidebar-active-bg);
+  box-shadow: inset 0 0 0 1px var(--color-accent);
+}
+.sidebar__tree-item.drag-source {
+  opacity: 0.45;
 }
 .sidebar__tree-arrow { width: 16px; font-size: 9px; color: var(--color-text-tertiary); }
 .sidebar__tree-icon  { width: 18px; font-size: 14px; }

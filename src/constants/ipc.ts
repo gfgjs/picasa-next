@@ -51,6 +51,14 @@ export const IPC = {
   GET_APP_CONFIG:   'get_app_config',
   SET_APP_CONFIG:   'set_app_config',
 
+  // ── File ops ──────────────────────────────────────────────────────────
+  // ── 文件操作 ──────────────────────────────────────────────────────────
+  MOVE_MEDIA_ITEMS:         'move_media_items',
+  COPY_MEDIA_ITEMS:         'copy_media_items',
+  MOVE_DIRECTORY:           'move_directory',
+  COPY_DIRECTORY:           'copy_directory',
+  DELETE_DIRECTORY_TO_TRASH:'delete_directory_to_trash',
+
   // ── System ────────────────────────────────────────────────────────────
   // ── 系统 ────────────────────────────────────────────────────────────
   SHOW_IN_EXPLORER: 'show_in_explorer',

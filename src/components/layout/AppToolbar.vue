@@ -36,6 +36,24 @@
   <!-- Right controls -->
   <!-- 右侧控件 -->
   <div class="toolbar__right">
+    <!-- Undo / Redo — folder move & copy | 撤销 / 重做 — 文件夹移动与复制 -->
+    <button
+      class="btn-icon"
+      :disabled="!history.canUndo"
+      title="撤销 | Undo (Ctrl+Z)"
+      @click="history.undo()"
+    >
+      <Undo2 :size="18" />
+    </button>
+    <button
+      class="btn-icon"
+      :disabled="!history.canRedo"
+      title="重做 | Redo (Ctrl+Shift+Z)"
+      @click="history.redo()"
+    >
+      <Redo2 :size="18" />
+    </button>
+
     <!-- Fullscreen -->
     <!-- 全屏 -->
     <button
@@ -183,12 +201,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
-import { ImageIcon, Video, Sparkles, X, Maximize2, Minimize2, Search, ArrowDown, ArrowUp, Rows3, Bot } from '@lucide/vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ImageIcon, Video, Sparkles, X, Maximize2, Minimize2, Search, ArrowDown, ArrowUp, Rows3, Bot, Undo2, Redo2 } from '@lucide/vue'
 import { useUiStore } from '../../stores/uiStore'
 import { useFilterStore } from '../../stores/filterStore'
 import { useMediaStore } from '../../stores/mediaStore'
 import { useAiStore } from '../../stores/aiStore'
+import { useHistoryStore } from '../../stores/historyStore'
 import { DEFAULTS } from '../../constants/defaults'
 
 const emit = defineEmits<{
@@ -200,6 +219,28 @@ const ui     = useUiStore()
 const filter = useFilterStore()
 const media  = useMediaStore()
 const ai     = useAiStore()
+const history = useHistoryStore()
+
+// ── Undo / Redo keyboard shortcuts (only when not typing in a field) ───────────
+// ── 撤销 / 重做键盘快捷键（仅在非输入态时生效） ─────────────────────────────────
+function onGlobalKeydown(e: KeyboardEvent) {
+  const ctrl = e.ctrlKey || e.metaKey
+  if (!ctrl) return
+  const key = e.key.toLowerCase()
+  if (key !== 'z' && key !== 'y') return
+  const tgt = e.target as HTMLElement | null
+  const tag = tgt?.tagName
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tgt?.isContentEditable) return
+  if (key === 'y' || (key === 'z' && e.shiftKey)) {
+    e.preventDefault()
+    history.redo()
+  } else if (key === 'z') {
+    e.preventDefault()
+    history.undo()
+  }
+}
+onMounted(() => document.addEventListener('keydown', onGlobalKeydown))
+onBeforeUnmount(() => document.removeEventListener('keydown', onGlobalKeydown))
 
 const isSearchFocused = ref(false)
 const searchInputRef  = ref<HTMLInputElement>()

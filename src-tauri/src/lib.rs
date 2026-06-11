@@ -438,6 +438,9 @@ pub fn run() {
             ipc::file_ops_commands::create_physical_folder,
             ipc::file_ops_commands::move_media_items,
             ipc::file_ops_commands::copy_media_items,
+            ipc::file_ops_commands::move_directory,
+            ipc::file_ops_commands::copy_directory,
+            ipc::file_ops_commands::delete_directory_to_trash,
         ])
         .on_window_event(|window, event| {
             if window.label() == "main" {

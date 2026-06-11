@@ -52,18 +52,15 @@
               v-for="(key, index) in ui.pinnedSettings"
               :key="key"
               class="tool-li"
+              :data-tool-index="index"
               :class="{ 'drop-target': toolDropIndex === index && toolDragIndex !== null && toolDragIndex !== index }"
-              @dragover.prevent="onToolDragOver(index)"
-              @drop.prevent="onToolDrop(index)"
             >
               <!-- Drag handle (only this initiates drag — keeps card controls usable) -->
               <!-- 拖拽手柄（仅此处发起拖拽 — 保持卡片内控件可用） -->
               <span
                 class="tool-drag-handle"
-                draggable="true"
                 title="拖拽排序 | Drag to reorder"
-                @dragstart="onToolDragStart(index, $event)"
-                @dragend="onToolDragEnd"
+                @pointerdown="onToolPointerDown(index, $event)"
               ><GripVertical :size="14" /></span>
 
               <!-- 特殊处理：全量生成缩略图 -->
@@ -171,7 +168,6 @@
               :key="node.id"
               class="sidebar__tree-item"
               :data-dir-id="node.id"
-              :draggable="node.parentId !== null"
               :class="{
                 active:    (ui.groupBy === 'folder' ? ui.scrolledDirectoryId === node.id : ui.activeDirectoryId === node.id),
                 expanded:  node.expanded,
@@ -181,11 +177,7 @@
               :style="{ paddingLeft: (node.depth * 16 + 8) + 'px' }"
               @click="onNodeClick(node)"
               @contextmenu.prevent="onNodeContextMenu($event, node)"
-              @dragstart="onTreeDragStart(node, $event)"
-              @dragover="onTreeDragOver(node, $event)"
-              @dragleave="onTreeDragLeave(node)"
-              @drop.prevent="onTreeDrop(node, $event)"
-              @dragend="onTreeDragEnd"
+              @pointerdown="onTreePointerDown(node, $event)"
             >
               <span class="sidebar__tree-arrow" @click.stop="folderTree.toggleNode(node)">
                 <ChevronRight v-if="node.hasChildren" :size="14" class="sidebar__tree-chevron" :class="{ expanded: node.expanded }" />
@@ -310,6 +302,18 @@
       @close="folderCreateDialog.isOpen = false"
       @created="onFolderCreated"
     />
+
+    <!-- Floating drag preview for folder move/copy (pointer-based drag) -->
+    <!-- 文件夹移动/复制的浮动拖拽预览（基于指针的拖拽） -->
+    <div
+      v-if="dragGhost.visible"
+      class="drag-ghost"
+      :style="{ left: dragGhost.x + 12 + 'px', top: dragGhost.y + 8 + 'px' }"
+    >
+      <Folder :size="13" />
+      <span class="drag-ghost__name">{{ dragGhost.label }}</span>
+      <span class="drag-ghost__mode">{{ dragGhost.copy ? '复制' : '移动' }}</span>
+    </div>
   </nav>
 </template>
 
@@ -352,45 +356,78 @@ const isToolsExpanded = ref(true)
 const isFoldersExpanded = ref(true)
 const isManagementExpanded = ref(true)
 
+// ── Pointer-based drag (NOT HTML5 DnD) ────────────────────────────────────────
+// We deliberately use pointer events instead of the HTML5 draggable API so the
+// window's native OS drag-drop (tauri `dragDropEnabled`) can stay ON for a future
+// "drag files in from the system" feature — the two never conflict because pointer
+// dragging never leaves the window.
+// ── 基于指针的拖拽（非 HTML5 DnD） ────────────────────────────────────────────
+// 刻意用 pointer 事件而非 HTML5 draggable API，使窗口的原生系统拖放
+// （tauri `dragDropEnabled`）可保持开启，留给未来「从系统拖入文件」功能 ——
+// 两者永不冲突，因为指针拖拽全程不离开窗口。
+const DRAG_THRESHOLD = 5 // px before a press becomes a drag | 按下移动多少像素后才算拖拽
+
+// Floating drag preview that follows the cursor (no native drag image exists here).
+// 跟随光标的浮动拖拽预览（此处没有原生拖拽图像）。
+const dragGhost = ref<{ visible: boolean; x: number; y: number; label: string; copy: boolean }>({
+  visible: false, x: 0, y: 0, label: '', copy: false,
+})
+
+function beginPointerDrag(onMove: (e: PointerEvent) => void, onFinish: (e: PointerEvent, cancelled: boolean) => void) {
+  const move = (e: PointerEvent) => onMove(e)
+  const up = (e: PointerEvent) => { teardown(); onFinish(e, false) }
+  const cancel = (e: PointerEvent) => { teardown(); onFinish(e, true) }
+  function teardown() {
+    window.removeEventListener('pointermove', move)
+    window.removeEventListener('pointerup', up)
+    window.removeEventListener('pointercancel', cancel)
+    document.body.style.userSelect = ''
+    document.body.style.cursor = ''
+  }
+  window.addEventListener('pointermove', move)
+  window.addEventListener('pointerup', up)
+  window.addEventListener('pointercancel', cancel)
+}
+
 // ── TOOLS drag-sort ──────────────────────────────────────────────────────────
 // ── 工具区拖拽排序 ────────────────────────────────────────────────────────────
 const toolDragIndex = ref<number | null>(null)
 const toolDropIndex = ref<number | null>(null)
 
-function onToolDragStart(index: number, e: DragEvent) {
-  toolDragIndex.value = index
-  if (e.dataTransfer) {
-    e.dataTransfer.effectAllowed = 'move'
-    e.dataTransfer.setData('text/plain', String(index))
-    // Use the whole card as the drag image rather than the tiny handle.
-    // 用整张卡片作为拖拽预览图，而非小手柄。
-    const li = (e.target as HTMLElement)?.closest('.tool-li') as HTMLElement | null
-    if (li) e.dataTransfer.setDragImage(li, 0, 0)
-  }
-}
+function onToolPointerDown(index: number, e: PointerEvent) {
+  if (e.button !== 0) return
+  e.preventDefault() // suppress text selection on the handle | 抑制手柄上的文本选择
+  const startX = e.clientX, startY = e.clientY
+  let dragging = false
 
-function onToolDragOver(index: number) {
-  if (toolDragIndex.value === null) return
-  toolDropIndex.value = index
-}
-
-function onToolDrop(index: number) {
-  if (toolDragIndex.value !== null && toolDragIndex.value !== index) {
-    ui.reorderPinnedSetting(toolDragIndex.value, index)
-  }
-  toolDragIndex.value = null
-  toolDropIndex.value = null
-}
-
-function onToolDragEnd() {
-  toolDragIndex.value = null
-  toolDropIndex.value = null
+  beginPointerDrag(
+    (ev) => {
+      if (!dragging) {
+        if (Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY) < DRAG_THRESHOLD) return
+        dragging = true
+        toolDragIndex.value = index
+        document.body.style.userSelect = 'none'
+        document.body.style.cursor = 'grabbing'
+      }
+      const li = (document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null)?.closest('[data-tool-index]') as HTMLElement | null
+      toolDropIndex.value = li ? Number(li.dataset.toolIndex) : null
+    },
+    (_ev, cancelled) => {
+      const from = toolDragIndex.value, to = toolDropIndex.value
+      toolDragIndex.value = null
+      toolDropIndex.value = null
+      if (!cancelled && dragging && from != null && to != null && from !== to) {
+        ui.reorderPinnedSetting(from, to)
+      }
+    },
+  )
 }
 
 // ── Folder tree drag move / copy ───────────────────────────────────────────────
 // ── 文件夹树拖拽移动 / 复制 ───────────────────────────────────────────────────────
 const treeDragId = ref<number | null>(null)
 const treeDropId = ref<number | null>(null)
+let treeSuppressClick = false // set when a press turned into a drag, so the trailing click is ignored
 
 /** Is `nodeId` inside the subtree rooted at `ancestorId`? | `nodeId` 是否在 `ancestorId` 子树内？ */
 function isDescendant(ancestorId: number, nodeId: number): boolean {
@@ -402,59 +439,65 @@ function isDescendant(ancestorId: number, nodeId: number): boolean {
   return false
 }
 
-/** Whether the currently-dragged node may drop onto `target`. | 当前拖拽节点能否落到 `target` 上。 */
-function canDropOn(target: any): boolean {
-  const srcId = treeDragId.value
-  if (srcId == null || target.id === srcId) return false
+/** Whether dragged dir `srcId` may drop onto dir `targetId`. | 被拖目录 `srcId` 能否落到目录 `targetId`。 */
+function canDropOnId(srcId: number, targetId: number): boolean {
+  if (targetId === srcId) return false
   const src = folderTree.nodes.value.find(n => n.id === srcId)
   if (!src) return false
-  if (src.parentId === target.id) return false        // already there (no-op) | 已在目标中
-  if (isDescendant(srcId, target.id)) return false     // would create a cycle | 会成环
+  if (src.parentId === targetId) return false      // already there (no-op) | 已在目标中
+  if (isDescendant(srcId, targetId)) return false   // would create a cycle | 会成环
   return true
 }
 
-function onTreeDragStart(node: any, e: DragEvent) {
-  if (node.parentId === null) { e.preventDefault(); return } // scan roots are not movable
-  treeDragId.value = node.id
-  if (e.dataTransfer) {
-    e.dataTransfer.effectAllowed = 'copyMove'
-    e.dataTransfer.setData('text/plain', String(node.id))
-  }
+function onTreePointerDown(node: any, e: PointerEvent) {
+  if (e.button !== 0 || node.parentId === null) return // left button only; scan roots not movable
+  treeSuppressClick = false
+  const startX = e.clientX, startY = e.clientY
+  let dragging = false
+
+  beginPointerDrag(
+    (ev) => {
+      if (!dragging) {
+        if (Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY) < DRAG_THRESHOLD) return
+        dragging = true
+        treeSuppressClick = true
+        treeDragId.value = node.id
+        document.body.style.userSelect = 'none'
+        document.body.style.cursor = 'grabbing'
+        dragGhost.value = { visible: true, x: ev.clientX, y: ev.clientY, label: node.name, copy: ev.ctrlKey || ev.metaKey }
+      }
+      dragGhost.value.x = ev.clientX
+      dragGhost.value.y = ev.clientY
+      dragGhost.value.copy = ev.ctrlKey || ev.metaKey
+      const item = (document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null)?.closest('[data-dir-id]') as HTMLElement | null
+      const targetId = item ? Number(item.dataset.dirId) : null
+      treeDropId.value = (targetId != null && canDropOnId(node.id, targetId)) ? targetId : null
+    },
+    (ev, cancelled) => {
+      const srcId = treeDragId.value
+      const dropId = treeDropId.value
+      const copy = ev.ctrlKey || ev.metaKey
+      treeDragId.value = null
+      treeDropId.value = null
+      dragGhost.value.visible = false
+      if (!cancelled && dragging && srcId != null && dropId != null) {
+        performTreeDrop(srcId, dropId, copy)
+      }
+    },
+  )
 }
 
-function onTreeDragOver(node: any, e: DragEvent) {
-  if (treeDragId.value == null) return
-  if (!canDropOn(node)) {
-    if (e.dataTransfer) e.dataTransfer.dropEffect = 'none'
-    treeDropId.value = null
-    return
-  }
-  e.preventDefault() // allow drop | 允许放置
-  const copy = e.ctrlKey || e.metaKey
-  if (e.dataTransfer) e.dataTransfer.dropEffect = copy ? 'copy' : 'move'
-  treeDropId.value = node.id
-}
-
-function onTreeDragLeave(node: any) {
-  if (treeDropId.value === node.id) treeDropId.value = null
-}
-
-async function onTreeDrop(node: any, e: DragEvent) {
-  const srcId = treeDragId.value
-  const ok = srcId != null && canDropOn(node) // validate while drag state is still set
-  const src = srcId != null ? folderTree.nodes.value.find(n => n.id === srcId) : undefined
-  treeDropId.value = null
-  treeDragId.value = null
-  if (!ok || !src || src.parentId == null) return
-
-  const copy = e.ctrlKey || e.metaKey
+async function performTreeDrop(srcId: number, targetId: number, copy: boolean) {
+  const src = folderTree.nodes.value.find(n => n.id === srcId)
+  const target = folderTree.nodes.value.find(n => n.id === targetId)
+  if (!src || !target || src.parentId == null || !canDropOnId(srcId, targetId)) return
   try {
     if (copy) {
-      await history.copy(src.id, src.name, node.id)
-      ui.addToast('success', `已复制「${src.name}」到「${node.name}」`)
+      await history.copy(src.id, src.name, target.id)
+      ui.addToast('success', `已复制「${src.name}」到「${target.name}」`)
     } else {
-      await history.move(src.id, src.name, src.parentId, node.id)
-      ui.addToast('success', `已移动「${src.name}」到「${node.name}」`)
+      await history.move(src.id, src.name, src.parentId, target.id)
+      ui.addToast('success', `已移动「${src.name}」到「${target.name}」`)
     }
   } catch (err: any) {
     if (err && err.code === 'DirectoryExists') {
@@ -463,11 +506,6 @@ async function onTreeDrop(node: any, e: DragEvent) {
       ui.addToast('error', `操作失败 | Failed: ${err?.message ?? err}`)
     }
   }
-}
-
-function onTreeDragEnd() {
-  treeDragId.value = null
-  treeDropId.value = null
 }
 
 /** Reload the folder tree, preserving expansion, then optionally select a directory. */
@@ -578,6 +616,8 @@ function formatCount(n: number | undefined | null): string {
 // ── 文件夹树 ────────────────────────────────────────────────────────────
 
 function onNodeClick(node: any) {
+  // Ignore the click that trails a drag gesture | 忽略拖拽手势之后尾随的 click
+  if (treeSuppressClick) { treeSuppressClick = false; return }
   if (ui.groupBy === 'folder') {
     ui.pendingScrollLabel = node.name
     if (ui.activeSmartAlbum !== 'all' || ui.activeDirectoryId !== null) {
@@ -1105,6 +1145,38 @@ onMounted(async () => {
   height: 2px;
   background: var(--color-accent);
   border-radius: 1px;
+}
+
+/* ── Floating drag preview ─────────────────────────────────────────────── */
+/* ── 浮动拖拽预览 ─────────────────────────────────────────────────────── */
+.drag-ghost {
+  position: fixed;
+  z-index: 10001;
+  pointer-events: none; /* critical: must not block elementFromPoint | 关键：不能挡住 elementFromPoint */
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 240px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--color-text-primary);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-strong, var(--color-border));
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+}
+.drag-ghost__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.drag-ghost__mode {
+  flex-shrink: 0;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--color-accent);
+  color: #fff;
 }
 .sidebar__nav-item {
   display: flex;

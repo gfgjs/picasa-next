@@ -94,7 +94,7 @@ pub fn create_read_pool(db_path: &Path, pool_size: u32) -> Result<DbPool> {
         .min_idle(Some(0))
         .connection_customizer(Box::new(ReadPoolCustomiser))
         .build(manager)
-        .map_err(|e| AppError::Pool(e.to_string()))?;
+        .map_err(|e| AppError::Pool(e))?;
 
     debug!("Read pool created successfully");
     Ok(pool)

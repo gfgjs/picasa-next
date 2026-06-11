@@ -87,8 +87,8 @@ pub async fn move_media_items(
         }
         
         {
-            let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
-            conn.execute("DELETE FROM media_items WHERE id = ?1", rusqlite::params![id]).map_err(|e| AppError::Db(e.to_string()))?;
+            let conn = state.db_writer.lock().map_err(|e| AppError::System(e.to_string()))?;
+            conn.execute("DELETE FROM media_items WHERE id = ?1", rusqlite::params![id]).map_err(|e| AppError::Db(e))?;
         }
         moved_ids.push(id);
     }

@@ -117,7 +117,7 @@ fn run_pipeline_blocking(
     // 获取 AI 引擎 — 未就绪则退出
     let clip_session = state.ai_engine.read().unwrap().as_ref()
         .and_then(|p| p.clip_image_session.clone())
-        .ok_or_else(|| AppError::Ai("CLIP engine not initialized | CLIP 引擎未初始化".to_string()))?;
+        .ok_or_else(|| AppError::Internal("CLIP engine not initialized".into()))?;
 
     // Count how many items need processing
     // 统计需要处理的项数

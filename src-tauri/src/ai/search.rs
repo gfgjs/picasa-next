@@ -123,7 +123,7 @@ pub fn semantic_search(
     // 3. 并行为每个嵌入向量打分（单位向量的余弦 == 点积）。
     let mut scored: Vec<(i64, f32)> = {
         let guard = state.ai_embedding_cache.read().unwrap();
-        let cache = guard.as_ref().ok_or_else(|| AppError::Engine("embedding cache missing".into()))?;
+        let cache = guard.as_ref().ok_or_else(|| AppError::Internal("embedding cache missing".into()))?;
 
         if cache.is_empty() {
             drop(guard);

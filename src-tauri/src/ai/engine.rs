@@ -201,7 +201,8 @@ impl AiEnginePool {
         }
 
         let pool_size = match provider_info.provider {
-            AiProvider::Cpu => std::thread::available_parallelism().map(|n| n.get().min(8)).unwrap_or(4),
+            // CPU 路径：流水线是单推理线程的，所以给单个 Session 分配全核心，将池子大小限制为 2
+            AiProvider::Cpu => 2,
             _ => 1, // GPU providers: DirectML/CUDA drivers handle internal concurrency; multiple sessions cause severe DX12 lock contention
         };
 
@@ -221,7 +222,7 @@ impl AiEnginePool {
             clip_image_session = None;
             clip_text_session = None;
             
-            let cpu_pool_size = std::thread::available_parallelism().map(|n| n.get().min(8)).unwrap_or(4);
+            let cpu_pool_size = 2;
             clip_image_session = load_session_pool(&image_path, &AiProvider::Cpu, "CLIP image encoder (CPU) | CLIP 图像编码器 (CPU)", cpu_pool_size);
             clip_text_session = load_session_pool(&text_path, &AiProvider::Cpu, "CLIP text encoder (CPU) | CLIP 文本编码器 (CPU)", cpu_pool_size);
         }
@@ -387,17 +388,12 @@ fn build_session(model_path: &PathBuf, provider: &AiProvider) -> ort::Result<Ses
             b.commit_from_file(model_path)
         }
         _ => {
-            // CPU path — use Level1 (Basic) optimization for faster session creation.
-            //
-            // Level3 (ORT_ENABLE_ALL) runs expensive graph fusion and layout passes on the full
-            // 330 MB fp32 ViT-B/16 graph, which can take 5–10 minutes on first load with no caching.
-            // Level1 (ORT_ENABLE_BASIC) = constant folding + dead node elimination only,
-            // creating the session in seconds with minimal inference performance impact for CPU fp32.
-            //
-            // CPU 路径 — 既然我们外层使用了多 Session 实例并行，
-            // 内部必须强制限制单线程（with_intra_threads(1)），否则会产生 N*N 级别的线程风暴，导致 CPU 剧烈颠簸反而变慢。
+            // CPU 路径 — 因为扫描流水线的外层 `run_inference_tasks` 只有 1 个线程在请求 Session，
+            // 所以我们必须给该 Session 赋予全部的核心资源（with_intra_threads(cores)），
+            // 否则会造成全量扫描时 CPU 使用率极低（退化成单核执行）的问题。
+            let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
             let mut b = Session::builder()?
-                .with_intra_threads(1)?
+                .with_intra_threads(cores as _)?
                 .with_optimization_level(GraphOptimizationLevel::Level1)?
                 ;
             b.commit_from_file(model_path)

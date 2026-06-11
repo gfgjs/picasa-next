@@ -25,11 +25,11 @@ impl ImageEngine for ImageRsEngine {
 
     fn decode(&self, file_path: &Path, resize: Option<ResizeHint>) -> Result<DecodedImage, AppError> {
         let img = ImageReader::open(file_path)
-            .map_err(|e| AppError::Engine(e.to_string()))?
+            .map_err(AppError::Io)?
             .with_guessed_format()
-            .map_err(|e| AppError::Engine(e.to_string()))?
+            .map_err(AppError::Io)?
             .decode()
-            .map_err(|e| AppError::Engine(e.to_string()))?;
+            .map_err(AppError::Engine)?;
 
         // Apply EXIF orientation for JPEG
         // 为 JPEG 应用 EXIF 方向

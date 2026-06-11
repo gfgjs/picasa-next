@@ -35,7 +35,7 @@ impl ImageEngine for WicEngine {
                 &CLSID_WICImagingFactory,
                 None,
                 windows::Win32::System::Com::CLSCTX_INPROC_SERVER,
-            ).map_err(|e| AppError::Engine(format!("Failed to create WIC factory: {}", e)))?;
+            ).map_err(|e| AppError::Os(format!("Failed to create WIC factory: {}", e)))?;
 
             // Create Decoder
             let decoder = factory.CreateDecoderFromFilename(
@@ -43,21 +43,21 @@ impl ImageEngine for WicEngine {
                 None,
                 GENERIC_READ,
                 WICDecodeMetadataCacheOnDemand,
-            ).map_err(|e| AppError::Engine(format!("WIC CreateDecoderFromFilename failed: {}", e)))?;
+            ).map_err(|e| AppError::Os(format!("WIC error: {}", e)))?;
 
             // Get first frame
             let frame = decoder.GetFrame(0)
-                .map_err(|e| AppError::Engine(format!("WIC GetFrame failed: {}", e)))?;
+                .map_err(|e| AppError::Os(format!("WIC error: {}", e)))?;
 
             // Get dimensions
             let mut width = 0;
             let mut height = 0;
             frame.GetSize(&mut width, &mut height)
-                .map_err(|e| AppError::Engine(format!("WIC GetSize failed: {}", e)))?;
+                .map_err(|e| AppError::Os(format!("WIC error: {}", e)))?;
 
             // Convert to 32bppRGBA
             let converter = factory.CreateFormatConverter()
-                .map_err(|e| AppError::Engine(format!("WIC CreateFormatConverter failed: {}", e)))?;
+                .map_err(|e| AppError::Os(format!("WIC error: {}", e)))?;
 
             // Calculate target dimensions based on ResizeHint
             // 根据 ResizeHint 计算目标尺寸
@@ -89,17 +89,17 @@ impl ImageEngine for WicEngine {
 
             let source: IWICBitmapSource = if needs_resize {
                 let scaler = factory.CreateBitmapScaler()
-                    .map_err(|e| AppError::Engine(format!("WIC CreateBitmapScaler failed: {}", e)))?;
+                    .map_err(|e| AppError::Os(format!("WIC error: {}", e)))?;
                 scaler.Initialize(
                     &frame,
                     scaled_width,
                     scaled_height,
                     WICBitmapInterpolationModeCubic,
-                ).map_err(|e| AppError::Engine(format!("WIC scaler initialization failed: {}", e)))?;
+                ).map_err(|e| AppError::Os(format!("WIC error: {}", e)))?;
 
-                scaler.cast().map_err(|e| AppError::Engine(format!("WIC cast failed: {}", e)))?
+                scaler.cast().map_err(|e| AppError::Os(format!("WIC error: {}", e)))?
             } else {
-                frame.cast().map_err(|e| AppError::Engine(format!("WIC cast failed: {}", e)))?
+                frame.cast().map_err(|e| AppError::Os(format!("WIC error: {}", e)))?
             };
 
             converter.Initialize(
@@ -109,7 +109,7 @@ impl ImageEngine for WicEngine {
                 None,
                 0.0,
                 WICBitmapPaletteTypeCustom,
-            ).map_err(|e| AppError::Engine(format!("WIC format conversion failed: {}", e)))?;
+            ).map_err(|e| AppError::Os(format!("WIC error: {}", e)))?;
 
             // Copy pixels
             let stride = scaled_width * 4;
@@ -120,7 +120,7 @@ impl ImageEngine for WicEngine {
                 std::ptr::null(),
                 stride,
                 &mut pixels,
-            ).map_err(|e| AppError::Engine(format!("WIC CopyPixels failed: {}", e)))?;
+            ).map_err(|e| AppError::Os(format!("WIC error: {}", e)))?;
 
             // Apply EXIF orientation if needed (since WIC sometimes doesn't automatically apply it based on codec)
             let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();

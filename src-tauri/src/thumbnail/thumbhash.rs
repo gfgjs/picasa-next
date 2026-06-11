@@ -37,14 +37,14 @@ pub fn generate_thumbhash(decoded: &DecodedImage) -> Result<Vec<u8>> {
             decoded.pixels.clone(),
             PixelType::U8x4,
         )
-        .map_err(|e| AppError::Engine(e.to_string()))?;
+        .map_err(|e| AppError::Internal(e.to_string()))?;
 
         let mut dst = FirImage::new(new_w.max(1), new_h.max(1), PixelType::U8x4);
 
         let mut resizer = Resizer::new();
         resizer
             .resize(&src, &mut dst, &ResizeOptions::default())
-            .map_err(|e| AppError::Engine(e.to_string()))?;
+            .map_err(|e| AppError::Internal(e.to_string()))?;
 
         (dst.into_vec(), new_w, new_h)
     } else {

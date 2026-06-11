@@ -88,7 +88,7 @@ pub async fn move_to_trash(item_ids: Vec<i64>, state: State<'_, Arc<AppState>>) 
     // 阶段 2：集成 `trash` crate
     // For now, fall back to soft delete
     // 目前，退回到软删除
-    let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    let conn = state.db_writer.lock().map_err(|e| AppError::System(e.to_string()))?;
     crate::db::queries::soft_delete_items(&conn, &item_ids)
 }
 
@@ -220,8 +220,8 @@ pub async fn set_as_wallpaper(item_id: i64, state: State<'_, Arc<AppState>>) -> 
     let abs_path = resolve_media_path(&root, &rel, &name);
     info!("set_as_wallpaper: {abs_path} | 设为壁纸: {abs_path}");
 
-    wallpaper::set_from_path(&abs_path).map_err(|e| AppError::Engine(format!("Failed to set wallpaper: {}", e)))?;
-    wallpaper::set_mode(wallpaper::Mode::Crop).map_err(|e| AppError::Engine(format!("Failed to set wallpaper mode: {}", e)))?;
+    wallpaper::set_from_path(&abs_path).map_err(|e| AppError::Os(format!("Failed to set wallpaper: {}", e)))?;
+    wallpaper::set_mode(wallpaper::Mode::Crop).map_err(|e| AppError::Os(format!("Failed to set wallpaper mode: {}", e)))?;
 
     Ok(())
 }
@@ -235,7 +235,7 @@ pub async fn copy_image_to_clipboard(item_id: i64, state: State<'_, Arc<AppState
     let abs_path = resolve_media_path(&root, &rel, &name);
     info!("copy_image_to_clipboard: {abs_path} | 复制图像到剪贴板: {abs_path}");
 
-    let img = image::open(&abs_path).map_err(|e| AppError::Engine(format!("Failed to open image for clipboard: {}", e)))?;
+    let img = image::open(&abs_path).map_err(|e| AppError::Engine(e))?;
     let rgba = img.into_rgba8();
     let (width, height) = rgba.dimensions();
     let img_data = arboard::ImageData {
@@ -244,8 +244,8 @@ pub async fn copy_image_to_clipboard(item_id: i64, state: State<'_, Arc<AppState
         bytes: std::borrow::Cow::Borrowed(rgba.as_raw()),
     };
 
-    let mut clipboard = arboard::Clipboard::new().map_err(|e| AppError::Engine(format!("Failed to initialize clipboard: {}", e)))?;
-    clipboard.set_image(img_data).map_err(|e| AppError::Engine(format!("Failed to set clipboard image: {}", e)))?;
+    let mut clipboard = arboard::Clipboard::new().map_err(|e| AppError::Os(format!("Failed to initialize clipboard: {}", e)))?;
+    clipboard.set_image(img_data).map_err(|e| AppError::Os(format!("Failed to set clipboard image: {}", e)))?;
 
     Ok(())
 }

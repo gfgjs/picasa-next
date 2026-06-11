@@ -64,7 +64,7 @@ fn ensure_engine_initialised(state: &AppState) -> Result<()> {
 
     let models = models_dir(state);
     std::fs::create_dir_all(&models)
-        .map_err(|e| AppError::Io(format!("Cannot create models dir | 无法创建模型目录: {e}")))?;
+        .map_err(|e| AppError::Io(e))?;
 
     info!("Initialising AI engine | 正在初始化 AI 引擎...");
     let conn = state.db_read_pool.get()?;

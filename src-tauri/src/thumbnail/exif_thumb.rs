@@ -106,7 +106,7 @@ pub fn encode_as_webp(rgba: &image::RgbaImage, _w: u32, _h: u32) -> Result<Vec<u
         &mut std::io::Cursor::new(&mut buf),
         image::ImageFormat::WebP,
     )
-    .map_err(|e| AppError::Engine(format!("WebP encode failed: {e}")))?;
+    .map_err(|e| AppError::Internal(format!("WebP encode failed: {e}")))?;
     Ok(buf)
 }
 
@@ -118,6 +118,6 @@ pub fn encode_as_jpeg(rgba: &image::RgbaImage) -> Result<Vec<u8>> {
     let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, 85);
     encoder
         .encode_image(&image::DynamicImage::ImageRgb8(rgb))
-        .map_err(|e| AppError::Engine(format!("JPEG encode failed: {e}")))?;
+        .map_err(|e| AppError::Internal(format!("JPEG encode failed: {e}")))?;
     Ok(buf)
 }

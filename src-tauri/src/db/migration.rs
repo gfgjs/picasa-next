@@ -56,7 +56,7 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
     if version < 1 {
         info!("Applying migration → v1 | 正在应用数据库迁移 → v1");
         conn.execute_batch(SCHEMA_V1)
-            .map_err(|e| AppError::Db(format!("Migration v1 failed: {e}")))?;
+            .map_err(|e| AppError::Db(e))?;
         write_version(conn, 1)?;
         info!("Migration v1 complete | v1 数据库迁移完成");
     }
@@ -64,7 +64,7 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
     if version < 2 {
         info!("Applying migration → v2 (AI embeddings) | 正在应用数据库迁移 → v2（AI 嵌入向量）");
         conn.execute_batch(SCHEMA_V2)
-            .map_err(|e| AppError::Db(format!("Migration v2 failed: {e}")))?;
+            .map_err(|e| AppError::Db(e))?;
         write_version(conn, 2)?;
         info!("Migration v2 complete | v2 数据库迁移完成");
     }
@@ -72,7 +72,7 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
     if version < 3 {
         info!("Applying migration → v3 (AI search results) | 正在应用数据库迁移 → v3（AI 搜索结果）");
         conn.execute_batch(crate::db::schema::SCHEMA_V3)
-            .map_err(|e| AppError::Db(format!("Migration v3 failed: {e}")))?;
+            .map_err(|e| AppError::Db(e))?;
         write_version(conn, 3)?;
         info!("Migration v3 complete | v3 数据库迁移完成");
     }

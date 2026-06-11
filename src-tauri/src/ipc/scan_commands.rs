@@ -48,7 +48,7 @@ pub async fn add_scan_root(
         }
     }
 
-    let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    let conn = state.db_writer.lock().map_err(|e| AppError::System(e.to_string()))?;
     let id = q::insert_scan_root(&conn, &norm, alias.as_deref())?;
 
     // 立即创建顶级目录记录，以便前端可以立刻加载和选中
@@ -73,7 +73,7 @@ pub async fn add_scan_root(
 pub async fn remove_scan_root(id: i64, state: State<'_, Arc<AppState>>) -> Result<()> {
     info!("User action: Removing scan root ID: {} | 用户操作：正在移除扫描根目录 ID: {}", id, id);
     state.cancel_scan(id);
-    let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    let conn = state.db_writer.lock().map_err(|e| AppError::System(e.to_string()))?;
     q::delete_scan_root(&conn, id)?;
     info!("Scan root removed: id={id} | 已移除扫描根目录: id={id}");
     Ok(())
@@ -123,7 +123,7 @@ pub async fn remove_scan_root_with_options(
     //    级联删除数据库记录
     {
         let conn = state.db_writer.lock()
-            .map_err(|e| AppError::Db(format!("Lock error: {e} | 锁错误: {e}")))?;
+            .map_err(|e| AppError::System(format!("Lock error: {e}")))?;
         q::delete_scan_root(&conn, id)?;
     }
     
@@ -280,7 +280,7 @@ pub async fn start_scan(
         )
     })
     .await
-    .map_err(|e| AppError::Io(e.to_string()))??;
+    .map_err(|e| AppError::System(e.to_string()))??;
 
     // Spawn background enrichment (fire-and-forget, emits events)
     // After enrichment completes, remove the scan token so the AI pipeline
@@ -330,7 +330,7 @@ pub async fn clear_database(
     // Wipe all DB tables
     // 擦除所有数据库表
     {
-        let mut conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        let mut conn = state.db_writer.lock().map_err(|e| AppError::System(e.to_string()))?;
         let tx = conn.transaction()?;
         tx.execute_batch(
             "DELETE FROM image_meta;
@@ -350,13 +350,13 @@ pub async fn clear_database(
     let cache_dir = app
         .path()
         .app_data_dir()
-        .map_err(|e| AppError::Io(e.to_string()))?
+        .map_err(|e| AppError::System(e.to_string()))?
         .join("cache")
         .join("thumbnails");
 
     if cache_dir.exists() {
         std::fs::remove_dir_all(&cache_dir)
-            .map_err(|e| AppError::Io(format!("Failed to remove thumbnail cache: {e}")))?;
+            .map_err(|e| AppError::Io(e))?;
     }
 
     // Reset the layout cache in memory
@@ -372,7 +372,7 @@ pub async fn clear_settings(
     state: State<'_, Arc<AppState>>,
 ) -> Result<()> {
     info!("User action: Clearing settings | 用户操作：正在清除设置");
-    let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    let conn = state.db_writer.lock().map_err(|e| AppError::System(e.to_string()))?;
     // ONLY delete user settings, preserve system keys like schema_version
     // 仅删除用户设置，保留如 schema_version 等系统键值，避免重启时重复执行数据库迁移导致崩溃
     conn.execute("DELETE FROM app_config WHERE key != 'schema_version'", [])?;

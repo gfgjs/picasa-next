@@ -37,7 +37,7 @@ pub async fn batch_request_thumbnails(
 
     {
         // Check cache in batch
-        let conn = state.db_read_pool.get().map_err(|e| AppError::Db(e.to_string()))?;
+        let conn = state.db_read_pool.get().map_err(AppError::from)?;
         let placeholders = item_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
 
         if !placeholders.is_empty() {
@@ -45,7 +45,7 @@ pub async fn batch_request_thumbnails(
                 "SELECT id, thumb_status, thumb_path, thumbhash FROM media_items WHERE id IN ({})",
                 placeholders
             );
-            let mut stmt = conn.prepare(&sql).map_err(|e| AppError::Db(e.to_string()))?;
+            let mut stmt = conn.prepare(&sql).map_err(|e| AppError::Db(e))?;
             let rows = stmt
                 .query_map(rusqlite::params_from_iter(&item_ids), |row| {
                     Ok(ThumbResult {
@@ -55,7 +55,7 @@ pub async fn batch_request_thumbnails(
                         thumbhash:    row.get(3)?,
                     })
                 })
-                .map_err(|e| AppError::Db(e.to_string()))?;
+                .map_err(|e| AppError::Db(e))?;
 
             for r in rows.flatten() {
                 if r.thumb_status == 1 || r.thumb_status == 3 || r.thumb_status == 2 {
@@ -330,7 +330,7 @@ pub async fn batch_request_thumbnails(
             info!("batch_request_thumbnails: finished pipeline | 批量请求生成完成 (Pipeline Scheme 2)");
         })
         .await
-        .map_err(|e| AppError::Io(e.to_string()))?;
+        .map_err(|e| AppError::Io(e.into()))?;
     }
 
     Ok(())
@@ -354,9 +354,9 @@ pub async fn start_full_thumbnail_generation(
     state: State<'_, Arc<AppState>>,
 ) -> Result<()> {
     {
-        let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        let conn = state.db_writer.lock().map_err(|e| AppError::System(e.to_string()))?;
         conn.execute("UPDATE media_items SET thumb_status = 0, thumb_path = NULL, thumbhash = NULL WHERE is_deleted = 0", [])
-            .map_err(|e| AppError::Db(e.to_string()))?;
+            .map_err(|e| AppError::Db(e))?;
     }
 
     let total = {
@@ -765,9 +765,9 @@ pub async fn clear_all_thumbnails(state: State<'_, Arc<AppState>>) -> Result<()>
     
     // 1. Reset database thumb_status
     {
-        let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        let conn = state.db_writer.lock().map_err(|e| AppError::System(e.to_string()))?;
         conn.execute("UPDATE media_items SET thumb_status = 0, thumb_path = NULL, thumbhash = NULL WHERE thumb_status != 0", [])
-            .map_err(|e| AppError::Db(e.to_string()))?;
+            .map_err(|e| AppError::Db(e))?;
     }
     
     // 2. Delete cache directory
@@ -775,7 +775,7 @@ pub async fn clear_all_thumbnails(state: State<'_, Arc<AppState>>) -> Result<()>
     let thumb_dir = cache_dir.join("thumbnails");
     if thumb_dir.exists() {
         std::fs::remove_dir_all(&thumb_dir)
-            .map_err(|e| AppError::Io(format!("Failed to remove thumbnail cache: {e}")))?;
+            .map_err(|e| AppError::Io(e.into()))?;
     }
     
     // 3. Clear layout cache

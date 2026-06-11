@@ -47,7 +47,7 @@ fn panic_guard<T>(label: &str, f: impl FnOnce() -> Result<T>) -> Result<T> {
         Ok(r) => r,
         Err(_) => {
             warn!("[ThumbGen] PANIC caught in {label} — item failed, process kept alive | 已捕获 panic，单项失败但进程存活");
-            Err(AppError::Engine(format!("panic during {label}")))
+            Err(AppError::Internal(format!("panic during {label}")))
         }
     }
 }
@@ -252,7 +252,7 @@ fn try_gpu_decode(
     config: &ThumbConfig,
 ) -> Result<DecodeResult> {
     let gpu_engine = crate::engine::gpu::get_gpu_engine(&config.gpu_engine)
-        .ok_or_else(|| AppError::Engine(format!("Unknown GPU engine: {}", config.gpu_engine)))?;
+        .ok_or_else(|| AppError::Internal(format!("Unknown GPU engine: {}", config.gpu_engine)))?;
 
     if !gpu_engine.can_handle(&item.file_format) {
         return Err(AppError::UnsupportedFormat(item.file_format.clone()));
@@ -279,7 +279,7 @@ fn try_cpu_decode(
     // Try fast EXIF path first
     if let Some((webp, hash)) = crate::thumbnail::exif_thumb::try_exif_thumb(engine.as_ref(), abs_path, config.size) {
         ensure_thumb_dir(&config.cache_dir, config.size, item.cache_key)
-            .map_err(|e| AppError::Io(e.to_string()))?;
+            .map_err(|e| AppError::Io(e))?;
         let disk_path = thumb_path(&config.cache_dir, config.size, item.cache_key);
         std::fs::write(&disk_path, &webp).map_err(AppError::from)?;
 
@@ -328,10 +328,10 @@ fn encode_media_step_inner(
 
     let webp = crate::thumbnail::exif_thumb::encode_as_webp(&rgba_img, rgba_img.width(), rgba_img.height())
         .or_else(|_| crate::thumbnail::exif_thumb::encode_as_jpeg(&rgba_img))
-        .map_err(|_| AppError::Engine("WebP encode failed".into()))?;
+        .map_err(|_| AppError::Internal("WebP encode failed".into()))?;
 
     ensure_thumb_dir(&config.cache_dir, config.size, cache_key)
-        .map_err(|e| AppError::Io(e.to_string()))?;
+        .map_err(|e| AppError::Io(e))?;
     let disk_path = thumb_path(&config.cache_dir, config.size, cache_key);
     std::fs::write(&disk_path, &webp).map_err(AppError::from)?;
 
@@ -352,7 +352,7 @@ fn encode_media_step_inner(
 fn resize_to_rgba(pixels: &mut [u8], w: u32, h: u32, target: u32) -> Result<image::RgbaImage> {
     if w <= target && h <= target {
         return image::RgbaImage::from_raw(w, h, pixels.to_vec())
-            .ok_or_else(|| AppError::Engine("resize buffer mismatch".into()));
+            .ok_or_else(|| AppError::Internal("resize buffer mismatch".into()));
     }
 
     use fast_image_resize::{images::Image as FirImage, Resizer, ResizeOptions};
@@ -372,7 +372,7 @@ fn resize_to_rgba(pixels: &mut [u8], w: u32, h: u32, target: u32) -> Result<imag
         pixels,
         PixelType::U8x4,
     )
-    .map_err(|e| AppError::Engine(e.to_string()))?;
+    .map_err(|e| AppError::Internal(e.to_string()))?;
 
     let mut dst = FirImage::new(new_w.max(1), new_h.max(1), PixelType::U8x4);
 
@@ -382,8 +382,8 @@ fn resize_to_rgba(pixels: &mut [u8], w: u32, h: u32, target: u32) -> Result<imag
     let mut resizer = Resizer::new();
     resizer
         .resize(&src, &mut dst, &options)
-        .map_err(|e| AppError::Engine(e.to_string()))?;
+        .map_err(|e| AppError::Internal(e.to_string()))?;
 
     image::RgbaImage::from_raw(new_w.max(1), new_h.max(1), dst.into_vec())
-        .ok_or_else(|| AppError::Engine("resize buffer mismatch".into()))
+        .ok_or_else(|| AppError::Internal("resize buffer mismatch".into()))
 }

@@ -269,7 +269,7 @@ pub fn run() {
 
             // ── Background Tasks ──────────────────────────────────────────
             // ── 后台任务 ──────────────────────────────────────────
-            let handles_pool: Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let handles_pool: Arc<std::sync::Mutex<Vec<tauri::async_runtime::JoinHandle<()>>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
             app.manage(handles_pool.clone());
 
             let h1 = tauri::async_runtime::spawn(async move {
@@ -471,7 +471,7 @@ pub fn run() {
                         }
                     }
 
-                    if let Some(handles_pool) = app_handle.try_state::<Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>>() {
+                    if let Some(handles_pool) = app_handle.try_state::<Arc<std::sync::Mutex<Vec<tauri::async_runtime::JoinHandle<()>>>>>() {
                         if let Ok(mut lock) = handles_pool.lock() {
                             let handles: Vec<_> = lock.drain(..).collect();
                             for h in &handles {

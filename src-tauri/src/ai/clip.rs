@@ -161,7 +161,7 @@ pub fn encode_image_bytes(
     image_bytes: &[u8],
 ) -> Result<Vec<f32>> {
     let img = image::load_from_memory(image_bytes)
-        .map_err(|e| AppError::Engine(format!("Image decode failed | 图像解码失败: {e}")))?;
+        .map_err(|e| AppError::Internal(format!("Image decode failed | 图像解码失败: {e}")))?;
 
     encode_image(session_pool, &img)
 }
@@ -203,19 +203,19 @@ fn run_image_inference(
     let shape: [i64; 4] = [1, 3, IMG_SIZE as i64, IMG_SIZE as i64];
     let (flat_data, _offset) = array.into_raw_vec_and_offset();
     let tensor = Tensor::from_array((shape, flat_data))
-        .map_err(|e| AppError::Ai(format!("Build image tensor failed | 构建图像张量失败: {e}")))?;
+        .map_err(|e| AppError::Ai(e))?;
 
     let mut guard = session_pool.get()
-        .ok_or_else(|| AppError::Ai("Session pool disconnected".into()))?;
+        .ok_or_else(|| AppError::Internal("Session pool disconnected".into()))?;
     let outputs = guard
         .run(ort::inputs!["pixel_values" => tensor])
-        .map_err(|e| AppError::Ai(format!("CLIP image inference failed | CLIP 图像推理失败: {e}")))?;
+        .map_err(|e| AppError::Ai(e))?;
 
     // Output: "unnorm_image_features" [1, 512] — model does not L2-normalise, we do it here
     // 输出："unnorm_image_features" [1, 512] — 模型不做 L2 归一化，在此处手动归一化
     let raw = outputs[0]
         .try_extract_tensor::<f32>()
-        .map_err(|e| AppError::Ai(format!("Extract image tensor failed | 提取图像张量失败: {e}")))?;
+        .map_err(|e| AppError::Ai(e))?;
 
     let (_shape, raw_slice) = raw;
     let embedding: Vec<f32> = raw_slice.iter().copied().collect();
@@ -236,18 +236,18 @@ pub fn encode_image_batch(
     ];
     let (flat_data, _offset) = batch_tensor.into_raw_vec_and_offset();
     let tensor = Tensor::from_array((shape, flat_data))
-        .map_err(|e| AppError::Ai(format!("Build image batch tensor failed | 构建图像批处理张量失败: {e}")))?;
+        .map_err(|e| AppError::Ai(e))?;
 
     let mut guard = session_pool.get()
-        .ok_or_else(|| AppError::Ai("Session pool disconnected".into()))?;
+        .ok_or_else(|| AppError::Internal("Session pool disconnected".into()))?;
     let outputs = guard
         .run(ort::inputs!["pixel_values" => tensor])
-        .map_err(|e| AppError::Ai(format!("CLIP image batch inference failed | CLIP 图像批量推理失败: {e}")))?;
+        .map_err(|e| AppError::Ai(e))?;
 
     // Output: "unnorm_image_features" [N, 512]
     let raw = outputs[0]
         .try_extract_tensor::<f32>()
-        .map_err(|e| AppError::Ai(format!("Extract image batch tensor failed | 提取图像批量张量失败: {e}")))?;
+        .map_err(|e| AppError::Ai(e))?;
 
     let (out_shape, raw_slice) = raw;
     let n = out_shape[0] as usize;
@@ -257,7 +257,7 @@ pub fn encode_image_batch(
         let start = i * EMBED_DIM;
         let end = start + EMBED_DIM;
         let embedding: Vec<f32> = raw_slice.get(start..end)
-            .ok_or_else(|| AppError::Ai(format!("Batch output tensor out of bounds | 批处理输出张量越界: start={}, end={}, len={}", start, end, raw_slice.len())))?
+            .ok_or_else(|| AppError::Internal(format!("Batch output tensor out of bounds")))?
             .to_vec();
         results.push(l2_normalize(embedding));
     }
@@ -381,7 +381,7 @@ impl ClipTokenizer {
             .unk_token("[UNK]".to_string())
             .max_input_chars_per_word(100)
             .build()
-            .map_err(|e| AppError::Ai(format!("Tokenizer build failed | 分词器构建失败: {e}")))?;
+            .map_err(|e| AppError::AiTokenizer(format!("Tokenizer error: {e}")))?;
 
         let mut tokenizer = tokenizers::Tokenizer::new(wp);
         
@@ -421,14 +421,7 @@ impl ClipTokenizer {
                  请从 OFA-Sys/chinese-clip-vit-base-patch16 下载正确的词表。",
                 vocab_size, vocab_size
             );
-            return Err(AppError::Ai(format!(
-                "Wrong vocab.txt: only {} tokens, expected ~21128. \
-                 Please replace with bert-base-chinese vocab from \
-                 OFA-Sys/chinese-clip-vit-base-patch16. \
-                 | 错误的 vocab.txt：仅 {} 个 token，预期约 21128。\
-                 请用 OFA-Sys/chinese-clip-vit-base-patch16 的正确词表替换。",
-                vocab_size, vocab_size
-            )));
+            return Err(AppError::AiTokenizer("Wrong vocab.txt".to_string()));
         }
         debug!("Loaded vocab with {} tokens | 加载了 {} 个 token 的词表", vocab_size, vocab_size);
 
@@ -443,15 +436,15 @@ impl ClipTokenizer {
         let sep_id = 102u32; // [SEP] in Chinese-CLIP vocab
         let post_processor = TemplateProcessing::builder()
             .try_single("[CLS]:0 $A:0 [SEP]:0")
-            .map_err(|e| AppError::Ai(format!("Template single failed: {e}")))?
+            .map_err(|e| AppError::AiTokenizer(e.to_string()))?
             .try_pair("[CLS]:0 $A:0 [SEP]:0 $B:1 [SEP]:1")
-            .map_err(|e| AppError::Ai(format!("Template pair failed: {e}")))?
+            .map_err(|e| AppError::AiTokenizer(e.to_string()))?
             .special_tokens(vec![
                 (String::from("[CLS]"), cls_id),
                 (String::from("[SEP]"), sep_id),
             ])
             .build()
-            .map_err(|e| AppError::Ai(format!("Post-processor build failed | 后处理器构建失败: {e}")))?;
+            .map_err(|e| AppError::AiTokenizer(e.to_string()))?;
         tokenizer.with_post_processor(Some(post_processor));
 
         // ── Truncation: ensure [SEP] is preserved for long text ─────────────
@@ -466,7 +459,7 @@ impl ClipTokenizer {
             ..Default::default()
         };
         tokenizer.with_truncation(Some(truncation))
-            .map_err(|e| AppError::Ai(format!("Truncation config failed | 截断配置失败: {e}")))?;
+            .map_err(|e| AppError::AiTokenizer(e.to_string()))?;
 
         // ── Padding: pad to MAX_SEQ_LEN with 0 (= [PAD]) ────────────────────
         // ── 填充：用 0（= [PAD]）填充到 MAX_SEQ_LEN ──────────────────────────
@@ -494,7 +487,7 @@ impl ClipTokenizer {
     pub fn encode(&self, text: &str) -> Result<(Vec<i64>, Vec<i64>, Vec<i64>)> {
         let encoding = self.inner
             .encode(text, true)
-            .map_err(|e| AppError::Ai(format!("Tokenize failed | 分词失败: {e}")))?;
+            .map_err(|e| AppError::AiTokenizer(format!("Tokenize failed: {e}")))?;
 
         // tokenizers crate has already truncated to MAX_SEQ_LEN and padded with [PAD](0).
         // tokenizers crate 已截断到 MAX_SEQ_LEN 并用 [PAD](0) 填充。
@@ -527,26 +520,26 @@ pub fn encode_text(
 
     let shape = [1i64, MAX_SEQ_LEN as i64];
     let input_ids = Tensor::from_array((shape, ids))
-        .map_err(|e| AppError::Ai(e.to_string()))?;
+        .map_err(|e| AppError::Ai(e))?;
     let attention_mask = Tensor::from_array((shape, mask))
-        .map_err(|e| AppError::Ai(e.to_string()))?;
+        .map_err(|e| AppError::Ai(e))?;
     let token_type_ids = Tensor::from_array((shape, types))
-        .map_err(|e| AppError::Ai(e.to_string()))?;
+        .map_err(|e| AppError::Ai(e))?;
 
     let mut guard = session_pool.get()
-        .ok_or_else(|| AppError::Ai("Session pool disconnected".into()))?;
+        .ok_or_else(|| AppError::Internal("Session pool disconnected".into()))?;
     let outputs = guard
         .run(ort::inputs![
             "input_ids" => input_ids,
             "attention_mask" => attention_mask,
             "token_type_ids" => token_type_ids
         ])
-        .map_err(|e| AppError::Ai(format!("CLIP text inference failed | CLIP 文本推理失败: {e}")))?;
+        .map_err(|e| AppError::Ai(e))?;
 
     // Output: "text_features" [1, 512]
     let raw = outputs[0]
         .try_extract_tensor::<f32>()
-        .map_err(|e| AppError::Ai(format!("Extract text tensor failed | 提取文本张量失败: {e}")))?;
+        .map_err(|e| AppError::Ai(e))?;
 
     let (_shape, raw_slice) = raw;
     let embedding: Vec<f32> = raw_slice.iter().copied().collect();

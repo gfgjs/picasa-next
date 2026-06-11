@@ -232,7 +232,7 @@ pub fn run_fast_scan(
             return Err(AppError::Cancelled);
         }
 
-        let conn = writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        let conn = writer.lock().map_err(|e| AppError::System(e.to_string()))?;
 
         // Wrap the whole batch in a transaction
         // 将整个批处理包装在一个事务中
@@ -302,7 +302,7 @@ pub fn run_fast_scan(
     // ── Step 4: Finalise ──────────────────────────────────────────────────
     // ── 第 4 步：最终确定 ──────────────────────────────────────────────────
     {
-        let conn = writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        let conn = writer.lock().map_err(|e| AppError::System(e.to_string()))?;
         finish_scan_root(&conn, root_id, inserted as i64)?;
     }
 

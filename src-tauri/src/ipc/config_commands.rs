@@ -33,7 +33,7 @@ pub async fn get_app_config(key: String, state: State<'_, Arc<AppState>>) -> Res
         get_config(&pool, &key)
     })
     .await
-    .map_err(|e| AppError::Db(format!("spawn_blocking join error: {e}")))?
+    .map_err(|e| AppError::System(format!("spawn_blocking join error: {e}")))?
 }
 
 /// All config values needed by the frontend on startup, fetched in a single SQLite round-trip.
@@ -67,7 +67,7 @@ pub async fn get_startup_config(state: State<'_, Arc<AppState>>) -> Result<Start
         })
     })
     .await
-    .map_err(|e| AppError::Db(format!("spawn_blocking join error: {e}")))?
+    .map_err(|e| AppError::System(format!("spawn_blocking join error: {e}")))?
 }
 
 /// Set a configuration value.
@@ -75,7 +75,7 @@ pub async fn get_startup_config(state: State<'_, Arc<AppState>>) -> Result<Start
 #[tauri::command]
 pub async fn set_app_config(key: String, value: String, state: State<'_, Arc<AppState>>) -> Result<()> {
     {
-        let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        let conn = state.db_writer.lock().map_err(|e| AppError::System(e.to_string()))?;
         set_config(&conn, &key, &value)?;
     }
 
@@ -124,7 +124,7 @@ pub async fn set_app_config(key: String, value: String, state: State<'_, Arc<App
     // 可能现在需要真正的缩略图。将它们重置为待处理（status=0），
     // 以便按需生成机制重新处理它们。
     if needs_thumb_reset {
-        let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        let conn = state.db_writer.lock().map_err(|e| AppError::System(e.to_string()))?;
         let affected = conn.execute(
             "UPDATE media_items SET thumb_status = 0, thumb_path = NULL, thumbhash = NULL \
              WHERE thumb_status = 3 AND is_deleted = 0",

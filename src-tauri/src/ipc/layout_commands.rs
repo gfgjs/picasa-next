@@ -86,7 +86,7 @@ pub async fn compute_layout(
         Ok((rows, total_height))
     })
     .await
-    .map_err(|e| AppError::Engine(e.to_string()))??;
+    .map_err(|e| AppError::System(e.to_string()))??;
 
     let version = store_layout(&state.layout_cache, rows, total_height);
 

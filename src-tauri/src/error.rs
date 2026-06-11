@@ -60,6 +60,18 @@ pub enum AppError {
     #[error("AI model not loaded: {0}")]
     AiModelNotLoaded(String),
 
+    #[error("System error: {0}")]
+    System(String),
+
+    #[error("OS error: {0}")]
+    Os(String),
+
+    #[error("AI tokenization error: {0}")]
+    AiTokenizer(String),
+
+    #[error("Internal error: {0}")]
+    Internal(String),
+
     #[error("Failed to create folder: {0}")]
     CreateFolder(String),
 
@@ -99,6 +111,10 @@ impl Serialize for AppError {
             AppError::Cancelled => ("Cancelled", "操作已取消 | Operation cancelled"),
             AppError::Ai(_) => ("Ai", "AI 推理异常 | AI inference error"),
             AppError::AiModelNotLoaded(m) => ("AiModelNotLoaded", m.as_str()),
+            AppError::System(m) => ("System", m.as_str()),
+            AppError::Os(m) => ("Os", m.as_str()),
+            AppError::AiTokenizer(m) => ("AiTokenizer", m.as_str()),
+            AppError::Internal(m) => ("Internal", m.as_str()),
             AppError::CreateFolder(m) => ("CreateFolder", m.as_str()),
             AppError::MoveFile(m) => ("MoveFile", m.as_str()),
             AppError::CopyFile(m) => ("CopyFile", m.as_str()),

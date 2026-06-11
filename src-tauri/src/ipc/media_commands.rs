@@ -73,7 +73,7 @@ pub async fn get_companion_video_url(
 
     // Check for embedded video (Google/Samsung Motion Photo)
     // 检查是否有嵌入式视频（Google/Samsung 动态照片）
-    let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    let conn = state.db_writer.lock().map_err(|e| AppError::System(e.to_string()))?;
     let (has_embedded, cache_key): (bool, i64) = conn.query_row(
         "SELECT has_embedded_video, cache_key FROM media_items WHERE id=?1",
         rusqlite::params![item_id],
@@ -117,7 +117,7 @@ pub async fn get_companion_video_url(
 #[tauri::command]
 pub async fn toggle_favorite(item_id: i64, state: State<'_, Arc<AppState>>) -> Result<bool> {
     let new_val = {
-        let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        let conn = state.db_writer.lock().map_err(|e| AppError::System(e.to_string()))?;
         q::toggle_favorite(&conn, item_id)?
     };
     // Keep the resident layout cache consistent so the star doesn't revert on
@@ -141,7 +141,7 @@ pub async fn batch_toggle_favorite(
 
     let affected = {
         let writer = state.db_writer.lock()
-            .map_err(|e| AppError::Db(format!("Lock error: {} | 锁错误: {}", e, e)))?;
+            .map_err(|e| AppError::System(format!("Lock error: {}", e)))?;
 
         // Use a single UPDATE with IN clause for efficiency
         // 使用单个 UPDATE + IN 子句以提高效率
@@ -185,7 +185,7 @@ pub async fn batch_toggle_favorite(
 /// 设置媒体项的评分（0-5）。
 #[tauri::command]
 pub async fn set_rating(item_id: i64, rating: i64, state: State<'_, Arc<AppState>>) -> Result<()> {
-    let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    let conn = state.db_writer.lock().map_err(|e| AppError::System(e.to_string()))?;
     q::set_rating(&conn, item_id, rating.clamp(0, 5))
 }
 
@@ -193,7 +193,7 @@ pub async fn set_rating(item_id: i64, rating: i64, state: State<'_, Arc<AppState
 /// 软删除媒体项（标记 is_deleted=1）。
 #[tauri::command]
 pub async fn soft_delete_items(item_ids: Vec<i64>, state: State<'_, Arc<AppState>>) -> Result<()> {
-    let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    let conn = state.db_writer.lock().map_err(|e| AppError::System(e.to_string()))?;
     q::soft_delete_items(&conn, &item_ids)
 }
 
@@ -201,7 +201,7 @@ pub async fn soft_delete_items(item_ids: Vec<i64>, state: State<'_, Arc<AppState
 /// 恢复软删除的项目。
 #[tauri::command]
 pub async fn restore_items(item_ids: Vec<i64>, state: State<'_, Arc<AppState>>) -> Result<()> {
-    let conn = state.db_writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    let conn = state.db_writer.lock().map_err(|e| AppError::System(e.to_string()))?;
     q::restore_items(&conn, &item_ids)
 }
 
@@ -265,5 +265,5 @@ fn extract_embedded_mp4(abs_path: &str) -> Result<Vec<u8>> {
             }
         }
     }
-    Err(AppError::Engine("No embedded MP4 found in Motion Photo".into()))
+    Err(AppError::Internal("No embedded MP4 found in Motion Photo".into()))
 }

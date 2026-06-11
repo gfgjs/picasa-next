@@ -71,7 +71,7 @@ pub fn run_enrichment(
     // ── Count total unenriched items ──────────────────────────────────────
     // ── 计算未丰富信息的项目总数 ──────────────────────────────────────
     let total: i64 = {
-        let conn = writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        let conn = writer.lock().map_err(|e| AppError::System(e.to_string()))?;
         conn.query_row(
             "SELECT COUNT(*) FROM media_items m
              LEFT JOIN image_meta im ON im.item_id = m.id
@@ -95,7 +95,7 @@ pub fn run_enrichment(
         // Fetch next batch of unenriched item IDs (within this root)
         // 获取下一批未丰富信息的项目 ID（在该根目录下）
         let ids: Vec<i64> = {
-            let conn = writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
+            let conn = writer.lock().map_err(|e| AppError::System(e.to_string()))?;
             let mut stmt = conn.prepare(
                 "SELECT m.id FROM media_items m
                  LEFT JOIN image_meta im ON im.item_id = m.id
@@ -117,7 +117,7 @@ pub fn run_enrichment(
         // Collect path info for each item
         // 收集每个项目的路径信息
         let path_infos: Vec<(i64, String)> = {
-            let conn = writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
+            let conn = writer.lock().map_err(|e| AppError::System(e.to_string()))?;
             ids.iter()
                 .filter_map(|&id| {
                     get_item_path_info(&conn, id)
@@ -154,7 +154,7 @@ pub fn run_enrichment(
         // Write results in a single transaction
         // 在单个事务中写入结果
         {
-            let conn = writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
+            let conn = writer.lock().map_err(|e| AppError::System(e.to_string()))?;
             let tx = conn.unchecked_transaction()?;
 
             for (item_id, meta_result, is_live, has_embedded) in &parsed {
@@ -220,7 +220,7 @@ pub fn run_enrichment(
     // ── Live Photo pairing ────────────────────────────────────────────────
     // ── 实况照片配对 ────────────────────────────────────────────────
     if !cancel.is_cancelled() {
-        let conn = writer.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        let conn = writer.lock().map_err(|e| AppError::System(e.to_string()))?;
         if let Err(e) = pair_live_photos(&conn, root_id) {
             error!("Live Photo pairing error: {e}");
         }

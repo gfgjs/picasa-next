@@ -12,7 +12,7 @@ export interface ScanProgressPayload {
   scanned:    number
   total:      number
   currentDir: string
-  status:     'discovering' | 'scanning'
+  status:     'discovering' | 'scanning' | 'enriching'
 }
 
 export interface ScanCompletedPayload {

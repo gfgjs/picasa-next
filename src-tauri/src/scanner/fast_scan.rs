@@ -120,6 +120,72 @@ fn extract_dimensions(walked: &WalkedFile) -> (i64, i64) {
         .unwrap_or_else(|| read_image_dimensions(&walked.abs_path, walked.extension.as_str()))
 }
 
+/// Order the walked files to match the gallery's current view order, so the
+/// first-inserted (and eager-dimension) items are exactly the ones shown first
+/// — keeping the first paint reflow-free regardless of grouping / sort.
+/// 按画廊当前视图顺序排列遍历结果，使最先入库（且即时提尺寸）的项正是最先展示的项
+/// —— 无论分组/排序方式如何，首屏都不重排。
+///
+/// Mirrors the ORDER BY in `query_layout_geometry` (`mtime` stands in for
+/// `sort_datetime`, which equals `file_mtime` until enrichment refines it):
+/// 与 `query_layout_geometry` 的 ORDER BY 对齐（此处 `mtime` 代表 `sort_datetime`，
+/// 在 enrichment 细化之前二者相等）：
+///   - folder grouping → directory rel_path ASC, then secondary
+///   - date grouping   → day bucket (order_dir), then secondary
+///   - none            → secondary only
+/// secondary = file_name (filename sort) or mtime, with the chosen direction.
+fn order_for_view(
+    walked_files: Vec<WalkedFile>,
+    root: &Path,
+    group_by: &str,
+    sort_within_group: &str,
+    sort_order: &str,
+) -> Vec<WalkedFile> {
+    use std::cmp::Ordering::Equal;
+
+    let desc = sort_order != "asc";
+    let by_filename = sort_within_group == "filename";
+    let folder_group = group_by == "folder";
+    let date_group = group_by == "date";
+
+    // Precompute keys once (cheap relative to the per-file header reads we skip).
+    // 预计算排序键一次（相对于我们省下的逐文件读取开销，成本可忽略）。
+    let names: Vec<String> = walked_files.iter().map(|w| w.file_name.to_lowercase()).collect();
+    let folders: Vec<String> = if folder_group {
+        walked_files.iter().map(|w| dir_rel_path(root, &w.abs_path)).collect()
+    } else {
+        Vec::new()
+    };
+
+    let mut idx: Vec<usize> = (0..walked_files.len()).collect();
+    idx.sort_by(|&a, &b| {
+        let mut ord = Equal;
+        if folder_group {
+            // Folders are always listed rel_path ASC (independent of sort_order).
+            // 文件夹始终按 rel_path 升序列出（与 sort_order 无关）。
+            ord = folders[a].cmp(&folders[b]);
+        } else if date_group {
+            // Group by local day; ~UTC bucket is close enough for selection.
+            // 按本地日分组；用 ~UTC 日桶做选择已足够接近。
+            let da = walked_files[a].file_mtime.div_euclid(86_400);
+            let db = walked_files[b].file_mtime.div_euclid(86_400);
+            ord = da.cmp(&db);
+            if desc { ord = ord.reverse(); }
+        }
+        if ord == Equal {
+            ord = if by_filename {
+                names[a].cmp(&names[b])
+            } else {
+                walked_files[a].file_mtime.cmp(&walked_files[b].file_mtime)
+            };
+            if desc { ord = ord.reverse(); }
+        }
+        ord
+    });
+
+    idx.into_iter().map(|i| walked_files[i].clone()).collect()
+}
+
 // ── Main fast scan entry point ────────────────────────────────────────────────
 // ── 快速扫描主入口点 ────────────────────────────────────────────────
 
@@ -170,6 +236,9 @@ pub fn run_fast_scan(
     writer: &Mutex<Connection>,
     root_id: i64,
     root_path: &str,
+    group_by: &str,
+    sort_within_group: &str,
+    sort_order: &str,
     channel: &Channel<ScanChannelPayload>,
     cancel: &CancellationToken,
 ) -> Result<u64> {
@@ -180,7 +249,7 @@ pub fn run_fast_scan(
 
     // ── Step 1: Walk files ────────────────────────────────────────────────
     // ── 第 1 步：遍历文件 ────────────────────────────────────────────────
-    let mut walked_files = walk_media_files(root, cancel, |count| {
+    let walked_files = walk_media_files(root, cancel, |count| {
         let _ = channel.send(ScanChannelPayload::Progress(ScanProgressPayload {
             root_id,
             scanned: count as u64,
@@ -197,10 +266,10 @@ pub fn run_fast_scan(
 
     // ── Step 2: Dimensions — eager for first screens, placeholder for the rest ──
     // ── 第 2 步：尺寸 — 首屏即时提取，其余占位 ──────────────────────────────
-    // Sort by mtime DESC so the rows inserted first are exactly the ones the
-    // default view shows first (newest first) → correct, reflow-free first paint.
-    // 按 mtime 倒序：最先入库的行正是默认视图最先展示的项（最新在前）→ 首屏正确、无重排。
-    walked_files.sort_by(|a, b| b.file_mtime.cmp(&a.file_mtime));
+    // Order to match the gallery's current view so the first-inserted (and
+    // eager-dimension) rows are exactly the ones shown first → reflow-free首屏.
+    // 按画廊当前视图排序，使最先入库（且即时提尺寸）的行正是最先展示的项 → 首屏无重排。
+    let walked_files = order_for_view(walked_files, root, group_by, sort_within_group, sort_order);
 
     // Only the first `eager` items pay the per-file header-read cost (in parallel).
     // Files beyond the first few screens keep cheap Phase-2 constants, while

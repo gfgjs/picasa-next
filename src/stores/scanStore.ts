@@ -5,17 +5,22 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { invoke, Channel } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import type { ScanRoot } from '../types/media'
-import type { ScanChannelPayload, ScanProgressPayload } from '../types/ipc'
-import { IPC } from '../constants/ipc'
+import type {
+  ScanChannelPayload, ScanProgressPayload,
+  MediaEnrichedPayload, EnrichmentCompletedPayload,
+} from '../types/ipc'
+import { IPC, EVENTS } from '../constants/ipc'
 import { useMediaStore } from './mediaStore'
+import { useUiStore } from './uiStore'
 
 interface ScanProgress {
   scanned:    number
   total:      number
   currentDir: string
   isRunning:  boolean
-  status?:    'discovering' | 'scanning'
+  status?:    'discovering' | 'scanning' | 'enriching'
 }
 
 export const useScanStore = defineStore('scan', () => {
@@ -51,7 +56,36 @@ export const useScanStore = defineStore('scan', () => {
     delete progressMap.value[id]
   }
 
+  // Global enrichment listeners — attached once. Background enrichment (EXIF +
+  // dimension backfill) is now the long pole, so its progress drives the bar
+  // through the `enriching` phase, well after the (now near-instant) fast insert.
+  // 全局 enrichment 监听 — 仅注册一次。后台 enrichment（EXIF + 尺寸补全）现在是
+  // 耗时大头，其进度在 `enriching` 阶段驱动进度条，远在（如今近乎瞬时的）快速入库之后。
+  let enrichListenersReady = false
+  async function ensureEnrichmentListeners() {
+    if (enrichListenersReady) return
+    enrichListenersReady = true
+    const media = useMediaStore()
+    await listen<MediaEnrichedPayload>(EVENTS.MEDIA_ENRICHED, (e) => {
+      const { rootId, enrichedCount, total } = e.payload
+      progressMap.value[rootId] = {
+        scanned: enrichedCount, total, currentDir: '', isRunning: true, status: 'enriching',
+      }
+    })
+    await listen<EnrichmentCompletedPayload>(EVENTS.ENRICHMENT_COMPLETED, (e) => {
+      const { rootId } = e.payload
+      if (progressMap.value[rootId]) {
+        progressMap.value[rootId].isRunning = false
+      }
+      // Final stats refresh so counts are exact once everything is enriched.
+      // 最终刷新一次统计，使全部补全后的计数精确。
+      media.loadStats()
+    })
+  }
+
   async function startScan(rootId: number, onComplete?: () => void) {
+    await ensureEnrichmentListeners()
+
     progressMap.value[rootId] = {
       scanned: 0, total: 0, currentDir: '', isRunning: true, status: 'discovering'
     }
@@ -62,6 +96,7 @@ export const useScanStore = defineStore('scan', () => {
     // 节流扫描中的画廊刷新，让已入库的行（最新在前）渐进式显示，而不是等整段
     // 快速扫描结束才出图。loadStats() 触动 totalItems → 网格重算。
     const media = useMediaStore()
+    const ui = useUiStore()
     let lastRefresh = 0
 
     const channel = new Channel<ScanChannelPayload>()
@@ -83,9 +118,11 @@ export const useScanStore = defineStore('scan', () => {
           }
         }
       } else if (msg.type === 'completed') {
+        // Fast insert done — but the scan isn't "finished": hand off to the
+        // enriching phase (driven by the global listeners) and keep running.
+        // 快速入库完成 — 但扫描并未"结束"：移交到 enriching 阶段（由全局监听驱动）并保持运行中。
         progressMap.value[rootId] = {
-          ...progressMap.value[rootId],
-          isRunning: false,
+          scanned: 0, total: 0, currentDir: '', isRunning: true, status: 'enriching',
         }
         onComplete?.()
       } else if (msg.type === 'error') {
@@ -95,7 +132,13 @@ export const useScanStore = defineStore('scan', () => {
     }
 
     try {
-      await invoke(IPC.START_SCAN, { rootId, onProgress: channel })
+      await invoke(IPC.START_SCAN, {
+        rootId,
+        onProgress: channel,
+        groupBy: ui.groupBy,
+        sortWithinGroup: ui.sortWithinGroup,
+        sortOrder: ui.sortOrder,
+      })
     } catch (e) {
       if (progressMap.value[rootId]) {
         progressMap.value[rootId].isRunning = false

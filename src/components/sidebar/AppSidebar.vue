@@ -236,16 +236,22 @@
                 <div class="progress-bar">
                   <div
                     class="progress-bar__fill progress-shimmer"
-                    :style="{ width: (scan.getProgress(root.id)?.status === 'discovering' ? 100 : progressPercent(root.id)) + '%' }"
-                    :class="{ 'progress-bar__fill--discovering': scan.getProgress(root.id)?.status === 'discovering' }"
+                    :style="{ width: (isIndeterminate(root.id) ? 100 : progressPercent(root.id)) + '%' }"
+                    :class="{ 'progress-bar__fill--discovering': isIndeterminate(root.id) }"
                   />
                 </div>
                 <span class="scan-root-item__count">
                   <template v-if="scan.getProgress(root.id)?.status === 'discovering'">
                     {{ $t('sidebar.discoveringFiles', { count: scan.getProgress(root.id)?.scanned ?? 0 }) }}
                   </template>
+                  <template v-else-if="scan.getProgress(root.id)?.status === 'enriching'">
+                    <template v-if="(scan.getProgress(root.id)?.total ?? 0) > 0">
+                      {{ $t('sidebar.enrichingFiles', { scanned: scan.getProgress(root.id)?.scanned ?? 0, total: scan.getProgress(root.id)?.total ?? 0 }) }}
+                    </template>
+                    <template v-else>{{ $t('sidebar.enrichingStart') }}</template>
+                  </template>
                   <template v-else>
-                    {{ scan.getProgress(root.id)?.scanned ?? 0 }} / {{ scan.getProgress(root.id)?.total ?? 0 }}
+                    {{ $t('sidebar.indexingFiles', { scanned: scan.getProgress(root.id)?.scanned ?? 0, total: scan.getProgress(root.id)?.total ?? 0 }) }}
                   </template>
                 </span>
               </div>
@@ -820,6 +826,16 @@ function progressPercent(rootId: number): number {
   const p = scan.getProgress(rootId)
   if (!p || !p.total || p.status === 'discovering') return 0
   return Math.round((p.scanned / p.total) * 100)
+}
+
+// A phase with no known total yet shows an indeterminate (shimmer) bar instead
+// of a 0% bar: discovering (walking), or enriching before the first batch event.
+// 尚无已知总数的阶段显示不确定（流光）进度条而非 0%：检索中（遍历），
+// 或 enriching 在首个批次事件之前。
+function isIndeterminate(rootId: number): boolean {
+  const p = scan.getProgress(rootId)
+  if (!p) return false
+  return p.status === 'discovering' || (p.status === 'enriching' && !p.total)
 }
 
 // ── Folder tree refresh ────────────────────────────────────────────────────

@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use serde::Serialize;
 
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri::ipc::Channel;
 use tracing::info;
 
@@ -244,6 +244,9 @@ pub async fn list_scan_roots(state: State<'_, Arc<AppState>>) -> Result<Vec<Scan
 pub async fn start_scan(
     root_id: i64,
     on_progress: Channel<ScanChannelPayload>,
+    group_by: Option<String>,
+    sort_within_group: Option<String>,
+    sort_order: Option<String>,
     app: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<()> {
@@ -252,6 +255,12 @@ pub async fn start_scan(
     // 取消该根目录任何现有的扫描
     state.cancel_scan(root_id);
     let cancel = state.new_scan_token(root_id);
+
+    // View order for first-screen prioritisation (defaults match the UI defaults).
+    // 用于首屏优先级排序的视图顺序（默认值与 UI 默认一致）。
+    let group_by = group_by.unwrap_or_else(|| "date".to_string());
+    let sort_within_group = sort_within_group.unwrap_or_else(|| "datetime".to_string());
+    let sort_order = sort_order.unwrap_or_else(|| "desc".to_string());
 
     // Get root path
     // 获取根目录路径
@@ -275,6 +284,9 @@ pub async fn start_scan(
             &state_arc.db_writer,
             root_id,
             &root_path_clone,
+            &group_by,
+            &sort_within_group,
+            &sort_order,
             &on_progress,
             &cancel_fast,
         )
@@ -294,6 +306,14 @@ pub async fn start_scan(
         tokio::task::spawn_blocking(move || {
             if let Err(e) = run_enrichment(&app_clone, &state_arc2.db_writer, root_id, &cancel_enrich) {
                 tracing::error!("Enrichment error for root_id={root_id}: {e}");
+                // On cancel/error, run_enrichment doesn't emit its completion event.
+                // Emit a terminal signal anyway so the frontend progress UI stops.
+                // 取消/出错时 run_enrichment 不会发出完成事件，这里补发终止信号，
+                // 以便前端进度 UI 能够停止。
+                let _ = app_clone.emit(
+                    "enrichment:completed",
+                    crate::scanner::enricher::EnrichmentCompletedPayload { root_id, elapsed_ms: 0 },
+                );
             }
             // Remove the token for this root — work is done (or was cancelled).
             // This prevents should_yield_to_higher_priority() from returning true forever.

@@ -115,7 +115,12 @@
 
     <!-- AI Batch Size -->
     <template v-else-if="settingKey === 'aiBatchSize'">
-      <input type="number" v-model.number="aiBatchSizeLocal" @change="config.setAiBatchSize(aiBatchSizeLocal)" min="1" max="128" class="input-number" :class="{ 'compact-input': compact }" />
+      <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px;">
+        <input type="number" v-model.number="aiBatchSizeLocal" @change="config.setAiBatchSize(aiBatchSizeLocal)" min="0" max="512" class="input-number" :class="{ 'compact-input': compact }" placeholder="0 = 自动" />
+        <span v-if="aiBatchSizeLocal === 0" style="font-size: 11px; color: var(--color-success); white-space: nowrap;">自动分配</span>
+        <span v-else-if="aiBatchSizeLocal > 200" style="font-size: 11px; color: var(--color-error); white-space: nowrap;">高危: 可能引发性能断崖或崩溃</span>
+        <span v-else-if="aiBatchSizeLocal > 128" style="font-size: 11px; color: var(--color-warning); white-space: nowrap;">⚠️ 较高: 需确保显存充裕</span>
+      </div>
     </template>
 
     <!-- AI Image Model -->

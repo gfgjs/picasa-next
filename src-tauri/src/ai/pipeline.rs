@@ -327,12 +327,27 @@ fn run_inference_tasks(
     let conn = state.db_read_pool.get().unwrap();
     let batch_size_str = crate::db::queries::get_config(&conn, "ai_batch_size").unwrap_or_default();
     
-    let batch_size = if let Some(s) = batch_size_str {
-        s.parse::<usize>().unwrap_or(8)
-    } else {
-        let vram_bytes = crate::ai::provider::detect_vram_bytes();
-        let gb = vram_bytes.map(|b| b / (1024 * 1024 * 1024)).unwrap_or(0);
-        if gb >= 8 { 64 } else if gb >= 4 { 32 } else if gb >= 2 { 16 } else { 8 }
+    let batch_size = {
+        let mut val = batch_size_str.and_then(|s| s.parse::<usize>().ok()).unwrap_or(0);
+        
+        if val == 0 {
+            // Auto detection based on VRAM
+            let vram_bytes = crate::ai::provider::detect_vram_bytes();
+            let gb = vram_bytes.map(|b| b / (1024 * 1024 * 1024)).unwrap_or(0);
+            val = if gb >= 12 { 256 } 
+                  else if gb >= 8 { 128 } 
+                  else if gb >= 4 { 64 } 
+                  else if gb >= 2 { 32 } 
+                  else { 16 };
+            tracing::info!("AI Batch Size auto-configured to {} based on {}GB VRAM", val, gb);
+        } else {
+            // Hard limit to prevent naive OOMs
+            if val > 256 {
+                tracing::warn!("User requested batch size {} exceeds safe limit, clamping to 256", val);
+                val = 256;
+            }
+        }
+        val
     };
     drop(conn);
 

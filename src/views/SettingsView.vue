@@ -250,7 +250,7 @@
             </button>
           <div class="settings-card__info">
             <div class="settings-card__label" style="display: flex; align-items: center; gap: 8px;"> AI 批处理大小 (Batch Size)</div>
-            <div class="settings-card__desc">推入 GPU 并行计算的图片数量。显存越大可设置的值越高，更改后下次分析生效。</div>
+            <div class="settings-card__desc">推入 GPU 并行计算的图片数量。设为 0 表示自动侦测显存并应用安全限制。警告：设置过大会导致显存交换，极大降低性能。</div>
           </div>
           <DynamicSettingControl setting-key="aiBatchSize" />
         </div>

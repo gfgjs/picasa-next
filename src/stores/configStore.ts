@@ -16,7 +16,7 @@ export const useConfigStore = defineStore('config', {
     aiImageModel: 'cn-clip-vit-b16-image.onnx',
     aiTextModel: 'cn-clip-vit-b16-text.onnx',
     aiProviderOverride: 'auto',
-    aiBatchSize: 8,
+    aiBatchSize: 0,
     isLoaded: false
   }),
 
@@ -49,7 +49,7 @@ export const useConfigStore = defineStore('config', {
         this.aiImageModel = await fetchStr('ai_image_model', 'cn-clip-vit-b16-image.onnx')
         this.aiTextModel = await fetchStr('ai_text_model', 'cn-clip-vit-b16-text.onnx')
         this.aiProviderOverride = await fetchStr('ai_provider_override', 'auto')
-        this.aiBatchSize = await fetchInt('ai_batch_size', 8)
+        this.aiBatchSize = await fetchInt('ai_batch_size', 0)
         
         // 应用一些 CSS 变量和 UI 状态
         const ui = useUiStore()

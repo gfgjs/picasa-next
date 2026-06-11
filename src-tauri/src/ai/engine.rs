@@ -219,9 +219,8 @@ impl AiEnginePool {
             provider_info.gpu_name = String::new();
             
             // Clear any partially loaded GPU sessions
-            clip_image_session = None;
-            clip_text_session = None;
             
+
             let cpu_pool_size = 2;
             clip_image_session = load_session_pool(&image_path, &AiProvider::Cpu, "CLIP image encoder (CPU) | CLIP 图像编码器 (CPU)", cpu_pool_size);
             clip_text_session = load_session_pool(&text_path, &AiProvider::Cpu, "CLIP text encoder (CPU) | CLIP 文本编码器 (CPU)", cpu_pool_size);

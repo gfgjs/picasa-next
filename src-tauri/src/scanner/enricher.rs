@@ -17,13 +17,13 @@ use tracing::{debug, error, info, warn};
 
 use crate::db::models::ImageMeta;
 use crate::db::queries::{
-    get_item_path_info, update_live_photo_flags, update_sort_datetime,
+    get_item_path_info, update_live_photo_flags, update_media_dimensions, update_sort_datetime,
     upsert_image_meta,
 };
 use crate::error::{AppError, Result};
 use crate::scanner::live_photo::pair_live_photos;
 use crate::scanner::metadata::{
-    detect_motion_photo_xmp, parse_exif_meta,
+    detect_motion_photo_xmp, parse_exif_meta, read_image_dimensions,
 };
 use crate::utils::path::resolve_media_path;
 
@@ -92,62 +92,76 @@ pub fn run_enrichment(
             return Err(AppError::Cancelled);
         }
 
-        // Fetch next batch of unenriched item IDs (within this root)
-        // 获取下一批未丰富信息的项目 ID（在该根目录下）
-        let ids: Vec<i64> = {
+        // Fetch next batch of unenriched items (within this root), with their
+        // current dimensions so we can backfill any 0×0 placeholders from the
+        // fast scan's deferred-dimension path.
+        // 获取下一批未丰富信息的项目（在该根目录下），并带上当前尺寸，
+        // 以便补全快速扫描"延后尺寸"路径留下的 0×0 占位。
+        let batch: Vec<(i64, i64, i64)> = {
             let conn = writer.lock().map_err(|e| AppError::System(e.to_string()))?;
             let mut stmt = conn.prepare(
-                "SELECT m.id FROM media_items m
+                "SELECT m.id, m.width, m.height FROM media_items m
                  LEFT JOIN image_meta im ON im.item_id = m.id
                  JOIN directories d ON d.id = m.directory_id
                  WHERE d.root_id=?1 AND m.is_deleted=0 AND m.media_type='image' AND im.item_id IS NULL
                  ORDER BY m.created_at DESC
                  LIMIT ?2",
             )?;
-            let x = stmt.query_map(rusqlite::params![root_id, ENRICHMENT_BATCH], |row| row.get(0))?
+            let x = stmt.query_map(rusqlite::params![root_id, ENRICHMENT_BATCH], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?))
+            })?
                 .filter_map(|r| r.ok())
-                .collect::<Vec<i64>>();
+                .collect::<Vec<_>>();
             x
         };
 
-        if ids.is_empty() {
+        if batch.is_empty() {
             break;
         }
 
-        // Collect path info for each item
-        // 收集每个项目的路径信息
-        let path_infos: Vec<(i64, String)> = {
+        // Collect path info for each item (carry width/height through).
+        // 收集每个项目的路径信息（一并带上宽/高）。
+        let path_infos: Vec<(i64, String, i64, i64)> = {
             let conn = writer.lock().map_err(|e| AppError::System(e.to_string()))?;
-            ids.iter()
-                .filter_map(|&id| {
+            batch.iter()
+                .filter_map(|&(id, w, h)| {
                     get_item_path_info(&conn, id)
                         .ok()
                         .map(|(root_p, rel_p, name)| {
                             let abs = resolve_media_path(&root_p, &rel_p, &name);
-                            (id, abs)
+                            (id, abs, w, h)
                         })
                 })
                 .collect()
         };
 
-        // Parallel EXIF parse
-        // 并行 EXIF 解析
-        let parsed: Vec<(i64, Result<ImageMeta>, bool, bool)> = path_infos
+        // Parallel EXIF parse + (for 0×0 placeholders) real dimension extraction.
+        // 并行 EXIF 解析 +（针对 0×0 占位）真实尺寸提取。
+        let parsed: Vec<(i64, Result<ImageMeta>, bool, bool, Option<(i64, i64)>)> = path_infos
             .par_iter()
-            .map(|(id, abs_path)| {
+            .map(|(id, abs_path, w, h)| {
                 let path = std::path::Path::new(abs_path);
-                let meta = parse_exif_meta(path);
-                let (is_live, has_embedded) = if path
+                let ext = path
                     .extension()
                     .and_then(|e| e.to_str())
-                    .map(|e| matches!(e.to_lowercase().as_str(), "jpg" | "jpeg"))
-                    .unwrap_or(false)
-                {
+                    .map(|e| e.to_lowercase())
+                    .unwrap_or_default();
+                let meta = parse_exif_meta(path);
+                let (is_live, has_embedded) = if matches!(ext.as_str(), "jpg" | "jpeg") {
                     detect_motion_photo_xmp(path)
                 } else {
                     (false, false)
                 };
-                (*id, meta, is_live, has_embedded)
+                // Only read dimensions for placeholder items — keeps the eager
+                // first-screen dims (and their orientation) untouched (no double-flip).
+                // 仅对占位项读取尺寸 — 保持首屏即时尺寸（及其方向）不变（不双重翻转）。
+                let dims = if *w == 0 || *h == 0 {
+                    let (dw, dh) = read_image_dimensions(path, &ext);
+                    if dw > 0 && dh > 0 { Some((dw, dh)) } else { None }
+                } else {
+                    None
+                };
+                (*id, meta, is_live, has_embedded, dims)
             })
             .collect();
 
@@ -157,7 +171,15 @@ pub fn run_enrichment(
             let conn = writer.lock().map_err(|e| AppError::System(e.to_string()))?;
             let tx = conn.unchecked_transaction()?;
 
-            for (item_id, meta_result, is_live, has_embedded) in &parsed {
+            for (item_id, meta_result, is_live, has_embedded, dims) in &parsed {
+                // Backfill real dimensions for placeholder (0×0) items.
+                // 为占位（0×0）项补全真实尺寸。
+                if let Some((w, h)) = dims {
+                    if let Err(e) = update_media_dimensions(&tx, *item_id, *w, *h) {
+                        warn!("Failed to backfill dimensions for id={item_id}: {e}");
+                    }
+                }
+
                 match meta_result {
                     Ok(meta) => {
                         let mut m = meta.clone();

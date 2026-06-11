@@ -45,6 +45,46 @@ pub fn orientation_needs_swap(orientation: u32) -> bool {
     matches!(orientation, 5..=8)
 }
 
+/// Read image pixel dimensions from the file header, orientation-corrected for
+/// JPEG, with a timeout guard for TIFF. Returns `(0, 0)` on failure.
+/// 从文件头读取图像像素尺寸：JPEG 经方向校正、TIFF 加超时保护；失败返回 `(0, 0)`。
+///
+/// Single-sourced here so the fast-scan eager path and the enrichment backfill
+/// path stay consistent (same orientation handling → no double-flip).
+/// 在此单一实现，使快速扫描的即时路径与 enrichment 补全路径保持一致
+/// （相同方向处理 → 不会双重翻转）。
+pub fn read_image_dimensions(abs_path: &Path, ext: &str) -> (i64, i64) {
+    // TIFF: parsing can read many bytes — guard with a scoped thread.
+    // TIFF：解析可能读取大量字节 — 用作用域线程加保护。
+    if ext == "tif" || ext == "tiff" {
+        let path = abs_path.to_path_buf();
+        let result = std::thread::scope(|s| {
+            s.spawn(|| image::image_dimensions(&path).ok()).join().ok().flatten()
+        });
+        return result.map(|(w, h)| (w as i64, h as i64)).unwrap_or((0, 0));
+    }
+
+    // JPEG: read Orientation and swap w/h when the photo is rotated 90°/270°.
+    // JPEG：读取方向，照片旋转 90°/270° 时交换宽高。
+    if ext == "jpg" || ext == "jpeg" {
+        if let Ok((w, h)) = image::image_dimensions(abs_path) {
+            let orientation = read_jpeg_orientation(abs_path);
+            return if orientation_needs_swap(orientation) {
+                (h as i64, w as i64)
+            } else {
+                (w as i64, h as i64)
+            };
+        }
+        return (0, 0);
+    }
+
+    // All other header-readable formats.
+    // 其余可读文件头的格式。
+    image::image_dimensions(abs_path)
+        .map(|(w, h)| (w as i64, h as i64))
+        .unwrap_or((0, 0))
+}
+
 // ── Full EXIF parse (enrichment phase) ───────────────────────────────────────
 // ── 完整 EXIF 解析（丰富信息阶段） ───────────────────────────────────────
 

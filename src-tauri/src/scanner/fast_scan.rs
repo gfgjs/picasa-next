@@ -31,7 +31,7 @@ use crate::db::queries::{
     upsert_directory, upsert_fast_scan_item, update_scan_root_status, finish_scan_root, FastScanItem,
 };
 use crate::error::{AppError, Result};
-use crate::scanner::metadata::{orientation_needs_swap, read_jpeg_orientation};
+use crate::scanner::metadata::read_image_dimensions;
 use crate::scanner::walker::{walk_media_files, WalkedFile};
 use crate::utils::format::{is_phase1_image, MediaType};
 use crate::utils::hash::compute_cache_key;
@@ -41,6 +41,16 @@ use serde::{Deserialize, Serialize};
 
 const BATCH_SIZE: usize = 500;
 const PROGRESS_INTERVAL: usize = 500;
+
+/// How many of the first-shown items get real pixel dimensions extracted up
+/// front (covers the first few screens). The rest are inserted with a 0×0
+/// placeholder (rendered as a square by the layout) and backfilled later by
+/// enrichment — so a huge import is no longer blocked on extracting dimensions
+/// for every file, while the first paint stays reflow-free.
+/// 即时提取真实尺寸的"首屏项"数量（覆盖前几屏）。其余以 0×0 占位入库
+/// （布局按正方形渲染），稍后由 enrichment 补全 —— 这样海量导入不再被
+/// "逐个文件提尺寸"阻塞，同时首屏不会发生重排。
+const EAGER_DIM_COUNT: usize = 500;
 
 // ── IPC payloads ─────────────────────────────────────────────────────────────
 // ── IPC 负载 ─────────────────────────────────────────────────────────────
@@ -87,50 +97,27 @@ struct FileInfo {
     height:  i64,
 }
 
+/// Cheap, no-file-read placeholder dimensions for Phase-2 media (audio/doc/video).
+/// Returns `None` for Phase-1 images, which need a real header read.
+/// 阶段 2 媒体（音频/文档/视频）的廉价、无需读文件的占位尺寸。
+/// 阶段 1 图像返回 `None`（需要真实读取文件头）。
+fn cheap_phase2_dimensions(walked: &WalkedFile) -> Option<(i64, i64)> {
+    if is_phase1_image(walked.extension.as_str()) {
+        return None;
+    }
+    Some(match walked.media_type {
+        MediaType::Audio    => (400, 400),
+        MediaType::Document => (595, 842),
+        _                   => (0, 0),
+    })
+}
+
+/// Real pixel dimensions for a single file (Phase-2 → cheap constants;
+/// Phase-1 image → orientation-corrected header read).
+/// 单文件的真实尺寸（阶段 2 → 廉价常量；阶段 1 图像 → 经方向校正的文件头读取）。
 fn extract_dimensions(walked: &WalkedFile) -> (i64, i64) {
-    let ext = walked.extension.as_str();
-
-    if !is_phase1_image(ext) {
-        // Phase 2 media — use format-specific defaults
-        // 阶段 2 媒体 — 使用特定于格式的默认值
-        return match walked.media_type {
-            MediaType::Audio    => (400, 400),
-            MediaType::Document => (595, 842),
-            _                   => (0, 0),
-        };
-    }
-
-    // TIFF: apply timeout protection (parse can read many bytes)
-    // TIFF: 应用超时保护（解析可能读取大量字节）
-    if ext == "tif" || ext == "tiff" {
-        let path = walked.abs_path.clone();
-        let result = std::thread::scope(|s| {
-            s.spawn(|| image::image_dimensions(&path).ok()).join().ok().flatten()
-        });
-        return result
-            .map(|(w, h)| (w as i64, h as i64))
-            .unwrap_or((0, 0));
-    }
-
-    // JPEG: also read orientation
-    // JPEG: 同时也读取方向
-    if ext == "jpg" || ext == "jpeg" {
-        if let Ok((w, h)) = image::image_dimensions(&walked.abs_path) {
-            let orientation = read_jpeg_orientation(&walked.abs_path);
-            return if orientation_needs_swap(orientation) {
-                (h as i64, w as i64)
-            } else {
-                (w as i64, h as i64)
-            };
-        }
-        return (0, 0);
-    }
-
-    // All other Phase 1 formats
-    // 所有其他阶段 1 格式
-    image::image_dimensions(&walked.abs_path)
-        .map(|(w, h)| (w as i64, h as i64))
-        .unwrap_or((0, 0))
+    cheap_phase2_dimensions(walked)
+        .unwrap_or_else(|| read_image_dimensions(&walked.abs_path, walked.extension.as_str()))
 }
 
 // ── Main fast scan entry point ────────────────────────────────────────────────
@@ -193,7 +180,7 @@ pub fn run_fast_scan(
 
     // ── Step 1: Walk files ────────────────────────────────────────────────
     // ── 第 1 步：遍历文件 ────────────────────────────────────────────────
-    let walked_files = walk_media_files(root, cancel, |count| {
+    let mut walked_files = walk_media_files(root, cancel, |count| {
         let _ = channel.send(ScanChannelPayload::Progress(ScanProgressPayload {
             root_id,
             scanned: count as u64,
@@ -208,12 +195,36 @@ pub fn run_fast_scan(
     let total = walked_files.len() as u64;
     info!("Walker found {} files | 扫描器发现 {} 个文件", total, total);
 
-    // ── Step 2: Parallel dimension extraction ─────────────────────────────
-    // ── 第 2 步：并行提取尺寸 ─────────────────────────────
+    // ── Step 2: Dimensions — eager for first screens, placeholder for the rest ──
+    // ── 第 2 步：尺寸 — 首屏即时提取，其余占位 ──────────────────────────────
+    // Sort by mtime DESC so the rows inserted first are exactly the ones the
+    // default view shows first (newest first) → correct, reflow-free first paint.
+    // 按 mtime 倒序：最先入库的行正是默认视图最先展示的项（最新在前）→ 首屏正确、无重排。
+    walked_files.sort_by(|a, b| b.file_mtime.cmp(&a.file_mtime));
+
+    // Only the first `eager` items pay the per-file header-read cost (in parallel).
+    // Files beyond the first few screens keep cheap Phase-2 constants, while
+    // Phase-1 images are deferred to a 0×0 placeholder (rendered square) and
+    // backfilled by enrichment — this removes the "extract dimensions for every
+    // file" stall that previously blocked huge imports for 10s+.
+    // 仅前 `eager` 项并行支付逐文件读取头成本。首屏之外：阶段2保留廉价常量，
+    // 阶段1图像延后为 0×0 占位（按正方形渲染），由 enrichment 补全 —— 由此消除
+    // 之前"逐个文件提尺寸"导致海量导入空等 10s+ 的卡顿。
+    let eager = walked_files.len().min(EAGER_DIM_COUNT);
+    let eager_dims: Vec<(i64, i64)> = walked_files[..eager]
+        .par_iter()
+        .map(extract_dimensions)
+        .collect();
+
     let file_infos: Vec<FileInfo> = walked_files
-        .into_par_iter()
-        .map(|walked| {
-            let (width, height) = extract_dimensions(&walked);
+        .into_iter()
+        .enumerate()
+        .map(|(i, walked)| {
+            let (width, height) = if i < eager {
+                eager_dims[i]
+            } else {
+                cheap_phase2_dimensions(&walked).unwrap_or((0, 0))
+            };
             FileInfo { walked, width, height }
         })
         .collect();

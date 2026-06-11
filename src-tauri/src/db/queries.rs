@@ -926,6 +926,21 @@ pub fn update_sort_datetime(conn: &Connection, item_id: i64, dt: i64) -> Result<
     Ok(())
 }
 
+/// Backfill real pixel dimensions for an item that was inserted with a 0×0
+/// placeholder during the fast scan. Guarded by `width=0 OR height=0` so it
+/// never re-touches (and never double-flips) items that already have real,
+/// orientation-corrected dimensions from the eager fast-scan path.
+/// 为快速扫描时以 0×0 占位插入的项补全真实像素尺寸。以 `width=0 OR height=0`
+/// 作为条件守卫，绝不重写（也绝不双重翻转）已在即时路径得到真实、方向校正尺寸的项。
+pub fn update_media_dimensions(conn: &Connection, item_id: i64, width: i64, height: i64) -> Result<()> {
+    conn.execute(
+        "UPDATE media_items SET width=?1, height=?2, updated_at=strftime('%s','now')
+         WHERE id=?3 AND (width=0 OR height=0)",
+        params![width, height, item_id],
+    )?;
+    Ok(())
+}
+
 pub fn update_live_photo_flags(
     conn: &Connection,
     item_id: i64,

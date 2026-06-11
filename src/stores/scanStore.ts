@@ -56,6 +56,14 @@ export const useScanStore = defineStore('scan', () => {
       scanned: 0, total: 0, currentDir: '', isRunning: true, status: 'discovering'
     }
 
+    // Throttle mid-scan gallery refreshes so already-inserted rows surface
+    // progressively (newest first) instead of the grid staying blank until the
+    // whole fast scan finishes. loadStats() bumps totalItems → the grid recomputes.
+    // 节流扫描中的画廊刷新，让已入库的行（最新在前）渐进式显示，而不是等整段
+    // 快速扫描结束才出图。loadStats() 触动 totalItems → 网格重算。
+    const media = useMediaStore()
+    let lastRefresh = 0
+
     const channel = new Channel<ScanChannelPayload>()
     channel.onmessage = (msg) => {
       if (msg.type === 'progress') {
@@ -66,6 +74,13 @@ export const useScanStore = defineStore('scan', () => {
           currentDir: p.currentDir,
           isRunning:  true,
           status:     p.status,
+        }
+        if (p.status === 'scanning') {
+          const now = Date.now()
+          if (now - lastRefresh > 1000) {
+            lastRefresh = now
+            media.loadStats()
+          }
         }
       } else if (msg.type === 'completed') {
         progressMap.value[rootId] = {

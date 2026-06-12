@@ -276,6 +276,10 @@ pub async fn start_scan(
     let state_arc = Arc::clone(&*state);
     let cancel_fast = cancel.clone();
     let root_path_clone = root_path.clone();
+    // Same view order drives the background enrichment fill-in order.
+    // 同一视图顺序也驱动后台 enrichment 的补全顺序。
+    let (group_by_e, sort_within_e, sort_order_e) =
+        (group_by.clone(), sort_within_group.clone(), sort_order.clone());
 
     // Run fast scan (spawn_blocking so we don't block the async runtime)
     // 运行快速扫描（使用 spawn_blocking，因此我们不会阻塞异步运行时）
@@ -304,7 +308,10 @@ pub async fn start_scan(
         let app_clone   = app.clone();
         let cancel_enrich = cancel.clone();
         tokio::task::spawn_blocking(move || {
-            if let Err(e) = run_enrichment(&app_clone, &state_arc2.db_writer, root_id, &cancel_enrich) {
+            if let Err(e) = run_enrichment(
+                &app_clone, &state_arc2.db_writer, root_id,
+                &group_by_e, &sort_within_e, &sort_order_e, &cancel_enrich,
+            ) {
                 tracing::error!("Enrichment error for root_id={root_id}: {e}");
                 // On cancel/error, run_enrichment doesn't emit its completion event.
                 // Emit a terminal signal anyway so the frontend progress UI stops.

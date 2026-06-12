@@ -63,10 +63,28 @@ pub fn run_enrichment(
     app: &AppHandle,
     writer: &Mutex<Connection>,
     root_id: i64,
+    group_by: &str,
+    sort_within_group: &str,
+    sort_order: &str,
     cancel: &CancellationToken,
 ) -> Result<()> {
     let started = std::time::Instant::now();
     info!("Enrichment started: root_id={root_id} | 增量补全开始: root_id={root_id}");
+
+    // Process in the gallery's current view order so the placeholder dimensions
+    // are backfilled top-down — following the user's likely scroll — instead of
+    // by insertion id. Mirrors the ORDER BY in `query_layout_geometry`.
+    // 按画廊当前视图顺序处理，使占位尺寸自上而下补全 —— 贴合用户可能的滚动 ——
+    // 而非按插入 id。与 `query_layout_geometry` 的 ORDER BY 对齐。
+    let order_clause = enrichment_order_clause(group_by, sort_within_group, sort_order);
+    let batch_sql = format!(
+        "SELECT m.id, m.width, m.height FROM media_items m
+         LEFT JOIN image_meta im ON im.item_id = m.id
+         JOIN directories d ON d.id = m.directory_id
+         WHERE d.root_id=?1 AND m.is_deleted=0 AND m.media_type='image' AND im.item_id IS NULL
+         {order_clause}
+         LIMIT ?2"
+    );
 
     // ── Count total unenriched items ──────────────────────────────────────
     // ── 计算未丰富信息的项目总数 ──────────────────────────────────────
@@ -99,14 +117,7 @@ pub fn run_enrichment(
         // 以便补全快速扫描"延后尺寸"路径留下的 0×0 占位。
         let batch: Vec<(i64, i64, i64)> = {
             let conn = writer.lock().map_err(|e| AppError::System(e.to_string()))?;
-            let mut stmt = conn.prepare(
-                "SELECT m.id, m.width, m.height FROM media_items m
-                 LEFT JOIN image_meta im ON im.item_id = m.id
-                 JOIN directories d ON d.id = m.directory_id
-                 WHERE d.root_id=?1 AND m.is_deleted=0 AND m.media_type='image' AND im.item_id IS NULL
-                 ORDER BY m.created_at DESC
-                 LIMIT ?2",
-            )?;
+            let mut stmt = conn.prepare(&batch_sql)?;
             let x = stmt.query_map(rusqlite::params![root_id, ENRICHMENT_BATCH], |row| {
                 Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?))
             })?
@@ -257,4 +268,30 @@ pub fn run_enrichment(
     );
 
     Ok(())
+}
+
+/// Build the enrichment batch ORDER BY clause so it matches the gallery's view
+/// order (mirrors `query_layout_geometry`, minus the AI-similarity branch which
+/// has no data during import). Inputs come from a fixed option set → injection-safe.
+/// 构建 enrichment 批次的 ORDER BY，使其与画廊视图顺序一致（对齐
+/// `query_layout_geometry`，去掉导入期无数据的 AI 相似度分支）。入参取自固定选项集 → 无注入风险。
+fn enrichment_order_clause(group_by: &str, sort_within_group: &str, sort_order: &str) -> String {
+    let dir = if sort_order == "asc" { "ASC" } else { "DESC" };
+    let secondary = if sort_within_group == "filename" {
+        format!("m.file_name COLLATE NATURAL_CMP {dir}")
+    } else {
+        // 'datetime' (or 'similarity', which has no scores at import) → sort_datetime
+        format!("m.sort_datetime {dir}")
+    };
+    match group_by {
+        "folder" => format!("ORDER BY d.rel_path ASC, {secondary}"),
+        "date" => {
+            if sort_within_group == "filename" {
+                format!("ORDER BY date(m.sort_datetime,'unixepoch','localtime') {dir}, {secondary}")
+            } else {
+                format!("ORDER BY m.sort_datetime {dir}")
+            }
+        }
+        _ => format!("ORDER BY {secondary}"),
+    }
 }

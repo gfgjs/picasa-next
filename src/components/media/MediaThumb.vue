@@ -10,6 +10,7 @@
       'media-thumb--selected': isSelected,
       'media-thumb--selection-mode': isSelectionMode,
       'media-thumb--drag-hover': isDragHover,
+      'media-thumb--compact': compact,
     }"
   >
     <!-- Placeholder solid color + file format text -->
@@ -36,7 +37,8 @@
 
     <!-- Overlays -->
     <!-- 覆盖层 -->
-    <div class="media-thumb__overlays">
+    <!-- compact 模式下仅在选择态时保留覆盖层容器，其余时候整个砍掉以减少 800+ 空 DOM 节点 -->
+    <div v-if="!compact || isSelected || isSelectionMode" class="media-thumb__overlays">
       <!-- Advanced Info Overlay & Badges -->
       <div
         v-if="!compact && (thumbInfoLines.length > 0 || (similarity == null && isLoaded && thumbStatus === 3 && ui.showThumbInfo && ui.thumbInfoElements.includes('status')) || (similarity == null && isLoaded && thumbStatus === 1 && ui.showThumbInfo && ui.thumbInfoElements.includes('status')) || (similarity == null && fileSize && ui.showThumbInfo && ui.thumbInfoElements.includes('size')) || similarity != null || isLivePhoto)"
@@ -166,7 +168,8 @@ const COMPACT_THUMB_PX = 100
 const compact = computed(() => props.w < COMPACT_THUMB_PX || props.h < COMPACT_THUMB_PX)
 
 const thumbInfoLines = computed(() => {
-  if (!ui.showThumbInfo || !props.item) return []
+  // compact 模式下直接跳过，避免 800+ 组件追踪 6+ 响应式依赖
+  if (compact.value || !ui.showThumbInfo || !props.item) return []
   const lines: string[] = []
   const elements = ui.thumbInfoElements
   const it = props.item        // cheap, resident fields (date / resolution)
@@ -576,5 +579,13 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+}
+
+/* ── Compact 模式极限优化 ─────────────────────────────────────────── */
+/* 当单元尺寸 < 100px 时，禁用 transition 和额外合成层以极大减少 GPU 开销。
+   contain: strict 告诉浏览器此元素内部变化不影响外部布局。 */
+.media-thumb--compact {
+  transition: none;
+  contain: strict;
 }
 </style>

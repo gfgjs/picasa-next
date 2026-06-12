@@ -41,6 +41,11 @@ html.disable-hover-scale .media-card:hover {
   animation: thumb-appear var(--transition-normal) ease forwards;
 }
 
+/* compact 模式下跳过淡入动画——同屏数百张图片同时触发动画开销极大 */
+.media-card--compact .thumb-loaded {
+  animation: none;
+}
+
 /* ── Favorite spring animation ──────────────────────────────────────────── */
 @keyframes fav-spring {
   0%   { transform: scale(1.0); }

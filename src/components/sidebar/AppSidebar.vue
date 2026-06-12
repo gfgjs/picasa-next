@@ -1074,6 +1074,11 @@ onMounted(async () => {
   color: var(--color-text-secondary);
   transition: color 0.2s, background-color 0.2s;
   cursor: pointer;
+  /* ── sticky 定位：滚动时菜单标题钉在顶部，便于快速定位 ── */
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background-color: var(--color-bg-secondary);
 }
 .sidebar__section-label:hover {
   color: var(--color-text-primary);
@@ -1084,6 +1089,9 @@ onMounted(async () => {
   background: var(--color-border);
   margin: var(--spacing-xs) var(--spacing-md);
   flex-shrink: 0;
+  /* sticky label 需要遮盖 divider，确保 divider 不叠在上层 */
+  position: relative;
+  z-index: 0;
 }
 .sidebar-show-all-btn {
   font-size: 11px;

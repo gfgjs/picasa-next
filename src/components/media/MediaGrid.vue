@@ -4,7 +4,7 @@
       <div
         ref="gridRef"
       class="media-grid"
-      :class="{ 'is-scrolling': isScrolling }"
+      :class="{ 'is-scrolling': isScrolling, 'is-compact': compactCells }"
       @scroll.passive="onGridScroll"
     >
     <!-- Empty state -->
@@ -971,6 +971,15 @@ watch(() => ui.pendingScrollLabel, async (label) => {
   transition: z-index 0ms;
 }
 
+/* compact 模式下禁用行级 z-index transition 以减少不必要的重绘 */
+.is-compact .media-grid__row {
+  transition: none;
+}
+.is-compact .media-grid__row:hover {
+  z-index: 2;
+  transition: none;
+}
+
 .date-separator {
   display: flex;
   font-size: 16px;
@@ -1097,9 +1106,21 @@ watch(() => ui.pendingScrollLabel, async (label) => {
 /* Tiny-cell mode: let the browser skip rendering off-screen cells. Cells keep
    their explicit inline width/height, so size containment can't collapse them.
    极小单元模式：让浏览器跳过离屏单元的渲染。单元有显式行内宽高，
-   故尺寸包含不会使其塌陷。 */
+   故尺寸包含不会使其塌陷。
+   同时禁用 will-change / transition / hover-scale 以释放 800+ GPU 合成层。 */
 .media-card--compact {
   content-visibility: auto;
+  will-change: auto;
+  transition: none;
+}
+
+/* compact 模式下彻底禁用 hover 放大——60px 格子放大 6% 仅多 3.6px，
+   视觉收益微乎其微但 800+ 合成层开销巨大 */
+.media-card--compact:hover {
+  transform: none;
+  box-shadow: none;
+  z-index: 2;
+  transition: none;
 }
 
 .media-card:hover {

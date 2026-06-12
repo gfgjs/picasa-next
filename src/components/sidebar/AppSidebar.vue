@@ -11,13 +11,16 @@
 
     <!-- Scrollable content area -->
     <div class="sidebar__scroll-area">
-      <!-- Smart albums -->
-      <!-- 智能相册 -->
-      <section class="sidebar__section">
-      <div class="sidebar__section-label" @click="isLibraryExpanded = !isLibraryExpanded" style="cursor: pointer; display: flex; align-items: center; gap: 4px; justify-content: flex-start; user-select: none;">
-        <ChevronRight :size="14" style="transition: transform 0.2s" :style="{ transform: isLibraryExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }" />
+      <!-- ── 图库 / Library ─────────────────────────────────────── -->
+      <!-- section-label 直接作为 scroll-area 子元素，使 sticky top+bottom 在整个滚动区域内生效 -->
+      <div class="sidebar__section-label"
+        :style="stickyStyle(0)"
+        @click="isLibraryExpanded = !isLibraryExpanded"
+      >
+        <ChevronRight :size="14" class="sidebar__section-chevron" :class="{ expanded: isLibraryExpanded }" />
         {{ $t('sidebar.library') }}
       </div>
+      <div class="sidebar__section-body">
       <transition name="collapse" @enter="onEnter" @after-enter="onAfterEnter" @leave="onLeave">
         <ul class="sidebar__nav" v-show="isLibraryExpanded">
           <li v-for="album in smartAlbums" :key="album.id">
@@ -33,18 +36,21 @@
           </li>
         </ul>
       </transition>
-    </section>
+      </div>
 
     <!-- Divider -->
     <!-- 分隔线 -->
     <div class="sidebar__divider" />
 
-    <!-- Tools -->
-    <section class="sidebar__section">
-      <div class="sidebar__section-label" @click="isToolsExpanded = !isToolsExpanded" style="cursor: pointer; display: flex; align-items: center; gap: 4px; justify-content: flex-start; user-select: none;">
-        <ChevronRight :size="14" style="transition: transform 0.2s" :style="{ transform: isToolsExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }" />
+    <!-- ── 工具 / Tools ─────────────────────────────────────── -->
+      <div class="sidebar__section-label"
+        :style="stickyStyle(1)"
+        @click="isToolsExpanded = !isToolsExpanded"
+      >
+        <ChevronRight :size="14" class="sidebar__section-chevron" :class="{ expanded: isToolsExpanded }" />
         工具 / TOOLS
       </div>
+      <div class="sidebar__section-body">
       <transition name="collapse" @enter="onEnter" @after-enter="onAfterEnter" @leave="onLeave">
         <div v-show="isToolsExpanded">
           <ul class="sidebar__nav sidebar__nav--tools" style="padding-bottom: 4px;">
@@ -129,17 +135,18 @@
           </ul>
         </div>
       </transition>
-    </section>
+      </div>
 
     <!-- Divider -->
     <div class="sidebar__divider" />
 
-    <!-- Scan roots / folder tree -->
-    <!-- 扫描根目录 / 文件夹树 -->
-    <section class="sidebar__section sidebar__section--tree">
-      <div class="sidebar__section-label" @click="isFoldersExpanded = !isFoldersExpanded" style="cursor: pointer; justify-content: space-between; user-select: none;">
+    <!-- ── 文件夹 / Folders ─────────────────────────────────── -->
+      <div class="sidebar__section-label sidebar__section-label--folders"
+        :style="stickyStyle(2)"
+        @click="isFoldersExpanded = !isFoldersExpanded"
+      >
         <div style="display: flex; align-items: center; gap: 4px;">
-          <ChevronRight :size="14" style="transition: transform 0.2s" :style="{ transform: isFoldersExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }" />
+          <ChevronRight :size="14" class="sidebar__section-chevron" :class="{ expanded: isFoldersExpanded }" />
           <span>{{ $t('sidebar.folders') }}</span>
         </div>
         <div style="display: flex; align-items: center; gap: 4px;" @click.stop>
@@ -155,6 +162,7 @@
           <button class="btn-icon" title="新建空白文件夹" @click="createNewGlobalFolder"><FolderPlus :size="16" /></button>
         </div>
       </div>
+      <div class="sidebar__section-body">
 
       <transition name="collapse" @enter="onEnter" @after-enter="onAfterEnter" @leave="onLeave">
         <div v-show="isFoldersExpanded">
@@ -190,18 +198,22 @@
           </div>
         </div>
       </transition>
-    </section>
+      </div>
 
     <!-- Divider -->
-    <div v-if="scan.hasScanRoots" class="sidebar__divider" />
+    <!-- 管理 section 的 divider 已移入 template v-if 内 -->
 
-    <!-- Management -->
-    <!-- 管理 -->
-    <section v-if="scan.hasScanRoots" class="sidebar__section">
-      <div class="sidebar__section-label" @click="isManagementExpanded = !isManagementExpanded" style="cursor: pointer; display: flex; align-items: center; gap: 4px; justify-content: flex-start; user-select: none;">
-        <ChevronRight :size="14" style="transition: transform 0.2s" :style="{ transform: isManagementExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }" />
+    <!-- ── 管理 / Management ─────────────────────────────── -->
+      <template v-if="scan.hasScanRoots">
+      <div class="sidebar__divider" />
+      <div class="sidebar__section-label"
+        :style="stickyStyle(3)"
+        @click="isManagementExpanded = !isManagementExpanded"
+      >
+        <ChevronRight :size="14" class="sidebar__section-chevron" :class="{ expanded: isManagementExpanded }" />
         管理 / MANAGEMENT
       </div>
+      <div class="sidebar__section-body">
       <transition name="collapse" @enter="onEnter" @after-enter="onAfterEnter" @leave="onLeave">
         <div v-show="isManagementExpanded" style="overflow: hidden;">
           <div class="sidebar__scan-status" style="border-top: none; padding-top: 4px;">
@@ -259,7 +271,8 @@
           </div>
         </div>
       </transition>
-    </section>
+      </div>
+      </template>
     </div>
 
     <!-- Settings / footer -->
@@ -361,6 +374,27 @@ const isLibraryExpanded = ref(true)
 const isToolsExpanded = ref(true)
 const isFoldersExpanded = ref(true)
 const isManagementExpanded = ref(true)
+
+// ── Sticky section labels: top + bottom 双向粘性 ────────────────────────────
+// 每个标题高度约 LABEL_H px，按索引堆叠排列使多标题不重叠。
+// "管理"section 有条件显示，总数随之变化。
+const LABEL_H = 35 // section-label 大致高度（padding 8*2 + font ~13 + border）
+
+/** 可见的 section 标题总数（管理 section 条件渲染） */
+const stickyLabelCount = computed(() => scan.hasScanRoots ? 4 : 3)
+
+/**
+ * 为第 index 个 section-label 计算 sticky 的 top/bottom 内联样式。
+ * - top:    index * LABEL_H  → 粘顶时依次向下堆叠
+ * - bottom: (total - 1 - index) * LABEL_H → 粘底时依次向上堆叠
+ */
+function stickyStyle(index: number): Record<string, string> {
+  const total = stickyLabelCount.value
+  return {
+    top: `${index * LABEL_H}px`,
+    bottom: `${(total - 1 - index) * LABEL_H}px`,
+  }
+}
 
 // ── Pointer-based drag (NOT HTML5 DnD) ────────────────────────────────────────
 // We deliberately use pointer events instead of the HTML5 draggable API so the
@@ -1055,18 +1089,16 @@ onMounted(async () => {
 }
 
 /* ── Section ─────────────────────────────────────────────────────────── */
-/* ── 区块 ─────────────────────────────────────────────────────────── */
-.sidebar__section {
+/* ── 区块（已扁平化：label + body 均为 scroll-area 直接子元素） ────── */
+/* section-body 包裹每个 section 的内容区域，不影响 sticky 行为 */
+.sidebar__section-body {
   padding: var(--spacing-sm) 0;
   flex-shrink: 0;
-}
-.sidebar__section--tree {
-  /* Just a regular section now, no flex constraints needed */
 }
 .sidebar__section-label {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 4px;
   padding: 8px var(--spacing-md);
   font-size: 13px;
   font-weight: 700;
@@ -1074,15 +1106,29 @@ onMounted(async () => {
   color: var(--color-text-secondary);
   transition: color 0.2s, background-color 0.2s;
   cursor: pointer;
-  /* ── sticky 定位：滚动时菜单标题钉在顶部，便于快速定位 ── */
+  user-select: none;
+  /* ── sticky 双向定位：top + bottom 由内联 style 动态设置 ── */
+  /* 滚出顶部时粘顶（堆叠排列），滚出底部时粘底（堆叠排列） */
   position: sticky;
-  top: 0;
+  /* top / bottom 通过 :style="stickyStyle(i)" 内联设置 */
   z-index: 10;
   background-color: var(--color-bg-secondary);
+}
+/* 文件夹标题需要右侧按钮组，独立设置 justify-content */
+.sidebar__section-label--folders {
+  justify-content: space-between;
 }
 .sidebar__section-label:hover {
   color: var(--color-text-primary);
   background-color: var(--color-bg-hover);
+}
+/* section-label 内的展开/折叠箭头 */
+.sidebar__section-chevron {
+  transition: transform 0.2s;
+  flex-shrink: 0;
+}
+.sidebar__section-chevron.expanded {
+  transform: rotate(90deg);
 }
 .sidebar__divider {
   height: 1px;

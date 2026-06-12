@@ -2,15 +2,75 @@
 //! Tauri IPC commands for media item operations (§ 6.1 — media queries).
 //! 用于媒体项操作的 Tauri IPC 命令（§ 6.1 — 媒体查询）。
 
+use std::path::Path;
 use std::sync::Arc;
 
+use rayon::prelude::*;
 use tauri::State;
 
 use crate::db::models::{AppStats, DirNode, MediaDetail, MediaItem};
 use crate::db::queries as q;
 use crate::error::{AppError, Result};
+use crate::scanner::metadata::read_image_dimensions;
 use crate::state::AppState;
 use crate::utils::path::resolve_media_path;
+
+/// Extract real pixel dimensions on demand for the given items that are still
+/// 0×0 placeholders (typically the just-scrolled-to viewport). Header-only read
+/// (+ JPEG orientation), in parallel; updates the DB. Returns how many were
+/// measured. The frontend recomputes the layout afterwards so the squares snap
+/// to their correct aspect — ahead of the sequential background enrichment.
+/// 按需为给定的、仍是 0×0 占位的项（通常是刚滚动到的可视窗口）提取真实像素尺寸。
+/// 仅读文件头（+ JPEG 方向），并行执行并更新数据库；返回成功测量的数量。前端随后
+/// 重算布局，使方块贴回正确比例 —— 抢在自上而下的后台 enrichment 之前。
+#[tauri::command]
+pub async fn prioritize_dimensions(
+    item_ids: Vec<i64>,
+    state: State<'_, Arc<AppState>>,
+) -> Result<usize> {
+    if item_ids.is_empty() {
+        return Ok(0);
+    }
+
+    // Resolve paths for the placeholder items only (skip already-measured ones).
+    // 仅解析占位项的路径（跳过已测量的项）。
+    let targets: Vec<(i64, String, String)> = {
+        let pool = state.db_read_pool.get().map_err(AppError::from)?;
+        item_ids
+            .iter()
+            .filter_map(|&id| {
+                q::get_placeholder_item_path(&pool, id)
+                    .ok()
+                    .flatten()
+                    .map(|(path, ext)| (id, path, ext))
+            })
+            .collect()
+    };
+    if targets.is_empty() {
+        return Ok(0);
+    }
+
+    // Read real dimensions in parallel (header read + JPEG orientation).
+    // 并行读取真实尺寸（文件头 + JPEG 方向）。
+    let results: Vec<(i64, i64, i64)> = targets
+        .par_iter()
+        .filter_map(|(id, path, ext)| {
+            let (w, h) = read_image_dimensions(Path::new(path), ext);
+            if w > 0 && h > 0 { Some((*id, w, h)) } else { None }
+        })
+        .collect();
+
+    let n = results.len();
+    if n > 0 {
+        let conn = state.db_writer.lock().map_err(|e| AppError::System(e.to_string()))?;
+        let tx = conn.unchecked_transaction()?;
+        for (id, w, h) in &results {
+            q::update_media_dimensions(&tx, *id, *w, *h)?;
+        }
+        tx.commit()?;
+    }
+    Ok(n)
+}
 
 /// Get full detail for a single media item.
 /// 获取单个媒体项的完整详细信息。

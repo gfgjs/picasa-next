@@ -490,6 +490,65 @@ async function onRequestThumb(id: number) {
   }
 }
 
+// ── Viewport-priority dimension extraction ───────────────────────────────────
+// On a scroll-jump the user can land on items whose real dimensions haven't been
+// backfilled yet (rendered at the placeholder aspect). Eagerly measure the visible
+// placeholders, then recompute so they snap to the correct aspect — ahead of the
+// sequential background enrichment. Items ABOVE the viewport are untouched, so the
+// recompute keeps the view anchored.
+// ── 可视窗口优先取尺寸 ───────────────────────────────────────────────────────
+// 拖动跳转时用户可能落在尚未补全真实尺寸的项上（按占位比例渲染）。即时测量可视区的
+// 占位项并重算，使其贴回正确比例 —— 抢在自上而下的后台 enrichment 之前。视口上方的项
+// 未改动，故重算后视图保持锚定不跳。
+const requestedDimIds = new Set<number>()
+let dimPriorityTimer: ReturnType<typeof setTimeout> | null = null
+let dimPriorityInFlight = false
+
+function scheduleDimPriority() {
+  if (dimPriorityTimer !== null) clearTimeout(dimPriorityTimer)
+  dimPriorityTimer = setTimeout(prioritizeVisibleDimensions, 200)
+}
+
+async function prioritizeVisibleDimensions() {
+  dimPriorityTimer = null
+  if (dimPriorityInFlight) return
+  // Wait until scrolling settles so we measure the landed window, not a fly-over.
+  // 等滚动停稳再测量落点窗口，而非掠过的中间帧。
+  if (isScrolling.value) { scheduleDimPriority(); return }
+
+  const ids: number[] = []
+  for (const row of visibleRows.value) {
+    if (row.rowType !== 'normal') continue
+    for (const it of row.items) {
+      if ((it.originalWidth <= 0 || it.originalHeight <= 0) && !requestedDimIds.has(it.id)) {
+        requestedDimIds.add(it.id)
+        ids.push(it.id)
+      }
+    }
+  }
+  if (ids.length === 0) return
+
+  dimPriorityInFlight = true
+  try {
+    const measured = await invoke<number>('prioritize_dimensions', { itemIds: ids })
+    if (measured > 0) {
+      await compute()
+      updateVisible()
+    }
+  } catch (e) {
+    for (const id of ids) requestedDimIds.delete(id) // allow a later retry | 允许之后重试
+    console.error('[MediaGrid] prioritize_dimensions failed:', e)
+  } finally {
+    dimPriorityInFlight = false
+  }
+}
+
+// Measure placeholder dims whenever the visible window changes; reset the
+// dedup set when switching view (folder/album).
+// 每当可见窗口变化就测量其中的占位尺寸；切换视图（文件夹/相册）时重置去重集合。
+watch(visibleRows, () => scheduleDimPriority())
+watch(() => [ui.activeDirectoryId, ui.activeSmartAlbum], () => requestedDimIds.clear())
+
 async function handleFavorite(itemId: number) {
   // Toggle favorite and get new state | 切换收藏并获取新状态
   const newValue = await media.toggleFavorite(itemId)

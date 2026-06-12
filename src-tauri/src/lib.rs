@@ -394,6 +394,7 @@ pub fn run() {
             ipc::media_commands::get_directory_tree,
             ipc::media_commands::get_directory_children,
             ipc::media_commands::get_directory_ancestors,
+            ipc::media_commands::prioritize_dimensions,
             // thumbnails
             // thumbnails
             ipc::thumbnail_commands::batch_request_thumbnails,

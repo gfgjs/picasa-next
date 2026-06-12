@@ -23,7 +23,7 @@ use crate::db::queries::{
 use crate::error::{AppError, Result};
 use crate::scanner::live_photo::pair_live_photos;
 use crate::scanner::metadata::{
-    detect_motion_photo_xmp, parse_exif_meta, read_image_dimensions,
+    apply_orientation_swap, detect_motion_photo_xmp, parse_exif_meta, read_raw_dimensions,
 };
 use crate::utils::path::resolve_media_path;
 
@@ -165,10 +165,24 @@ pub fn run_enrichment(
                 };
                 // Only read dimensions for placeholder items — keeps the eager
                 // first-screen dims (and their orientation) untouched (no double-flip).
+                // Reuse the orientation just parsed above (meta) instead of opening
+                // the JPEG a second time for its Orientation tag.
                 // 仅对占位项读取尺寸 — 保持首屏即时尺寸（及其方向）不变（不双重翻转）。
+                // 复用上面刚解析出的方向（meta），而不是为读 Orientation 再开一次 JPEG。
                 let dims = if *w == 0 || *h == 0 {
-                    let (dw, dh) = read_image_dimensions(path, &ext);
-                    if dw > 0 && dh > 0 { Some((dw, dh)) } else { None }
+                    let raw = read_raw_dimensions(path, &ext);
+                    if raw.0 > 0 && raw.1 > 0 {
+                        let oriented = if matches!(ext.as_str(), "jpg" | "jpeg") {
+                            let orientation =
+                                meta.as_ref().map(|m| m.orientation as u32).unwrap_or(1);
+                            apply_orientation_swap(raw, orientation)
+                        } else {
+                            raw
+                        };
+                        Some(oriented)
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 };

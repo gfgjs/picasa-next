@@ -45,15 +45,10 @@ pub fn orientation_needs_swap(orientation: u32) -> bool {
     matches!(orientation, 5..=8)
 }
 
-/// Read image pixel dimensions from the file header, orientation-corrected for
-/// JPEG, with a timeout guard for TIFF. Returns `(0, 0)` on failure.
-/// 从文件头读取图像像素尺寸：JPEG 经方向校正、TIFF 加超时保护；失败返回 `(0, 0)`。
-///
-/// Single-sourced here so the fast-scan eager path and the enrichment backfill
-/// path stay consistent (same orientation handling → no double-flip).
-/// 在此单一实现，使快速扫描的即时路径与 enrichment 补全路径保持一致
-/// （相同方向处理 → 不会双重翻转）。
-pub fn read_image_dimensions(abs_path: &Path, ext: &str) -> (i64, i64) {
+/// Header-only pixel dimensions, WITHOUT orientation correction and WITHOUT any
+/// EXIF read (TIFF gets a scoped-thread timeout guard). Returns `(0, 0)` on failure.
+/// 仅读文件头的像素尺寸：不做方向校正、不读 EXIF（TIFF 用作用域线程加超时保护）。失败返回 `(0, 0)`。
+pub fn read_raw_dimensions(abs_path: &Path, ext: &str) -> (i64, i64) {
     // TIFF: parsing can read many bytes — guard with a scoped thread.
     // TIFF：解析可能读取大量字节 — 用作用域线程加保护。
     if ext == "tif" || ext == "tiff" {
@@ -64,25 +59,37 @@ pub fn read_image_dimensions(abs_path: &Path, ext: &str) -> (i64, i64) {
         return result.map(|(w, h)| (w as i64, h as i64)).unwrap_or((0, 0));
     }
 
-    // JPEG: read Orientation and swap w/h when the photo is rotated 90°/270°.
-    // JPEG：读取方向，照片旋转 90°/270° 时交换宽高。
-    if ext == "jpg" || ext == "jpeg" {
-        if let Ok((w, h)) = image::image_dimensions(abs_path) {
-            let orientation = read_jpeg_orientation(abs_path);
-            return if orientation_needs_swap(orientation) {
-                (h as i64, w as i64)
-            } else {
-                (w as i64, h as i64)
-            };
-        }
-        return (0, 0);
-    }
-
-    // All other header-readable formats.
-    // 其余可读文件头的格式。
     image::image_dimensions(abs_path)
         .map(|(w, h)| (w as i64, h as i64))
         .unwrap_or((0, 0))
+}
+
+/// Swap `(w, h)` when the EXIF orientation indicates a 90°/270° rotation.
+/// 当 EXIF 方向表示 90°/270° 旋转时交换 `(w, h)`。
+pub fn apply_orientation_swap(dims: (i64, i64), orientation: u32) -> (i64, i64) {
+    if orientation_needs_swap(orientation) { (dims.1, dims.0) } else { dims }
+}
+
+/// Orientation-corrected dimensions. For JPEG this reads the EXIF Orientation tag
+/// (one extra file open); callers that have ALREADY parsed EXIF should instead use
+/// `read_raw_dimensions` + `apply_orientation_swap` with the known orientation to
+/// avoid re-opening the file.
+/// 经方向校正的尺寸。JPEG 会读取 EXIF 方向标签（多开一次文件）；已解析过 EXIF 的调用方
+/// 应改用 `read_raw_dimensions` + `apply_orientation_swap` 传入已知方向，避免重复打开文件。
+///
+/// Single-sourced so the fast-scan eager path and the viewport-priority path stay
+/// consistent (same orientation handling → no double-flip).
+/// 在此单一实现，使快速扫描即时路径与可视窗口优先路径一致（相同方向处理 → 不会双重翻转）。
+pub fn read_image_dimensions(abs_path: &Path, ext: &str) -> (i64, i64) {
+    let dims = read_raw_dimensions(abs_path, ext);
+    if dims == (0, 0) {
+        return (0, 0);
+    }
+    if ext == "jpg" || ext == "jpeg" {
+        apply_orientation_swap(dims, read_jpeg_orientation(abs_path))
+    } else {
+        dims
+    }
 }
 
 // ── Full EXIF parse (enrichment phase) ───────────────────────────────────────

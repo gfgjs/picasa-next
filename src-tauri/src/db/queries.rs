@@ -941,6 +941,31 @@ pub fn update_media_dimensions(conn: &Connection, item_id: i64, width: i64, heig
     Ok(())
 }
 
+/// Absolute path + extension for an item that STILL has placeholder (0×0)
+/// dimensions; `None` if it's missing or already measured. Backs the
+/// viewport-priority dimension extraction.
+/// 仍为占位(0×0)尺寸的项的绝对路径+扩展名；若不存在或已测量则为 `None`。
+/// 支撑可视窗口优先取尺寸。
+pub fn get_placeholder_item_path(conn: &Connection, id: i64) -> Result<Option<(String, String)>> {
+    conn.query_row(
+        "SELECT r.path, d.rel_path, m.file_name, m.file_format
+         FROM media_items m
+         JOIN directories d ON d.id = m.directory_id
+         JOIN scan_roots  r ON r.id = d.root_id
+         WHERE m.id = ?1 AND (m.width = 0 OR m.height = 0)",
+        params![id],
+        |row| {
+            let root: String = row.get(0)?;
+            let rel:  String = row.get(1)?;
+            let name: String = row.get(2)?;
+            let ext:  String = row.get(3)?;
+            Ok((resolve_media_path(&root, &rel, &name), ext))
+        },
+    )
+    .optional()
+    .map_err(AppError::from)
+}
+
 pub fn update_live_photo_flags(
     conn: &Connection,
     item_id: i64,

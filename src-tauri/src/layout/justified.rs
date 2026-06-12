@@ -116,6 +116,13 @@ const MAX_ROW_HEIGHT_FACTOR: f64 = 2.0;
 // ── 主算法 ────────────────────────────────────────────────────────────
 
 pub fn compute_justified_layout(items: &[LayoutItem], params: &LayoutParams) -> Vec<LayoutRow> {
+    // Placeholder aspect for not-yet-measured (0×0) items: the median of the
+    // measured items, so deferred-dimension photos render at a plausible shape
+    // (not a square) and reflow only slightly when their real dims arrive.
+    // 未测量(0×0)项的占位宽高比：取已测量项的中位数，使延后取尺寸的照片以合理形状
+    // （而非正方形）渲染，真实尺寸到达时只发生轻微重排。
+    let placeholder_aspect = median_measured_aspect(items);
+
     let mut rows: Vec<LayoutRow> = Vec::new();
     let mut current_y = 0.0f64;
 
@@ -168,7 +175,7 @@ pub fn compute_justified_layout(items: &[LayoutItem], params: &LayoutParams) -> 
         let hit_cap = ideal_h > target_h * MAX_ROW_HEIGHT_FACTOR;
         let should_snap_last = !is_incomplete && !hit_cap;
 
-        let mut unrounded_widths: Vec<f64> = pending.iter().map(|item| aspect_ratio(item) * row_h).collect();
+        let mut unrounded_widths: Vec<f64> = pending.iter().map(|item| aspect_ratio(item, placeholder_aspect) * row_h).collect();
         
         // Only adjust to exactly fill the container if it's a fully justified row
         // 仅在完全两端对齐的行时调整以精确填充容器
@@ -300,7 +307,7 @@ pub fn compute_justified_layout(items: &[LayoutItem], params: &LayoutParams) -> 
             last_label = Some(current_label);
         }
 
-        let ar = aspect_ratio(item);
+        let ar = aspect_ratio(item, placeholder_aspect);
         pending_items.push(item);
         pending_ar_sum += ar;
 
@@ -343,11 +350,36 @@ pub fn compute_justified_layout(items: &[LayoutItem], params: &LayoutParams) -> 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 // ── 辅助函数 ───────────────────────────────────────────────────────────────────
 
-fn aspect_ratio(item: &LayoutItem) -> f64 {
+fn aspect_ratio(item: &LayoutItem, placeholder_aspect: f64) -> f64 {
+    // Not-yet-measured items (deferred dimensions) carry 0×0 → use the supplied
+    // placeholder aspect rather than 1.0 (square).
+    // 未测量项（延后取尺寸）为 0×0 → 使用传入的占位宽高比，而非 1.0（正方形）。
+    if item.width <= 0 || item.height <= 0 {
+        return placeholder_aspect.clamp(0.2, 5.0);
+    }
     let w = item.width.max(1) as f64;
     let h = item.height.max(1) as f64;
     (w / h).clamp(0.2, 5.0) // clamp to prevent extreme ratios
                             // 限制以防止极端的比例
+}
+
+/// Median aspect ratio of the measured items in the set (those with real w/h),
+/// used as the placeholder shape for 0×0 items. Falls back to 3:2 when nothing
+/// is measured yet. O(n) via `select_nth_unstable` (no full sort).
+/// 集合中已测量项（有真实宽高）的中位宽高比，作为 0×0 项的占位形状。尚无测量时
+/// 回退到 3:2。借 `select_nth_unstable` 实现 O(n)（无需完整排序）。
+fn median_measured_aspect(items: &[LayoutItem]) -> f64 {
+    let mut ars: Vec<f64> = items
+        .iter()
+        .filter(|it| it.width > 0 && it.height > 0)
+        .map(|it| (it.width as f64 / it.height as f64).clamp(0.2, 5.0))
+        .collect();
+    if ars.is_empty() {
+        return 1.5; // 3:2 landscape default | 默认 3:2 横向
+    }
+    let mid = ars.len() / 2;
+    ars.select_nth_unstable_by(mid, |a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    ars[mid]
 }
 
 fn timestamp_to_date_label(ts: i64) -> String {

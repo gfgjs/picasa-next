@@ -726,30 +726,6 @@ function closeSettings() {
   100% { background-position: 200% 0; }
 }
 
-/* ── Segmented Control ─────────────────────────────────────────────────── */
-.segmented-control {
-  display: inline-flex;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--color-border);
-  overflow: hidden;
-}
-.segmented-btn {
-  padding: 8px 16px;
-  font-size: 13px;
-  background: transparent;
-  color: var(--color-text-secondary);
-  border: none;
-  border-right: 1px solid var(--color-border);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-.segmented-btn:last-child { border-right: none; }
-.segmented-btn:hover { background: var(--color-bg-hover); }
-.segmented-btn.active {
-  background: var(--color-accent);
-  color: #fff;
-}
-
 /* ── Buttons ───────────────────────────────────────────────────────────── */
 .setting-actions {
   display: flex;

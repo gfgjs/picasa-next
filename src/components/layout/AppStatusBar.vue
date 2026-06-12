@@ -13,11 +13,7 @@
         <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg>
       </button>
     </span>
-    <span v-else-if="scan.autoThumbInFlight > 0" class="statusbar__scanning" title="正在生成视口缩略图" style="cursor: help;">
-      <span class="spinner" />
-      视口缩略图: 处理中 {{ scan.autoThumbInFlight }} 项
-      <template v-if="scan.autoThumbQueueSize > 0"><span style="opacity: 0.8; margin-left: 4px;">(排队 {{ scan.autoThumbQueueSize }})</span></template>
-    </span>
+    
     <!-- AI analysis indicator (shown when AI is actively indexing) -->
     <!-- AI 分析指示器（AI 正在主动建索时显示） -->
     <span v-else-if="ai.status.isAnalyzing" class="statusbar__scanning" title="AI 正在分析图片">
@@ -29,6 +25,11 @@
       {{ $t('statusbar.items', { count: media.viewTotalItems.toLocaleString() }) }}
       <template v-if="media.stats.totalImages > 0">· {{ $t('statusbar.images', { count: media.stats.totalImages.toLocaleString() }) }}</template>
       <template v-if="media.stats.totalVideos > 0">· {{ $t('statusbar.videos', { count: media.stats.totalVideos.toLocaleString() }) }}</template>
+    </span>
+    <span v-if="scan.autoThumbInFlight > 0" class="statusbar__scanning" title="正在生成视口缩略图" style="cursor: help;">
+      <span class="spinner" />
+      视口缩略图: 处理中 {{ scan.autoThumbInFlight }} 项
+      <template v-if="scan.autoThumbQueueSize > 0"><span style="opacity: 0.8; margin-left: 4px;">(排队 {{ scan.autoThumbQueueSize }})</span></template>
     </span>
   </div>
 

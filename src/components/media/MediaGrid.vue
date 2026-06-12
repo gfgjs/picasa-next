@@ -71,9 +71,10 @@
           <div
             v-for="item in (row as any).items"
             :key="item.id"
+            v-memo="[item.thumbStatus, item.thumbPath, item.thumbhash, item.isFavorited, item.w, item.h, selection.isSelected(item.id), selection.isSelectionMode.value]"
             class="media-card"
             :data-item-id="item.id"
-            :class="{ 'media-card--selection-mode': selection.isSelectionMode.value }"
+            :class="{ 'media-card--selection-mode': selection.isSelectionMode.value, 'media-card--compact': compactCells }"
             :style="{ width: item.w + 'px', height: item.h + 'px' }"
             @click="handleCardClick(item.id, $event)"
             @pointerdown="selection.onPointerDown(item.id, $event)"
@@ -216,6 +217,15 @@ const { t }  = useI18n()
 
 const selection = useSelection()
 const dragHoverId = ref<number | null>(null)
+
+// At tiny cell sizes the viewport holds ~1000 cells; enable `content-visibility`
+// on each card so the browser skips rendering off-screen ones (paint/layout) and
+// scrolling stays smooth. Gated to small sizes because content-visibility forces
+// paint containment, which would clip the larger sizes' hover-pop (scale+shadow).
+// 极小单元尺寸下视口可容纳约 1000 个单元；对每个卡片启用 `content-visibility`，
+// 让浏览器跳过离屏单元的渲染（绘制/布局），保持滚动顺滑。仅在小尺寸启用：
+// content-visibility 会强制 paint 包含，裁掉大尺寸下的 hover 放大+阴影外溢。
+const compactCells = computed(() => ui.gridRowHeight < 100)
 
 const emptyStateText = computed(() => {
   if (ui.isSearching) {
@@ -1082,6 +1092,14 @@ watch(() => ui.pendingScrollLabel, async (label) => {
     transform 220ms cubic-bezier(0.34, 1.18, 0.64, 1),
     box-shadow 220ms ease,
     z-index 220ms linear;
+}
+
+/* Tiny-cell mode: let the browser skip rendering off-screen cells. Cells keep
+   their explicit inline width/height, so size containment can't collapse them.
+   极小单元模式：让浏览器跳过离屏单元的渲染。单元有显式行内宽高，
+   故尺寸包含不会使其塌陷。 */
+.media-card--compact {
+  content-visibility: auto;
 }
 
 .media-card:hover {

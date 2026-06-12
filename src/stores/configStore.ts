@@ -50,14 +50,14 @@ export const useConfigStore = defineStore('config', {
         this.aiTextModel = await fetchStr('ai_text_model', 'cn-clip-vit-b16-text.onnx')
         this.aiProviderOverride = await fetchStr('ai_provider_override', 'auto')
         this.aiBatchSize = await fetchInt('ai_batch_size', 0)
-        
+
         // 应用一些 CSS 变量和 UI 状态
         const ui = useUiStore()
         if (this.thumbStrategy) ui.setThumbStrategy(this.thumbStrategy)
         if (this.gpuEngine) ui.setGpuEngine(this.gpuEngine)
 
         document.documentElement.style.setProperty('--scrollbar-width', `${this.timelineScrollWidth}px`)
-        
+
         const diff = this.uiFontSize - 16;
         document.documentElement.style.setProperty('--font-size-xs', `${12 + diff}px`);
         document.documentElement.style.setProperty('--font-size-sm', `${13 + diff}px`);
@@ -82,7 +82,7 @@ export const useConfigStore = defineStore('config', {
     async saveConfig(key: string, value: string) {
       await invoke('set_app_config', { key, value })
     },
-    
+
     async setThumbSkipMaxKb(val: number) {
       this.thumbSkipMaxKb = val;
       await this.saveConfig('thumb_skip_max_kb', val.toString())
@@ -92,6 +92,8 @@ export const useConfigStore = defineStore('config', {
       await this.saveConfig('thumb_cache_max_mb', val.toString())
     },
     async setThumbSize(val: number) {
+      console.log(val);
+
       this.thumbSize = val;
       await this.saveConfig('thumb_size', val.toString())
     },

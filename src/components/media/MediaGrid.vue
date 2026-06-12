@@ -357,6 +357,7 @@ const {
   fetchRowsByY:  (topY, bottomY) => media.fetchRowsByY(topY, bottomY),
   containerRef:  () => gridRef.value,
   layerRef:      () => layerRef.value,
+  rowHeight:     () => ui.gridRowHeight,
 })
 
 function onGridScroll(e: Event) {

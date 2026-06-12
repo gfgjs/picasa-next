@@ -17,7 +17,11 @@ export const DEFAULTS = {
   GRID_GAP:           4,
   SEARCH_DEBOUNCE_MS: 150,
   RESIZE_DEBOUNCE_MS: 300,
-  SCROLL_BUFFER_ROWS: 15,
+  SCROLL_BUFFER_ROWS: 8,   // rows of off-screen buffer above/below the viewport;
+                           // drives an adaptive pixel buffer so tiny row heights
+                           // don't over-render hundreds of extra cells.
+                           // 视口上下各保留的离屏缓冲行数；据此换算自适应像素缓冲，
+                           // 避免极小行高时多渲染数百个单元。
   THUMB_BATCH_SIZE:   24,
   ENRICHMENT_BATCH:   500,
   SCAN_PROGRESS_INTERVAL: 500,

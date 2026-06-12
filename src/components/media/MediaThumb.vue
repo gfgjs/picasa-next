@@ -38,8 +38,8 @@
     <!-- 覆盖层 -->
     <div class="media-thumb__overlays">
       <!-- Advanced Info Overlay & Badges -->
-      <div 
-        v-if="thumbInfoLines.length > 0 || (similarity == null && isLoaded && thumbStatus === 3 && ui.showThumbInfo && ui.thumbInfoElements.includes('status')) || (similarity == null && isLoaded && thumbStatus === 1 && ui.showThumbInfo && ui.thumbInfoElements.includes('status')) || (similarity == null && fileSize && ui.showThumbInfo && ui.thumbInfoElements.includes('size')) || similarity != null || isLivePhoto"
+      <div
+        v-if="!compact && (thumbInfoLines.length > 0 || (similarity == null && isLoaded && thumbStatus === 3 && ui.showThumbInfo && ui.thumbInfoElements.includes('status')) || (similarity == null && isLoaded && thumbStatus === 1 && ui.showThumbInfo && ui.thumbInfoElements.includes('status')) || (similarity == null && fileSize && ui.showThumbInfo && ui.thumbInfoElements.includes('size')) || similarity != null || isLivePhoto)"
         class="media-thumb__info-overlay"
       >
         <div class="media-thumb__badges" style="display: flex; gap: 4px; margin-bottom: 2px; flex-wrap: wrap;">
@@ -54,13 +54,14 @@
 
       <!-- Video play -->
       <!-- 视频播放 -->
-      <span v-if="mediaType === 'video'" class="badge badge-video"><Play :size="20" fill="#fff" /></span>
+      <span v-if="mediaType === 'video' && !compact" class="badge badge-video"><Play :size="20" fill="#fff" /></span>
       <!-- Duration -->
       <!-- 时长 -->
-      <span v-if="durationMs" class="badge badge-duration">{{ formatDuration(durationMs) }}</span>
-      <!-- Favorite -->
-      <!-- 收藏 -->
+      <span v-if="durationMs && !compact" class="badge badge-duration">{{ formatDuration(durationMs) }}</span>
+      <!-- Favorite (hidden at compact sizes — unusable + a costly always-on SVG) -->
+      <!-- 收藏（极小尺寸下隐藏 —— 点不动且是常驻的高成本 SVG） -->
       <button
+        v-if="!compact"
         class="media-thumb__fav"
         :class="{ active: isFavorited, 'fav-always-visible': isFavorited && ui.showThumbInfo && ui.thumbInfoElements.includes('favorite') }"
         @click.stop="toggleFav"
@@ -153,6 +154,16 @@ const thumbStyle = computed(() => ({
   width:  `${props.w}px`,
   height: `${props.h}px`,
 }))
+
+// Below this cell size, drop non-essential overlays/badges — and crucially their
+// `backdrop-filter` blur and the always-rendered favorite SVG. They're invisible/
+// unusable at this scale yet very costly when hundreds are on screen (e.g. tiny
+// grid + full-thumbnail generation). Selection checkbox is kept (still usable).
+// 低于此单元尺寸时，砍掉非必要的覆盖层/徽章 —— 关键是其 `backdrop-filter` 模糊与常驻
+// 的收藏 SVG。它们在此尺度下看不清/点不动，但数百个同屏时（如极小网格 + 全量缩略图
+// 生成）开销极大。选择复选框保留（仍可用）。
+const COMPACT_THUMB_PX = 100
+const compact = computed(() => props.w < COMPACT_THUMB_PX || props.h < COMPACT_THUMB_PX)
 
 const thumbInfoLines = computed(() => {
   if (!ui.showThumbInfo || !props.item) return []

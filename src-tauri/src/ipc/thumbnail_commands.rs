@@ -588,7 +588,17 @@ pub async fn start_full_thumbnail_generation(
 
             let mut successful_results = Vec::new();
             let mut deferred_items = Vec::new();
-            
+
+            // Throttle progress IPC: emitting per image floods the channel (80k+ msgs)
+            // and thrashes the sidebar's reactive progress UI (stalls the rAF timer).
+            // Send at most once per PROGRESS_THROTTLE; the final completed/cancelled
+            // message below is always sent so the bar still ends at 100%.
+            // 节流进度 IPC：逐张发送会刷爆通道（8 万+ 条）并使侧边栏响应式进度 UI 抖动
+            // （挤掉 rAF 计时器）。最多每 PROGRESS_THROTTLE 发一次；下方最终 completed/
+            // cancelled 消息始终发送，进度条仍会走到 100%。
+            const PROGRESS_THROTTLE: std::time::Duration = std::time::Duration::from_millis(100);
+            let mut last_progress_emit = std::time::Instant::now();
+
             while let Ok(msg) = result_rx.recv() {
                 if cancel_token.is_cancelled() { break; }
                 
@@ -596,15 +606,19 @@ pub async fn start_full_thumbnail_generation(
                     Ok(res) => {
                         successful_results.push(res.clone());
                         generated_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        
-                        let current = generated_count.load(std::sync::atomic::Ordering::Relaxed);
-                        let _ = on_progress.send(FullThumbProgressPayload {
-                            generated: current,
-                            total: total as u64,
-                            status: "running".to_string(),
-                            current_item: None,
-                            phase: Some("GPU".to_string()),
-                        });
+
+                        let now = std::time::Instant::now();
+                        if now.duration_since(last_progress_emit) >= PROGRESS_THROTTLE {
+                            last_progress_emit = now;
+                            let current = generated_count.load(std::sync::atomic::Ordering::Relaxed);
+                            let _ = on_progress.send(FullThumbProgressPayload {
+                                generated: current,
+                                total: total as u64,
+                                status: "running".to_string(),
+                                current_item: None,
+                                phase: Some("GPU".to_string()),
+                            });
+                        }
                     }
                     Err(deferred) => {
                         deferred_items.push(deferred);
@@ -666,16 +680,20 @@ pub async fn start_full_thumbnail_generation(
                     
                     cpu_successful.push(res.clone());
                     generated_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    let current = generated_count.load(std::sync::atomic::Ordering::Relaxed);
-                    
-                    let _ = on_progress.send(FullThumbProgressPayload {
-                        generated: current,
-                        total: total as u64,
-                        status: "running".to_string(),
-                        current_item: None,
-                        phase: Some("CPU".to_string()),
-                    });
-                    
+
+                    let now = std::time::Instant::now();
+                    if now.duration_since(last_progress_emit) >= PROGRESS_THROTTLE {
+                        last_progress_emit = now;
+                        let current = generated_count.load(std::sync::atomic::Ordering::Relaxed);
+                        let _ = on_progress.send(FullThumbProgressPayload {
+                            generated: current,
+                            total: total as u64,
+                            status: "running".to_string(),
+                            current_item: None,
+                            phase: Some("CPU".to_string()),
+                        });
+                    }
+
                     // Flush every 10 for CPU
                     if cpu_successful.len() >= 10 {
                         if let Ok(mut conn) = state_arc.db_writer.lock() {

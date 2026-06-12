@@ -35,8 +35,19 @@
 
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import type { LayoutRow } from '../types/layout'
+import { DEFAULTS } from '../constants/defaults'
 
 const LOG = '[VirtualScroll]'
+
+/// Off-screen render buffer bounds (logical px). The actual buffer is
+/// `rowHeight * SCROLL_BUFFER_ROWS` clamped to [MIN, MAX], so the number of
+/// buffered ROWS stays roughly constant instead of ballooning at tiny row heights
+/// (a fixed px buffer rendered ~16 rows at 60px but only ~4 at 240px).
+/// 离屏渲染缓冲边界（逻辑像素）。实际缓冲 = `rowHeight * SCROLL_BUFFER_ROWS` 钳制到
+/// [MIN, MAX]，使缓冲“行数”大致恒定，而非在极小行高时膨胀（固定像素缓冲在 60px 时
+/// 渲染约 16 行，240px 时仅约 4 行）。
+const MIN_BUFFER_PX = 400
+const MAX_BUFFER_PX = 1200
 
 /// Physical scroll-spacer ceiling. Comfortably under the ~16.7M px element-height clamp.
 /// 物理滚动占位上限，安全地低于约 1677 万 px 的元素高度钳制阈值。
@@ -54,6 +65,9 @@ interface UseVirtualScrollOptions {
   /// The render-layer element whose transform pins the visible window.
   /// 渲染层元素，其 transform 把可视窗口钉到视口。
   layerRef:     () => HTMLElement | null
+  /// Current target grid row height (px) — drives the adaptive scroll buffer.
+  /// 当前网格目标行高（px）—— 驱动自适应滚动缓冲。
+  rowHeight:    () => number
 }
 
 export function useVirtualScroll(opts: UseVirtualScrollOptions) {
@@ -225,8 +239,11 @@ export function useVirtualScroll(opts: UseVirtualScrollOptions) {
     const scrollY = physicalToLogical(physicalTop)
     logicalScrollTop.value = scrollY
 
-    const bufferH = 1000 // 1000px logical buffer for smooth scrolling
-                         // 1000px 逻辑缓冲区以实现平滑滚动
+    // Adaptive buffer: keep a roughly constant number of buffered rows so tiny
+    // row heights don't over-render (see MIN/MAX_BUFFER_PX note above).
+    // 自适应缓冲：保持缓冲行数大致恒定，避免极小行高时过度渲染（见上方 MIN/MAX 说明）。
+    const rh = Math.max(40, opts.rowHeight())
+    const bufferH = Math.min(MAX_BUFFER_PX, Math.max(MIN_BUFFER_PX, rh * DEFAULTS.SCROLL_BUFFER_ROWS))
     const topY    = Math.max(0, scrollY - bufferH)
     const bottomY = Math.min(logMax + viewH, scrollY + viewH + bufferH)
 

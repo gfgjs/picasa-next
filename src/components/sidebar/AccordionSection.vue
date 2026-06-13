@@ -32,7 +32,11 @@
     <!-- v-show（非 v-if）：折叠仅隐藏主体但保留其 DOM，使嵌套状态（如文件夹树展开）
          得以保留——「多级展开状态记忆」。 -->
     <div v-show="expanded" class="acc-body">
-      <slot />
+      <!-- Inner wrapper carries the padding — see .acc-body__inner note below. -->
+      <!-- 内层包裹元素承载 padding——见下方 .acc-body__inner 说明。 -->
+      <div class="acc-body__inner">
+        <slot />
+      </div>
     </div>
   </transition>
 </template>
@@ -157,7 +161,14 @@ function onLeave(el: Element) {
   cursor: default;
 }
 
-.acc-body {
+/* The animated element itself MUST stay zero-padding so that height→0 collapses
+   to a true 0. A content-box with padding can't shrink below its padding height,
+   so height→0 leaves a residual band that display:none snaps away in the last
+   frame — a visible "顿一下" at the end of the collapse. Put the breathing room
+   on the inner wrapper instead. | 被动画的元素本身必须零内边距，使 height→0 能干净
+   收到真正的 0。带 padding 的盒子无法收缩到小于其 padding 高度，height→0 会残留一条，
+   在 display:none 时于末帧瞬间消失——即折叠收尾那一「顿」。留白改放到内层包裹元素。 */
+.acc-body__inner {
   padding: var(--spacing-sm) 0;
 }
 </style>

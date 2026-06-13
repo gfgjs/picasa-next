@@ -1,6 +1,8 @@
 export default {
   sidebar: {
     library: '图库',
+    tools: '工具',
+    management: '管理',
     allPhotos: '所有照片',
     recentlyAdded: '最近添加',
     favorites: '个人收藏',

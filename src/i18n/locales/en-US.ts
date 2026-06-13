@@ -1,6 +1,8 @@
 export default {
   sidebar: {
     library: 'Library',
+    tools: 'Tools',
+    management: 'Management',
     allPhotos: 'All Photos',
     recentlyAdded: 'Recently Added',
     favorites: 'Favorites',

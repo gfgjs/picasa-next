@@ -1,0 +1,20 @@
+// src-tauri/src/ipc/mod.rs
+pub mod ai_commands;
+pub mod audio_commands;
+pub mod blocking;
+pub mod collection_commands;
+pub mod config_commands;
+pub mod derive_commands;
+pub mod doc_commands;
+pub mod exotic_commands;
+pub mod face_commands;
+pub mod file_ops_commands;
+pub mod layout_commands;
+pub mod media_commands;
+pub mod proofread_commands;
+pub mod scan_commands;
+pub mod search_commands;
+pub mod storage_commands;
+pub mod system_commands;
+pub mod thumbnail_commands;
+pub mod volume_commands;

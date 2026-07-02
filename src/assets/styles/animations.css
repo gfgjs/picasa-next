@@ -1,0 +1,161 @@
+/* src/assets/styles/animations.css */
+/* Micro-animations as specified in §14.1
+   NOTE: We do NOT add transitions to * (avoids 150k thumbnail repaints).
+   Only layout skeleton elements get theme transitions. */
+
+/* ── Layout skeleton theme transitions ─────────────────────────────────── */
+.app-shell,
+.app-sidebar,
+.app-toolbar,
+.app-statusbar,
+.theme-toggle {
+  transition:
+    background-color var(--transition-normal),
+    border-color var(--transition-normal),
+    color var(--transition-normal);
+}
+
+/* ── Card hover ─────────────────────────────────────────────────────────── */
+.media-card {
+  transition:
+    transform var(--transition-fast),
+    box-shadow var(--transition-fast);
+  will-change: transform;
+}
+.media-card:hover {
+  transform: scale(1.03);
+  box-shadow: var(--shadow-lg);
+  z-index: 2;
+}
+
+html.disable-hover-scale .media-card:hover {
+  transform: none;
+}
+
+/* ── Thumbnail fade-in ──────────────────────────────────────────────────── */
+@keyframes thumb-appear {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.thumb-loaded {
+  animation: thumb-appear var(--transition-normal) ease forwards;
+}
+
+/* compact 模式下跳过淡入动画——同屏数百张图片同时触发动画开销极大 */
+.media-card--compact .thumb-loaded {
+  animation: none;
+}
+
+/* ── Favorite spring animation ──────────────────────────────────────────── */
+@keyframes fav-spring {
+  0% {
+    transform: scale(1);
+  }
+  30% {
+    transform: scale(1.3);
+  }
+  60% {
+    transform: scale(0.9);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+.fav-animate {
+  animation: fav-spring 300ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* ── Toast slide-in ────────────────────────────────────────────────────── */
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes toast-out {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+}
+.toast-enter {
+  animation: toast-in 200ms ease forwards;
+}
+.toast-leave {
+  animation: toast-out 200ms ease forwards;
+}
+
+/* ── LIVE badge glow ────────────────────────────────────────────────────── */
+@keyframes live-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 4px rgba(233, 69, 96, 0.6);
+  }
+  50% {
+    box-shadow: 0 0 10px rgba(233, 69, 96, 1);
+  }
+}
+.badge-live.playing {
+  animation: live-glow 1.2s ease-in-out infinite;
+}
+
+/* ── Spinner ────────────────────────────────────────────────────────────── */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.spinner {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: spin 600ms linear infinite;
+}
+
+/* ── Progress bar shimmer ───────────────────────────────────────────────── */
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+.progress-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--color-accent) 0%,
+    var(--color-accent-hover) 50%,
+    var(--color-accent) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+/* ── Modal overlay fade ─────────────────────────────────────────────────── */
+@keyframes overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.overlay-enter {
+  animation: overlay-in 150ms ease forwards;
+}

@@ -1,0 +1,358 @@
+<template>
+  <div class="pr-panel">
+    <div class="pr-panel__head">
+      <span class="pr-panel__title">{{ t('doc.proofreadTitle') }}</span>
+      <button
+        class="pr-panel__x"
+        @click="emit('close')"
+        :title="t('common.close')"
+        :aria-label="t('common.close')"
+      >
+        <X :size="16" />
+      </button>
+    </div>
+
+    <!-- 配置（未配置或点击设置时展开）-->
+    <div v-if="showConfig" class="pr-config">
+      <label
+        >{{ t('doc.proofreadBaseUrl') }}
+        <input v-model="form.baseUrl" placeholder="https://api.openai.com/v1" />
+      </label>
+      <label
+        >{{ t('doc.proofreadModel') }}
+        <input v-model="form.model" placeholder="gpt-4o-mini" />
+      </label>
+      <label
+        >API Key {{ cfg?.hasKey ? t('doc.proofreadKeySet') : '' }}
+        <input v-model="form.key" type="password" placeholder="sk-..." />
+      </label>
+      <div class="pr-config__row">
+        <button class="pr-btn pr-btn--primary" @click="saveConfig">{{ t('doc.save') }}</button>
+        <button v-if="cfg?.hasKey" class="pr-btn" @click="clearKey">
+          {{ t('doc.proofreadClearKey') }}
+        </button>
+        <button v-if="configured" class="pr-btn" @click="showConfig = false">
+          {{ t('onboarding.finish') }}
+        </button>
+      </div>
+      <p class="pr-hint">{{ t('doc.proofreadKeyHint') }}</p>
+    </div>
+
+    <!-- 操作区 -->
+    <div v-else class="pr-body">
+      <div class="pr-actions">
+        <button class="pr-btn" @click="showConfig = true" :title="t('settings.title')">
+          <Settings :size="14" /> {{ t('settings.title') }}
+        </button>
+        <button
+          class="pr-btn pr-btn--primary"
+          :disabled="!configured || running || !text"
+          @click="run"
+        >
+          <Sparkles :size="14" />
+          {{
+            running
+              ? t('doc.proofreadRunning', { done: progress.done, total: progress.total })
+              : t('doc.proofreadStart')
+          }}
+        </button>
+      </div>
+
+      <p v-if="error" class="pr-error">{{ error }}</p>
+      <p v-if="!configured" class="pr-hint">{{ t('doc.proofreadNotConfigured') }}</p>
+
+      <!-- track-changes 预览 -->
+      <div v-if="diff" class="pr-diff">
+        <div class="pr-diff__bar">
+          <span>{{ t('doc.proofreadDiffTitle') }}</span>
+        </div>
+        <div class="pr-diff__body">
+          <div v-for="(op, i) in diff" :key="i" class="pr-diff__line" :class="'op-' + op.tag">
+            <span class="pr-diff__sign">{{
+              op.tag === 'insert' ? '+' : op.tag === 'delete' ? '−' : ' '
+            }}</span>
+            <span class="pr-diff__text">{{ op.value }}</span>
+          </div>
+        </div>
+        <div class="pr-diff__foot">
+          <button class="pr-btn pr-btn--primary" @click="accept">
+            {{ t('doc.proofreadAccept') }}
+          </button>
+          <button class="pr-btn" @click="discard">{{ t('doc.proofreadDiscard') }}</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+// AI 校对面板（§5.4，远程）。配置（base_url/model/key）→ 分块逐块校对 → track-changes 预览 →
+// 接受后存为新版本（source='ai-remote'，接 §5.3）。本期为「全部接受」；逐条接受/拒绝为后续增强。
+import { ref, reactive, computed, onMounted } from 'vue'
+import { invoke } from '@tauri-apps/api/core'
+import { X, Settings, Sparkles } from '@lucide/vue'
+import { useI18n } from 'vue-i18n'
+import { IPC } from '../../constants/ipc'
+
+interface DiffOp {
+  tag: string
+  value: string
+}
+interface ProofreadCfg {
+  baseUrl: string
+  model: string
+  hasKey: boolean
+}
+
+const props = defineProps<{ itemId: number; text: string; currentVersionId: number | null }>()
+const emit = defineEmits<{ (e: 'changed'): void; (e: 'close'): void }>()
+
+const { t } = useI18n()
+
+const cfg = ref<ProofreadCfg | null>(null)
+const form = reactive({ baseUrl: '', model: '', key: '' })
+const showConfig = ref(false)
+const running = ref(false)
+const progress = reactive({ done: 0, total: 0 })
+const corrected = ref<string | null>(null)
+const diff = ref<DiffOp[] | null>(null)
+const error = ref('')
+
+const configured = computed(() => !!cfg.value?.baseUrl && !!cfg.value?.model && !!cfg.value?.hasKey)
+
+// 单块上限（字符）。按行边界切，保证拼接可还原原文结构。
+const CHUNK_MAX = 2000
+function chunkText(text: string): string[] {
+  if (text.length <= CHUNK_MAX) return text ? [text] : []
+  const lines = text.split(/(?<=\n)/) // 保留换行，每段末尾带 \n
+  const chunks: string[] = []
+  let buf = ''
+  for (const ln of lines) {
+    if (buf && buf.length + ln.length > CHUNK_MAX) {
+      chunks.push(buf)
+      buf = ''
+    }
+    buf += ln
+  }
+  if (buf) chunks.push(buf)
+  return chunks
+}
+
+async function loadCfg() {
+  cfg.value = await invoke<ProofreadCfg>(IPC.GET_PROOFREAD_CONFIG).catch(() => null)
+  if (cfg.value) {
+    form.baseUrl = cfg.value.baseUrl
+    form.model = cfg.value.model
+  }
+  if (!configured.value) showConfig.value = true
+}
+
+async function saveConfig() {
+  await invoke(IPC.SET_PROOFREAD_CONFIG, { baseUrl: form.baseUrl.trim(), model: form.model.trim() })
+  if (form.key) {
+    await invoke(IPC.SET_PROOFREAD_KEY, { key: form.key })
+    form.key = ''
+  }
+  await loadCfg()
+  if (configured.value) showConfig.value = false
+}
+
+async function clearKey() {
+  await invoke(IPC.CLEAR_PROOFREAD_KEY)
+  await loadCfg()
+}
+
+async function run() {
+  error.value = ''
+  diff.value = null
+  corrected.value = null
+  const chunks = chunkText(props.text)
+  if (!chunks.length) return
+  running.value = true
+  progress.done = 0
+  progress.total = chunks.length
+  try {
+    const out: string[] = []
+    for (const c of chunks) {
+      out.push(await invoke<string>(IPC.PROOFREAD_CHUNK, { text: c }))
+      progress.done++
+    }
+    corrected.value = out.join('')
+    diff.value = await invoke<DiffOp[]>(IPC.DIFF_TEXTS, { a: props.text, b: corrected.value })
+  } catch (e) {
+    error.value = t('doc.proofreadFailed', { error: (e as Error)?.message ?? e })
+  } finally {
+    running.value = false
+  }
+}
+
+async function accept() {
+  if (corrected.value == null) return
+  const newId = await invoke<number>(IPC.SAVE_VERSION, {
+    itemId: props.itemId,
+    content: corrected.value,
+    label: t('doc.proofreadVersionLabel'),
+    parentId: props.currentVersionId,
+    target: 'version',
+    source: 'ai-remote',
+  })
+  await invoke(IPC.SET_CURRENT_VERSION, { itemId: props.itemId, versionId: newId })
+  diff.value = null
+  corrected.value = null
+  emit('changed')
+}
+
+function discard() {
+  diff.value = null
+  corrected.value = null
+}
+
+onMounted(loadCfg)
+</script>
+
+<style scoped>
+.pr-panel {
+  display: flex;
+  flex-direction: column;
+  width: 360px;
+  height: 100%;
+  background: var(--color-bg-surface);
+  border-left: 1px solid var(--color-border);
+}
+.pr-panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+.pr-panel__title {
+  font-weight: 600;
+}
+.pr-panel__x {
+  background: transparent;
+  border: none;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.pr-config {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+}
+.pr-config label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+.pr-config input {
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-primary);
+  padding: 5px 8px;
+  font-size: var(--font-size-sm);
+}
+.pr-config__row {
+  display: flex;
+  gap: 8px;
+}
+.pr-hint {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  margin: 0;
+  padding: 0 12px;
+  line-height: 1.5;
+}
+
+.pr-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+.pr-actions {
+  display: flex;
+  gap: 8px;
+  padding: 12px;
+}
+.pr-error {
+  color: var(--color-danger, #e5484d);
+  font-size: var(--font-size-xs);
+  padding: 0 12px;
+}
+
+.pr-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-primary);
+  padding: 6px 10px;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+.pr-btn--primary {
+  background: var(--color-accent);
+  color: #fff;
+  border-color: transparent;
+}
+.pr-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.pr-diff {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  border-top: 1px solid var(--color-border);
+}
+.pr-diff__bar {
+  padding: 6px 12px;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+.pr-diff__body {
+  flex: 1;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.pr-diff__line {
+  display: flex;
+  gap: 6px;
+  padding: 0 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.pr-diff__sign {
+  flex: 0 0 12px;
+  color: var(--color-text-secondary);
+}
+.op-insert {
+  background: rgba(46, 160, 67, 0.18);
+}
+.op-delete {
+  background: rgba(229, 72, 77, 0.18);
+}
+.op-insert .pr-diff__sign {
+  color: #2ea043;
+}
+.op-delete .pr-diff__sign {
+  color: #e5484d;
+}
+.pr-diff__foot {
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--color-border);
+}
+</style>

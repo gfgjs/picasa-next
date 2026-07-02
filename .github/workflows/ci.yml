@@ -1,0 +1,87 @@
+# CI —— 私有 canonical 仓的提交门控(审查 R0-1,2026-07-02 改造)。
+#
+# 改造点(相对旧版):
+#   ① 触发扩到 dev + PR + 手动 dispatch(旧版仅 main push → 429 个测试对日常提交零门控);
+#   ② 加 cargo test --workspace(旧版只有 check+clippy,"测试全绿"长期仅本地断言);
+#   ③ Rust job 补 setup-node + npm ci:tauri.windows.conf.json 的 bundle.resources 指向
+#      node_modules 内 ONNX/DirectML 二进制(750817b 平台拆分),tauri-build 在 build script
+#      阶段校验其存在——不装依赖则 cargo check 直接红(私有 CI 2026-07-02 连红根因);
+#   ④ 占位 dist:tauri::generate_context! 编译期校验 frontendDist(oss-gate 四跑实证,debug 也查);
+#   ⑤ Rust job 全部命令迁 workspace 根(旧版钉 ./src-tauri,漏掉 crates/* 五个 member)。
+# 步骤写法与 oss-gate.yml 对齐(bash shell / rust-cache / node 22 npm ci),复用其六轮实跑踩坑结论。
+name: CI
+
+on:
+  push:
+    branches: [ "main", "dev" ]
+  pull_request:
+    branches: [ "main", "dev" ]
+  workflow_dispatch:
+
+jobs:
+  rust:
+    name: Rust Check & Clippy & Test
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash # windows runner 默认 pwsh;与 oss-gate 对齐用 bash,mkdir -p 等脚本可移植
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      # 编译缓存:windows runner 冷编译整 workspace 很慢,缓存 registry+target 大幅提速。
+      - name: Rust 编译缓存
+        uses: Swatinem/rust-cache@v2
+
+      # ③ 见文件头:npm ci 材料化 node_modules 内的推理运行时资源,否则 build script 资源校验红。
+      #    这不是前端质量门(前端质量在 frontend job),只是 Rust 构建的环境复原。
+      - name: Node 环境(npm 缓存)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: npm ci(材料化 onnxruntime/DirectML 资源)
+        run: npm ci
+
+      # ④ 见文件头:generate_context! 编译期校验 frontendDist("../dist")存在。
+      - name: 占位 dist(generate_context 校验 frontendDist)
+        run: mkdir -p dist
+
+      - name: cargo check --workspace
+        run: cargo check --workspace --locked
+
+      - name: cargo clippy --workspace
+        run: cargo clippy --workspace --locked -- -D warnings
+
+      - name: cargo test --workspace
+        run: cargo test --workspace --locked
+
+  frontend:
+    name: Frontend Typecheck & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # npm ci 而非 npm install:锁定 package-lock,可复现且更快(与 oss-gate 对齐)。
+      - name: npm ci
+        run: npm ci
+
+      # R2-3:存量 33 lint 错清零后开硬门(含 R1-7 的 vue/no-bare-strings-in-template i18n 防回潮规则)。
+      - name: ESLint
+        run: npm run lint
+
+      - name: vue-tsc 类型检查
+        run: npm run typecheck
+
+      - name: vitest 单元测试
+        run: npm test

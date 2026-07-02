@@ -1,0 +1,21 @@
+// src/utils/pdfjs.ts
+// pdf.js 懒加载单例（§3.4/§5.1）。首次使用时才动态 import，并配置同源 worker
+// （Vite 打包，CSP worker-src 回退 script-src 'self' → 允许）。文档缩略图与阅读器共用。
+// Lazy pdf.js singleton — loaded on first use, with a same-origin worker. Shared by the doc
+// thumbnail renderer and the PDF reader so pdf.js is only pulled into the bundle on demand.
+
+let pdfjs: typeof import('pdfjs-dist') | null = null
+let loading: Promise<typeof import('pdfjs-dist')> | null = null
+
+export function getPdfjs(): Promise<typeof import('pdfjs-dist')> {
+  if (pdfjs) return Promise.resolve(pdfjs)
+  if (loading) return loading
+  loading = (async () => {
+    const lib = await import('pdfjs-dist')
+    const workerUrl = (await import('pdfjs-dist/build/pdf.worker.min.mjs?url')).default
+    lib.GlobalWorkerOptions.workerSrc = workerUrl
+    pdfjs = lib
+    return lib
+  })()
+  return loading
+}

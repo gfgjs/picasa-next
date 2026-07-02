@@ -1,0 +1,26 @@
+# crates/exotic-workers/psd-worker/Cargo.toml
+# PSD 缩略图 Worker（v3 Part2 §3.5）。长驻子进程：stdin 收协议帧、stdout 回协议帧、stderr 写日志。
+# 只声明 probe 实测通过范围（RGB 8-bit + merged image，raw）；CMYK/16-bit/PSB/无 merged → 稳定错误码。
+#
+# 锁定 `psd =0.3.5`（探针结论只对该版本成立，见 exotic-psd-probe-report.md）。
+
+[package]
+name = "psd-worker"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "psd-worker"
+path = "src/main.rs"
+
+[dependencies]
+# 共享协议（路径依赖；两端同一份帧/消息/错误码定义）。
+exotic-protocol = { path = "../../exotic-protocol" }
+# 候选 PSD 解码器：纯 Rust。精确锁定版本，升级须重跑探针。
+psd = "=0.3.5"
+# 后处理：缩放 + WebP 编码（与主程序 src-tauri 同系 0.25）。
+image = { version = "=0.25.10", default-features = false, features = ["webp"] }
+
+# [profile.release] 已上移 workspace 根（../../../Cargo.toml）：member 内 profile 被 cargo 忽略。
+# 根 release 用默认 unwind（不设 abort），故顶层 catch_unwind 拦 psd 畸形输入 panic 的语义不变（§3.5）。

@@ -1,0 +1,178 @@
+[package]
+name = "picasa-next"
+version = "0.1.0"
+description = "Picasa Next — High-performance cross-platform media asset manager"
+authors = ["Picasa Next Contributors"]
+edition = "2021"
+default-run = "picasa-next"
+
+[lib]
+name = "picasa_next_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# ── Tauri core ──────────────────────────────────────────────────────────────
+tauri          = { version = "2", features = ["protocol-asset", "unstable", "devtools", "tray-icon"] }
+tauri-plugin-dialog       = "2"
+tauri-plugin-fs           = "2"
+tauri-plugin-shell        = "2"
+tauri-plugin-window-state = "2"
+
+# ── Async runtime ────────────────────────────────────────────────────────────
+tokio      = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["codec"] }
+
+# ── Database ─────────────────────────────────────────────────────────────────
+rusqlite   = { version = "0.31", features = ["bundled", "collation"] }
+r2d2       = "0.8"
+r2d2_sqlite = "0.24"
+
+# ── Serialisation ─────────────────────────────────────────────────────────────
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# ── Error handling ────────────────────────────────────────────────────────────
+thiserror  = "1"
+
+# ── 冷门格式插件 IPC 协议（Part2）─────────────────────────────────────────────────
+# 与各 Worker 二进制共享同一份帧编解码/消息/错误码定义（路径依赖，随主程序构建）。
+exotic-protocol = { path = "../crates/exotic-protocol" }
+
+# ── 插件平台开源契约 + 免费桩（Part6 §3.9.1a 去环叶 crate）──────────────────────────
+# plugin-api：EntitlementProvider/LicenseStatus/LicenseError 抽象（零密钥）。
+# free-stub：FreeStubEntitlement（始终 Unlicensed）。商业 build 经 overlay 改链闭源 pro。
+picasa-next-plugin-api = { path = "../crates/picasa-next-plugin-api" }
+picasa-next-free-stub = { path = "../crates/picasa-next-free-stub" }
+
+# ── 信任根验签叶 crate（Part6 §3.9.1a 去环 ③a）──────────────────────────────────────
+# VerifyingKeyset + verify_token/evaluate_token/LicensePayload 迁入此开源叶 crate，pro 可单向复用而
+# 不依赖 src-tauri（破环）。`crate::exotic::crypto`/`::license` 退化为再导出薄壳，引用路径不变。
+# test_support（测试构造工具）经其 `test-support` feature 暴露 → 见下方 [dev-dependencies]。
+picasa-next-exotic-trust = { path = "../crates/picasa-next-exotic-trust" }
+
+# ── Hashing ───────────────────────────────────────────────────────────────────
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+
+# ── Image processing ──────────────────────────────────────────────────────────
+image              = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "bmp", "gif", "tiff"] }
+fast_image_resize  = "4"
+thumbhash          = "0.1"
+# ── EXIF / XMP ───────────────────────────────────────────────────────────────
+kamadak-exif = "0.5"
+quick-xml    = { version = "0.36", features = ["serialize"] }
+
+# ── Documents（P4，§3.4/§7）─────────────────────────────────────────────────────
+# zip：EPUB 解析（容器即 zip，读 OPF 封面图）。纯 Rust、体积小 → 两变体都含（非「重」依赖）。
+# default-features=false 去掉 bzip2/zstd/aes，仅保留 deflate（epub 内常用存储/deflate）。
+zip = { version = "2", default-features = false, features = ["deflate"] }
+# similar：文档版本按需 diff（§5.3，类 git 全量快照 + 行级 diff）。纯 Rust、小，两变体都含。
+similar = "2"
+# reqwest（rustls）：远程 AI 校对（§5.4），后续亦服务 Ollama / WebDAV。纯 Rust TLS、无 native 捆绑。
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# keyring：API Key 等凭据存系统凭据库（§5.4），不落明文 DB。调 OS API，两变体都含。
+keyring = { version = "3", features = ["windows-native", "apple-native", "linux-native"] }
+# lofty：音频封面/标签/歌词提取（P3，§3.6）。纯 Rust、体积小 → 两变体都含（非「重」依赖）。
+lofty = "0.22"
+
+# ── 网络盘（P5，§3.8）─────────────────────────────────────────────────────────────
+# reqwest_dav：WebDAV 原生客户端（8B）。纯 Rust，依赖既有 reqwest(rustls)；仅 netfs(perf) 编入。
+# 8A（OS 挂载盘/UNC）无需任何 native 依赖；8B 原生 VFS 经 netfs feature 启用。
+reqwest_dav = { version = "0.1", optional = true }
+
+# ── CPU parallelism ───────────────────────────────────────────────────────────
+rayon = "1"
+
+# ── File system traversal ─────────────────────────────────────────────────────
+walkdir = "2"
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "chrono"] }
+tracing-appender   = "0.2"
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+chrono   = { version = "0.4", features = ["serde"] }
+anyhow   = "1"
+crossbeam-channel = "0.5.15"
+
+# ── AI inference ───────────────────────────────────────────────────────────────
+# [当前方案] ONNX Runtime（使用 download-binaries 自动下载官方 DLL，打包体积增加 20MB）
+ort       = { version = "2.0.0-rc.12", features = ["load-dynamic", "directml", "download-binaries", "copy-dylibs"] }
+
+# [方案 5 准备] 使用 Windows 系统自带库：完全不捆绑 DLL，打包体积重回 5MB。
+# 若要测试，请注释掉上方当前的 ort，解除下面这行的注释，并在 ai_commands.rs 中取消设置 ORT_DYLIB_PATH 的注释。
+# ort       = { version = "2.0.0-rc.12", features = ["load-dynamic", "directml"] }
+
+ndarray   = "0.16"
+# Half-precision storage for the in-memory embedding cache (C1) — halves resident
+# RAM vs f32 (1M×512 ≈ 1GB instead of 2GB). Already in the dependency tree.
+# 嵌入向量内存缓存的半精度存储（C1）—— 相比 f32 内存减半（百万×512 ≈ 1GB 而非 2GB）。
+half      = "2"
+# HuggingFace tokenizers — BERT WordPiece for Chinese-CLIP text encoder
+# HuggingFace tokenizers — 用于 Chinese-CLIP 文本编码器的 BERT WordPiece
+tokenizers = { version = "0.21", default-features = false, features = ["fancy-regex"] }
+# sha2：模型下载完整性校验（Layer B，对照注册表中各资产的 sha256）。纯 Rust、小。
+sha2 = "0.10"
+
+# ── 冷门格式插件 · 信任根与验签（Part3 P5/P6）─────────────────────────────────────
+# ring：离线 Ed25519 验签——License token、签名 Registry index、package manifest（v3 D11）。
+#   **复用既有依赖**（reqwest/rustls 已引入 ring，零新增网络成本）。Host **只验签不签名**
+#   （私钥离线/HSM，不入仓，§5.1）；ring 的 Ed25519 verify 遵循 RFC 8032 严格校验（拒非规范签名）。
+#   测试用 `Ed25519KeyPair::from_seed_unchecked` 确定性种子签名 → 不引入 CSPRNG。
+ring = "0.17"
+# base64：License token = base64url(payload).base64url(sig)；Registry/manifest 公钥亦 base64。
+#   **已在依赖树**（rustls 等传递引入 0.22），仅提升为直接依赖。
+base64 = "0.22"
+lexicmp = "0.2.0"
+wallpaper = "3.2"
+arboard = "3.6.1"
+trash = "5.2.6"
+
+# ── Windows 原生 API(target 限定,审查 R0-2 / todo C 节跨平台适配)────────────────────
+# `windows` crate 从无条件依赖迁到 cfg(windows) target 限定:非 Windows 目标不再解析/编译它,
+# 是公开树 Linux/macOS `cargo check` 能过的前提(gate 早期 ubuntu 跑实证:唯一硬错误面是
+# wic_engine.rs 的 Win32 符号)。库内所有使用点均已 cfg(windows) 门控:
+#   wic_engine(模块级)/ media_foundation(video/mod.rs 模块级)/ volume_probe(函数级)
+#   / ai/provider DXGI(块级)/ system_commands DWM(块级)。
+# Win32_Media_MediaFoundation:视频解码/取帧/元数据(P2,§3.2);Win32_System_Com_StructuredStorage:
+# PROPVARIANT(PropVariantToInt64);Win32_Storage_FileSystem:卷 GUID + 盘类型(C5 Piece A)。
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = ["Win32_Graphics_Imaging", "Win32_Graphics_Direct2D", "Win32_Graphics_Direct3D11", "Win32_Foundation", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_Graphics_Dwm", "Win32_Graphics_Dxgi", "Win32_Media_MediaFoundation", "Win32_Storage_FileSystem"] }
+
+[dev-dependencies]
+# 仅**测试/dev** 构建启用 exotic-trust 的 test-support feature：暴露 crypto 的确定性签名/keyset 构造
+# 工具给 src-tauri 的 installer/registry/package/install 测试（`#[cfg(test)]` 项不跨 crate 可见，故
+# 改用 feature 门控）。cargo 对同一 path crate 的 [dependencies]（无 feature）与 [dev-dependencies]
+# （含 feature）做 feature 并集：普通 `cargo build` 不启用 → 测试密钥绝不编入 Release。
+picasa-next-exotic-trust = { path = "../crates/picasa-next-exotic-trust", features = ["test-support"] }
+
+[features]
+# Lite 为默认变体（极致轻量，零大体积 native 捆绑）。custom-protocol 为 Tauri 生产构建所需。
+# 见 plan-docs/feature_expansion_plan_v1.md §1.4：包体积由编译期决定 → 主开关必须是 Cargo feature。
+default = ["custom-protocol", "lite"]
+custom-protocol = ["tauri/custom-protocol"]
+devtools = []
+
+# exotic-dev-fixtures：仅 dev 注入「测试授权」，使无真实 License 时也能在开发期端到端跑通冷门格式
+# 流水线（Part2 §3.5）。**必须**配合 debug 构建（代码用 #[cfg(all(debug_assertions, feature=...))] 双重
+# 门控）；Release 构建即使开启本 feature 也因 debug_assertions=false 而无任何跳过授权的代码路径。
+exotic-dev-fixtures = []
+
+# ── 构建变体（§1.4）────────────────────────────────────────────────────────────
+# lite：标记 feature（本身为空），Media Foundation 视频后端因 `#[cfg(windows)]` 两变体都在。
+# perf：经 feature 启用捆绑型原生后端（FFmpeg/pdfium/native-text/netfs，随各阶段落地）。
+lite = []
+perf = ["ffmpeg", "netfs"]
+# FFmpeg sidecar：覆盖 MF 不支持的容器、批量更快；仅 Perf 打包 externalBin。
+# P2 暂为占位（glue 未实现），先建立 feature 边界，FfmpegBackend 在后续阶段补。
+ffmpeg = []
+# netfs：网络盘原生 VFS（P5 8B，§3.8）。启用 reqwest_dav 的 WebDAV 后端 + StorageBackend::WebDav。
+# Lite 不编入（依赖 OS 挂载/UNC，即 8A）；Perf 编入以支持「无需 OS 挂载」的原生连接。
+netfs = ["dep:reqwest_dav"]
+
+# ── 构建 profile 已迁至 workspace 根 Cargo.toml ────────────────────────────────
+# cargo 只认 workspace 根的 [profile.*]，member 内声明会被忽略并告警。
+# release（unwind/lto=thin/opt=3/strip）与 lite（尺寸优先）profile 见 ../Cargo.toml。

@@ -1,0 +1,24 @@
+# crates/exotic-workers/psd-probe/Cargo.toml
+# PSD 技术探针（Part1 P0）。实验 crate，现为 workspace member（§3.9.1，供测试可达）；
+# version=0.0.0、publish=false、非 app 二进制，不进发布 bundle。
+# 目的：在冻结 Catalog/manifest「支持范围」之前，用实测锁定 `psd` crate 的能力与畸形输入健壮性。
+# 锁定精确版本（`=0.3.5`），P0 结论只对该版本成立；升级须重跑探针（见报告）。
+
+[package]
+name = "psd-probe"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "psd-probe"
+path = "src/main.rs"
+
+[dependencies]
+# 候选解码 crate：纯 Rust PSD parser/renderer。精确锁定。
+psd = "=0.3.5"
+# 后处理：缩放 + WebP 编码（与主程序 src-tauri 同系 0.25；仅启用探针所需 feature）。
+image = { version = "=0.25.10", default-features = false, features = ["webp"] }
+
+# [profile.release] 已上移 workspace 根（../../../Cargo.toml）：member 内 profile 被 cargo 忽略。
+# 根 release 用默认 unwind，catch_unwind 拦 psd 畸形输入 panic 的语义不变。

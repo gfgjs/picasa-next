@@ -1,0 +1,22 @@
+# crates/exotic-protocol/Cargo.toml
+# 冷门格式插件 · Host↔Worker IPC 协议（v3 Part2 §3.1-3.3）。
+# 纯库 crate：主程序 src-tauri 与各 Worker 二进制**共享**同一份帧编解码与消息定义，
+# 保证两端对 magic/版本/帧类型/长度上限/错误码的理解唯一一致（禁止两套协议各写一遍）。
+#
+# 协议兼容由 `PROTOCOL_VERSION` + 握手能力共同决定，不靠「同仓依赖版本相同」隐式保证（R11）。
+# 无 IO 运行时依赖：仅 std + serde；read/write 泛型化在 `std::io::Read/Write` 上，便于用内存管道单测。
+
+[package]
+name = "exotic-protocol"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "exotic_protocol"
+path = "src/lib.rs"
+
+[dependencies]
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror  = "1"

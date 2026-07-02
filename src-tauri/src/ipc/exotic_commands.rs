@@ -1,0 +1,754 @@
+// src-tauri/src/ipc/exotic_commands.rs
+//! 冷门格式插件 · 前端查询命令（Part1 §2.3）。
+//!
+//! 本卷只读：返回能力解析与（Part1 为空的）安装真相。处理控制命令
+//! （start/pause/stop/retry…）与下载/激活在 Part2/Part3 落地。
+//! 所有 DTO 以 camelCase 序列化，前端类型直接对齐，避免手写字段转换漂移。
+
+use std::sync::Arc;
+
+use serde::Serialize;
+use tauri::State;
+
+use crate::error::{AppError, Result};
+use crate::exotic::{ExoticTaskStatus, FormatResolution, InstalledExoticPlugin, PluginEntitlement};
+use crate::state::AppState;
+
+/// 列出 Catalog 中**全部**格式的解析结果。未安装 PSD 也会得到 `availableUninstalled`
+/// （首次离线也显示购买占位）。
+#[tauri::command]
+pub async fn list_exotic_format_resolutions(
+    state: State<'_, Arc<AppState>>,
+) -> Result<Vec<FormatResolution>> {
+    // 运行期 Host：含真实安装/授权真相（已安装并激活的 PSD 显示 Authorized 而非 AvailableUninstalled）。
+    // R1-3：host 解析内部是 rusqlite 读 + keyring 系统调用，离开 tokio worker。
+    let state_arc = state.inner().clone();
+    tokio::task::spawn_blocking(move || Ok(state_arc.exotic_host().list_resolutions()))
+        .await
+        .map_err(|e| AppError::System(e.to_string()))?
+}
+
+/// 单个媒体项的 exotic 状态（可用态 + 处理态分离，对齐前端）。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExoticItemState {
+    pub item_id: i64,
+    pub format: String,
+    /// 该格式可用态；非 catalog 格式为 None。
+    pub resolution: Option<FormatResolution>,
+    /// thumbnail 任务处理态：none/pending/processing/done/retryableError/terminalError。
+    pub task_state: String,
+}
+
+/// 任务状态 → 前端 `ExoticTaskState` 字符串。
+fn task_state_str(s: Option<ExoticTaskStatus>) -> &'static str {
+    match s {
+        None => "none",
+        Some(ExoticTaskStatus::Pending) => "pending",
+        Some(ExoticTaskStatus::Processing) => "processing",
+        Some(ExoticTaskStatus::Done) => "done",
+        Some(ExoticTaskStatus::RetryableError) => "retryableError",
+        Some(ExoticTaskStatus::TerminalError) => "terminalError",
+    }
+}
+
+/// 查某 item 的可用态 + thumbnail 任务态。
+#[tauri::command]
+pub async fn get_exotic_item_state(
+    item_id: i64,
+    state: State<'_, Arc<AppState>>,
+) -> Result<ExoticItemState> {
+    let state_arc = state.inner().clone();
+    tokio::task::spawn_blocking(move || -> Result<ExoticItemState> {
+        let conn = state_arc.db_read_pool.get().map_err(AppError::from)?;
+        let item = crate::db::queries::get_media_item(&conn, item_id)?;
+
+        let snap = state_arc.exotic_catalog.snapshot();
+        let resolution = if snap.resolve_format(&item.file_format).is_some() {
+            let host = state_arc.exotic_host();
+            Some(host.resolve_format(&item.file_format))
+        } else {
+            None
+        };
+
+        let task_map =
+            crate::db::queries::exotic_thumbnail_task_status_for_items(&conn, &[item_id])?;
+        let task_state = task_state_str(task_map.get(&item_id).copied()).to_string();
+
+        Ok(ExoticItemState {
+            item_id,
+            format: item.file_format,
+            resolution,
+            task_state,
+        })
+    })
+    .await
+    .map_err(|e| AppError::System(e.to_string()))?
+}
+
+/// 列出已安装插件（Part1 安装表为空 → 空列表）。
+#[tauri::command]
+pub async fn list_installed_exotic_plugins(
+    state: State<'_, Arc<AppState>>,
+) -> Result<Vec<InstalledExoticPlugin>> {
+    super::blocking::read_blocking(&state, crate::db::queries::list_installed_exotic_plugins).await
+}
+
+/// 某插件的授权判定（前端 gate / 购买引导用，Part6 §3.8）。判定全在后端 EntitlementProvider；
+/// 前端据此 gate / 购买引导，**不持任何验签逻辑**。catalog 无此插件 → `no_offering`（前端可按 code 分流）。
+#[tauri::command]
+pub async fn get_plugin_entitlement(
+    plugin_id: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<PluginEntitlement> {
+    // R1-3：entitlement_of 内含 DB 读 + keyring 验签（同步系统调用），离开 tokio worker。
+    let state_arc = state.inner().clone();
+    tokio::task::spawn_blocking(move || {
+        state_arc
+            .exotic_host()
+            .entitlement_of(&plugin_id)
+            .ok_or_else(|| AppError::Exotic {
+                code: "no_offering",
+                message: format!("Catalog 无此插件：{plugin_id}"),
+            })
+    })
+    .await
+    .map_err(|e| AppError::System(e.to_string()))?
+}
+
+// ── 处理控制命令（Part2 §4.5）──────────────────────────────────────────────────
+//
+// 语义区分：
+//   - start：清 paused + UserRequested wake（绕过 auto 门控，即使 exotic_auto_process=false
+//     也跑本轮；不修改 auto 配置——恢复「随扫描自动处理」由设置项 exotic_auto_process 控制）。
+//   - pause：paused=true，不再启动新一轮 Pipeline；在途运行自然完成其批次。
+//   - stop：取消**本次**运行（在途任务退回 pending）；**不**等于永久禁用（不动 paused）。
+// 状态变化经 `exotic:status-changed` 事件推送前端。
+
+use std::time::Duration;
+
+use crate::exotic::catalog::Capability;
+use crate::exotic::coordinator::{WakeReason, PSD_PLUGIN_ID};
+use crate::exotic::crypto::VerifyingKeyset;
+use crate::exotic::install::{plugin_install_dir, rollback_to_backup, RegistryExpect};
+use crate::exotic::installer::{self, InstallContext};
+use crate::exotic::registry::RegistryCache;
+
+const CAPABILITY_STR: &str = "thumbnail";
+
+/// 安装/卸载前静默 exotic 子系统的等待上限（kill→wait Worker、释放句柄）。
+const QUIESCE_TIMEOUT: Duration = Duration::from_secs(8);
+
+/// 当前 unix 秒（License 时间窗判定）。
+fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// 恢复自动处理：清 paused 并唤醒调度。
+#[tauri::command]
+pub async fn start_exotic_processing(state: State<'_, Arc<AppState>>) -> Result<()> {
+    super::blocking::write_blocking(&state, |c| {
+        crate::db::queries::set_config(c, "exotic_paused", "false")
+    })
+    .await?;
+    // 用户显式开始：绕过 auto 门控（即使 exotic_auto_process=false 也运行本轮，P2）。
+    state.wake_exotic(WakeReason::UserRequested);
+    Ok(())
+}
+
+/// 暂停：置 paused（不再启动新一轮；在途批次自然结束）。
+#[tauri::command]
+pub async fn pause_exotic_processing(state: State<'_, Arc<AppState>>) -> Result<()> {
+    super::blocking::write_blocking(&state, |c| {
+        crate::db::queries::set_config(c, "exotic_paused", "true")
+    })
+    .await
+}
+
+/// 停止本次运行：取消在途 Pipeline（任务退回 pending）。不修改 paused（非永久禁用）。
+#[tauri::command]
+pub async fn stop_exotic_processing(state: State<'_, Arc<AppState>>) -> Result<()> {
+    state.cancel_exotic_analysis();
+    Ok(())
+}
+
+/// 处理状态摘要（对齐前端 camelCase）。`blockedByAvailability` 单列「未购买/平台不支持」而卡住的项，
+/// 避免进度条永久停 0%（Part2 §4.5）。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExoticProcessingStatus {
+    /// 待处理（pending + 待重试）。
+    pub pending: i64,
+    pub processing: i64,
+    pub done: i64,
+    pub error: i64,
+    /// 因不可领取（未授权/平台不支持/未安装）而卡住的待处理数。
+    pub blocked_by_availability: i64,
+    pub running: bool,
+    pub paused: bool,
+}
+
+/// 取处理状态摘要。
+#[tauri::command]
+pub async fn get_exotic_processing_status(
+    state: State<'_, Arc<AppState>>,
+) -> Result<ExoticProcessingStatus> {
+    let state_arc = state.inner().clone();
+    tokio::task::spawn_blocking(move || -> Result<ExoticProcessingStatus> {
+        let conn = state_arc.db_read_pool.get().map_err(AppError::from)?;
+        let (pending, processing, done, error) =
+            crate::db::queries::count_exotic_tasks_by_status(&conn, PSD_PLUGIN_ID, CAPABILITY_STR)?;
+        let paused = crate::db::queries::get_config(&conn, "exotic_paused")?
+            .map(|v| v == "true")
+            .unwrap_or(false);
+
+        let host = state_arc.exotic_host();
+        let runnable = host.is_task_runnable(PSD_PLUGIN_ID, Capability::Thumbnail);
+        // 不可领取时，待处理项实为「被可用态阻塞」——单列以免前端误判为进度卡死。
+        let blocked_by_availability = if runnable { 0 } else { pending };
+
+        Ok(ExoticProcessingStatus {
+            pending,
+            processing,
+            done,
+            error,
+            blocked_by_availability,
+            running: state_arc.is_exotic_running(),
+            paused,
+        })
+    })
+    .await
+    .map_err(|e| AppError::System(e.to_string()))?
+}
+
+/// 重试单项（item + capability）：error → pending 并唤醒。
+#[tauri::command]
+pub async fn retry_exotic_task(
+    item_id: i64,
+    capability: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<()> {
+    super::blocking::write_blocking(&state, move |c| {
+        crate::db::queries::reset_exotic_task_for_retry(c, item_id, &capability)
+    })
+    .await?;
+    // 用户点重试：绕过 auto 门控（区别于自动重试时钟的 RetryDue，P2）。
+    state.wake_exotic(WakeReason::UserRequested);
+    Ok(())
+}
+
+/// 重试某插件全部失败任务（error → pending）并唤醒。
+#[tauri::command]
+pub async fn retry_exotic_plugin_failures(
+    plugin_id: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<()> {
+    super::blocking::write_blocking(&state, move |c| {
+        crate::db::queries::reset_exotic_plugin_failures(c, &plugin_id)
+    })
+    .await?;
+    // 用户点重试全部失败：绕过 auto 门控（P2）。
+    state.wake_exotic(WakeReason::UserRequested);
+    Ok(())
+}
+
+// ── 激活 / 移除授权（Part3 §6.6）──────────────────────────────────────────────────
+//
+// 命令参数**绝不**接受 URL/路径/hash/可执行路径；sku 取自可信 Catalog，不取自 token（§5.2/§6.6）。
+// 激活失败不覆盖现有有效 token（provider 实现内部先验后存）。
+// 错误只回稳定 code（不泄露 token / subject_hash）。
+//
+// R1-1：激活/撤销一律走 `state.entitlement_provider()`（swap 点装配），不再直构
+// KeyringLicenseStore——evaluate 与 activate 必须持同一信任根（③b 换 swap 点即全路径切换）。
+
+/// 激活插件：用可信 Catalog 的 sku 验证 License token，通过则存 keyring 并唤醒调度（§6.6）。
+#[tauri::command]
+pub async fn activate_exotic_plugin(
+    plugin_id: String,
+    token: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<()> {
+    // sku 取自 Catalog offering（可信来源；绝不取自 token）。snap 绑定到函数作用域，
+    // 使迭代器借用在 sku 求出（clone 为 owned）后才随 snap 一并释放。
+    let snap = state.exotic_catalog.snapshot();
+    let sku = snap
+        .iter_formats()
+        .find(|(_, o)| o.plugin_id == plugin_id)
+        .and_then(|(_, o)| o.sku.clone())
+        .ok_or_else(|| AppError::Exotic {
+            code: "no_sku",
+            message: format!("插件无授权 SKU 或不在 Catalog：{plugin_id}"),
+        })?;
+    drop(snap);
+
+    // 先验签后存；失败不覆盖现有有效 token。错误只回 code（不含 token 材料）。
+    // 信任根不可用时组合根降级 FreeStub → activate 回稳定码 activation_unsupported（同样 fail-closed）。
+    state
+        .entitlement_provider()
+        .activate(&plugin_id, &sku, &token, now_secs())
+        .map_err(|e| AppError::Exotic {
+            code: e.code(),
+            message: format!("激活失败：{}", e.code()),
+        })?;
+
+    // 激活成功必须唤醒（§6.6）：授权态转 Authorized 后 evaluate_run 放行（auto 开则自动出图）。
+    state.wake_exotic(WakeReason::LicenseActivated);
+    Ok(())
+}
+
+/// 移除授权（卸载时的「移除授权」独立操作，§6.5）。不影响安装目录；撤销后唤醒以重新评估（停领）。
+#[tauri::command]
+pub async fn deactivate_exotic_plugin(
+    plugin_id: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<()> {
+    state
+        .entitlement_provider()
+        .deactivate(&plugin_id)
+        .map_err(|e| AppError::Exotic {
+            code: e.code(),
+            message: format!("移除授权失败：{}", e.code()),
+        })?;
+    // 授权撤销 → 重新评估（已在途任务自然结束，不再领新批）。
+    state.wake_exotic(WakeReason::ConfigChanged);
+    Ok(())
+}
+
+// ── 安装 / 卸载 / 修复 / 回滚 / Registry（Part3 §6.4-6.6）──────────────────────────
+//
+// 命令参数**只**接受 plugin_id（已验证字符集），绝不接受 URL/路径/hash/可执行路径（§6.6）。
+// 安装目录/下载坐标均由已验签 Registry 与 AppState 派生路径决定。替换/删除目录前先 quiesce。
+
+const HOST_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+fn builtin_keyset() -> Result<VerifyingKeyset> {
+    VerifyingKeyset::builtin().map_err(|e| AppError::Exotic {
+        code: e.code(),
+        message: format!("信任根不可用：{}", e.code()),
+    })
+}
+
+/// Registry 条目 DTO（前端市场用；camelCase；不暴露内部下载坐标 hash/size/url）。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExoticRegistryEntry {
+    pub plugin_id: String,
+    pub version: String,
+    pub formats: Vec<String>,
+    pub capabilities: Vec<String>,
+    pub sku: String,
+    pub target: String,
+    pub package_sequence: i64,
+    pub store_url: Option<String>,
+    /// 该 Registry 是否已过期（过期仍展示，但不允许新装，§6.1）。
+    pub registry_expired: bool,
+}
+
+/// 远程签名 Registry 基址（部署配置点）。下载坐标 = `{base}/index.json` + `{base}/index.sig`。
+/// 🔴 占位域名（RFC 2606 保留 `.invalid`，绝不解析到真实主机）：正式发布前替换为真实 CDN
+/// （命名/法务定稿后）。可经环境变量 `PICASA_REGISTRY_BASE` 覆盖（dev / 自托管 / 测试用，
+/// 不重编即可切换发行源）。后续如需「按安装实例覆盖」可下沉至 app_config，当前常量足矣。
+const DEFAULT_REGISTRY_BASE_URL: &str = "https://registry.example.invalid/exotic/v1";
+
+/// 解析当前生效的 Registry 基址：环境变量优先（非空），否则部署默认常量。
+fn registry_base_url() -> String {
+    std::env::var("PICASA_REGISTRY_BASE")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| DEFAULT_REGISTRY_BASE_URL.to_string())
+}
+
+/// `fetch_exotic_registry` 拉取结果摘要（前端「刷新」后用：装得了几个、序号、是否过期）。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegistrySummary {
+    /// 本次接受的 index 中条目数（全新设备从 0 → N，N>0 即「装得了插件」）。
+    pub plugin_count: usize,
+    /// 已接受的 registry_sequence（单调防回滚基线）。
+    pub sequence: u64,
+    /// 该 index 是否已过期（过期仍写缓存供展示，但安装路径拒绝，§6.1）。
+    pub expired: bool,
+}
+
+/// 🔴 P0 阻断修复：拉取远程签名 Registry → 验签 + 单调防回滚 → 原子写本地缓存。
+/// 全新设备本地缓存为空 → `list_exotic_registry` 返回空 → 装不了任何插件；本命令补上「下载 + accept」
+/// 这一薄层，闭合「全新设备可装插件」链路。前端首启 / 进插件商店 / 点「刷新」时调用（Part5 §3.5.1 消费）。
+///
+/// 安全（§6.6 纵深防御）：命令**只触发**，不接受任何 URL/路径——下载坐标由部署常量（可 env 覆盖）决定；
+/// 验签 + 防回滚由 `RegistryCache::accept` 在解析前完成（registry.rs:242），前端无从注入下载源或绕过验签。
+#[tauri::command]
+pub async fn fetch_exotic_registry(state: State<'_, Arc<AppState>>) -> Result<RegistrySummary> {
+    // 与 install/uninstall/rollback 串行：避免「拉取改写缓存」与「安装读取缓存」并发产生撕裂窗口。
+    let _guard = state.exotic_install_lock.lock().await;
+    let keyset = builtin_keyset()?;
+    let now = now_secs();
+    let base = registry_base_url();
+
+    // 1. 下载原始 index.json + index.sig（仅 HTTPS、大小封顶；**不在此验签**）。
+    let (index_bytes, sig_bytes) = crate::exotic::fetch::download_registry_index(&base)
+        .await
+        .map_err(|e| AppError::Exotic {
+            code: e.code(),
+            message: format!("拉取 Registry 失败：{}", e.code()),
+        })?;
+
+    // 2. accept：验签 + 单调防回滚先于解析，通过后原子写缓存（index.json/.sig/.seq）。
+    //    收到更低 sequence（回滚攻击/冻结）→ RollbackRejected，缓存不变、报错——这是安全红线，不可绕过。
+    let mut cache = RegistryCache::load(state.exotic_registry_dir());
+    let verified = cache
+        .accept(&index_bytes, &sig_bytes, &keyset, now)
+        .map_err(|e| AppError::Exotic {
+            code: e.code(),
+            message: format!("Registry 验签/接受失败：{}", e.code()),
+        })?;
+
+    Ok(RegistrySummary {
+        plugin_count: verified.index.plugins.len(),
+        sequence: verified.index.sequence,
+        expired: verified.expired,
+    })
+}
+
+/// 列出签名 Registry 的可安装条目（从本地缓存读 + 验签）。无缓存 → 空列表。
+#[tauri::command]
+pub async fn list_exotic_registry(
+    state: State<'_, Arc<AppState>>,
+) -> Result<Vec<ExoticRegistryEntry>> {
+    let keyset = builtin_keyset()?;
+    let cache = RegistryCache::load(state.exotic_registry_dir());
+    let Some(v) = cache.load_verified(&keyset, now_secs()) else {
+        return Ok(Vec::new());
+    };
+    let expired = v.expired;
+    Ok(v.index
+        .plugins
+        .iter()
+        .map(|e| ExoticRegistryEntry {
+            plugin_id: e.plugin_id.clone(),
+            version: e.version.clone(),
+            formats: e.formats.clone(),
+            capabilities: e.capabilities.clone(),
+            sku: e.sku.clone(),
+            target: e.target.clone(),
+            package_sequence: e.package_sequence,
+            store_url: e.store_url.clone(),
+            registry_expired: expired,
+        })
+        .collect())
+}
+
+/// 安装插件（§6.4）：从已验签 Registry 选条目 →（下载 zip 到 staging，**待 P6.2**）→ 安全安装。
+#[tauri::command]
+pub async fn install_exotic_plugin(
+    plugin_id: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<()> {
+    // 串行化安装/卸载/回滚（防并发目录变更产生破损窗口，安全评审 medium）。
+    let _guard = state.exotic_install_lock.lock().await;
+    let keyset = builtin_keyset()?;
+    let now = now_secs();
+    let install_root = state.exotic_install_dir();
+    // 显式校验 plugin_id 字符集（不依赖 Registry lookup 副作用，§6.6 纵深防御）。
+    plugin_install_dir(&install_root, &plugin_id).ok_or_else(|| AppError::Exotic {
+        code: "invalid_plugin_id",
+        message: "非法 plugin_id".into(),
+    })?;
+
+    // 1. 从已验签 Registry 选 plugin_id + 当前 target 条目。
+    let cache = RegistryCache::load(state.exotic_registry_dir());
+    let verified = cache
+        .load_verified(&keyset, now)
+        .ok_or_else(|| AppError::Exotic {
+            code: "no_registry_cache",
+            message: "无可用 Registry 缓存（需先刷新）".into(),
+        })?;
+    if verified.expired {
+        return Err(AppError::Exotic {
+            code: "registry_expired",
+            message: "Registry 已过期，不能从过期元数据执行新安装".into(),
+        });
+    }
+    let target = crate::exotic::current_target_triple();
+    let entry = verified
+        .index
+        .select(&plugin_id, target)
+        .cloned()
+        .ok_or_else(|| AppError::Exotic {
+            code: "plugin_not_in_registry",
+            message: format!("Registry 无 {plugin_id} @ {target}"),
+        })?;
+
+    // 2. 下载包到 staging 并对照条目 size/sha256 严格校验（exotic 专用 fetch；R10 统一后置）。
+    let staging = state.exotic_staging_dir();
+    std::fs::create_dir_all(&staging).ok();
+    let zip = staging.join(format!("{plugin_id}.zip"));
+    crate::exotic::fetch::fetch_package(
+        &entry.package_url,
+        &zip,
+        entry.package_size,
+        &entry.package_sha256,
+    )
+    .await
+    .map_err(|e| AppError::Exotic {
+        code: e.code(),
+        message: format!("下载失败：{}", e.code()),
+    })?;
+
+    // 3. quiesce → 安全安装 → resume。quiesce 超时（Worker 仍占句柄）即中止，**不**强行切目录。
+    let (prev_paused, quiesced) = state.quiesce_exotic(QUIESCE_TIMEOUT).await;
+    if !quiesced {
+        state.resume_after_quiesce(prev_paused);
+        let _ = std::fs::remove_file(&zip);
+        return Err(AppError::Exotic {
+            code: "worker_quiesce_timeout",
+            message: "Worker 未在限期内停止，安装中止（请重试）".into(),
+        });
+    }
+    // R1-3：解包/逐文件 hash/原子 rename + upsert 短锁 db_writer 全是重阻塞，下沉 blocking
+    // （quiesce/resume 留在 async 侧）；InstallContext/RegistryExpect 持引用，故在闭包内重建。
+    // 注意 join 失败也必须走 resume + 清 zip，故先接住 join 结果再统一收尾。
+    let join_result = {
+        let state_arc = state.inner().clone();
+        let zip_c = zip.clone();
+        let plugin_id_c = plugin_id.clone();
+        tokio::task::spawn_blocking(move || {
+            let snap = state_arc.exotic_catalog.snapshot();
+            let ctx = InstallContext {
+                install_root: &install_root,
+                staging_root: &staging,
+                keyset: &keyset,
+                catalog: &snap,
+                host_version: HOST_VERSION,
+            };
+            let expect = RegistryExpect {
+                plugin_id: &plugin_id_c,
+                version: &entry.version,
+                target,
+                package_sequence: entry.package_sequence,
+            };
+            // install_staged_zip 仅在 upsert 时短锁 db_writer（不在解包/hash/rename 期间持锁）。
+            installer::install_staged_zip(&ctx, &zip_c, &expect, now, &state_arc.db_writer)
+        })
+        .await
+    };
+    state.resume_after_quiesce(prev_paused);
+    let _ = std::fs::remove_file(&zip); // 无论成败清理已用 zip
+    let result = join_result.map_err(|e| AppError::System(e.to_string()))?;
+    // R1-4：透传 InstallError 的稳定码（open_zip/bad_signature/install_io/…），
+    // 前端可按码区分 zip 损坏/签名失败/磁盘满，不再折叠为泛码 install_failed。
+    result.map_err(|e| AppError::Exotic {
+        code: e.code(),
+        message: format!("安装失败：{e}"),
+    })?;
+    state.wake_exotic(WakeReason::PluginInstalled);
+    Ok(())
+}
+
+/// 修复（§6.5）：重新验签已装 manifest + 逐文件 hash 复核。完好→确保 installed；损坏→置 broken。
+#[tauri::command]
+pub async fn repair_exotic_plugin(
+    plugin_id: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<()> {
+    let keyset = builtin_keyset()?;
+    let install_root = state.exotic_install_dir();
+    // 显式校验 plugin_id（防任意字符串写入 DB install_state，安全评审 medium）。
+    plugin_install_dir(&install_root, &plugin_id).ok_or_else(|| AppError::Exotic {
+        code: "invalid_plugin_id",
+        message: "非法 plugin_id".into(),
+    })?;
+    // R1-3：逐文件 hash 复核（重 IO+CPU）+ db_writer 短锁整段下沉 blocking。
+    let state_arc = state.inner().clone();
+    tokio::task::spawn_blocking(move || {
+        match installer::verify_installed_integrity(&install_root, &plugin_id, &keyset, now_secs())
+        {
+            Ok(()) => {
+                let conn = state_arc
+                    .db_writer
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                let _ = crate::db::queries::set_exotic_plugin_state(
+                    &conn,
+                    &plugin_id,
+                    crate::exotic::install_state::INSTALLED,
+                );
+                Ok(())
+            }
+            Err(e) => {
+                {
+                    let conn = state_arc
+                        .db_writer
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    let _ = crate::db::queries::set_exotic_plugin_state(
+                        &conn,
+                        &plugin_id,
+                        crate::exotic::install_state::BROKEN,
+                    );
+                }
+                state_arc.wake_exotic(WakeReason::ConfigChanged); // 置 broken → 不再领取
+                Err(AppError::Exotic {
+                    code: "repair_corrupt",
+                    message: format!("安装损坏（已标记 broken，请重装）：{e}"),
+                })
+            }
+        }
+    })
+    .await
+    .map_err(|e| AppError::System(e.to_string()))?
+}
+
+/// 回滚到本机已验证 backup（§6.5）：quiesce → 目录换回 → 据已装 manifest 重建 DB 记录。
+#[tauri::command]
+pub async fn rollback_exotic_plugin(
+    plugin_id: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<()> {
+    let _guard = state.exotic_install_lock.lock().await; // 与 install/uninstall 串行
+    let keyset = builtin_keyset()?;
+    let install_root = state.exotic_install_dir();
+    let current =
+        plugin_install_dir(&install_root, &plugin_id).ok_or_else(|| AppError::Exotic {
+            code: "invalid_plugin_id",
+            message: "非法 plugin_id".into(),
+        })?;
+    let backup = install_root.join(format!("{plugin_id}.backup"));
+
+    // quiesce 超时即中止，不强行换目录（避免句柄占用致 current 丢失）。
+    let (prev_paused, quiesced) = state.quiesce_exotic(QUIESCE_TIMEOUT).await;
+    if !quiesced {
+        state.resume_after_quiesce(prev_paused);
+        return Err(AppError::Exotic {
+            code: "worker_quiesce_timeout",
+            message: "Worker 未在限期内停止，回滚中止（请重试）".into(),
+        });
+    }
+
+    // R1-3：目录换回（fs rename/删除）+ 重验签（逐文件 hash）+ DB 记录重建整段下沉 blocking；
+    // resume 统一放在 join 之后（含 join 失败路径），保持「单次 resume」不变式。
+    let join_result = {
+        let state_arc = state.inner().clone();
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            // 目录换回旧版本。失败即报错（resume 在外层统一执行）。
+            rollback_to_backup(&current, &backup).map_err(|e| AppError::Exotic {
+                code: "rollback_failed",
+                message: format!("回滚失败：{e}"),
+            })?;
+            // 重新验签并重建 DB 记录（防回滚到被篡改 backup）。失败 → 置 broken（磁盘不可信），状态一致。
+            match installer::record_from_installed(&install_root, &plugin_id, &keyset, now_secs()) {
+                Ok(rec) => {
+                    let conn = state_arc
+                        .db_writer
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    crate::db::queries::upsert_exotic_plugin(&conn, &rec).map_err(|e| {
+                        AppError::Exotic {
+                            code: "rollback_record_failed",
+                            message: format!(
+                                "回滚后 DB 记录更新失败（磁盘已回滚，状态不一致）：{e}"
+                            ),
+                        }
+                    })
+                }
+                Err(e) => {
+                    let conn = state_arc
+                        .db_writer
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    let _ = crate::db::queries::set_exotic_plugin_state(
+                        &conn,
+                        &plugin_id,
+                        crate::exotic::install_state::BROKEN,
+                    );
+                    Err(AppError::Exotic {
+                        code: "rollback_record_failed",
+                        message: format!(
+                            "回滚后 manifest 校验失败（backup 可能被篡改，已标记 broken）：{e}"
+                        ),
+                    })
+                }
+            }
+        })
+        .await
+    };
+    state.resume_after_quiesce(prev_paused); // 单次 resume
+    join_result.map_err(|e| AppError::System(e.to_string()))??;
+    state.wake_exotic(WakeReason::PluginInstalled);
+    Ok(())
+}
+
+/// 卸载（§6.5）：quiesce → 移走安装目录 + 删 DB 记录（不删媒体/任务）。
+/// `remove_license=true` 时一并移除 keyring 授权（默认保留，UI 明示差异）。
+#[tauri::command]
+pub async fn uninstall_exotic_plugin(
+    plugin_id: String,
+    remove_license: bool,
+    state: State<'_, Arc<AppState>>,
+) -> Result<()> {
+    let _guard = state.exotic_install_lock.lock().await; // 与 install/rollback 串行
+    let install_root = state.exotic_install_dir();
+    // 显式校验 plugin_id（纵深防御）。
+    plugin_install_dir(&install_root, &plugin_id).ok_or_else(|| AppError::Exotic {
+        code: "invalid_plugin_id",
+        message: "非法 plugin_id".into(),
+    })?;
+    // quiesce 超时即中止（避免句柄占用致 remove_dir_all 失败留半删目录）。
+    let (prev_paused, quiesced) = state.quiesce_exotic(QUIESCE_TIMEOUT).await;
+    if !quiesced {
+        state.resume_after_quiesce(prev_paused);
+        return Err(AppError::Exotic {
+            code: "worker_quiesce_timeout",
+            message: "Worker 未在限期内停止，卸载中止（请重试）".into(),
+        });
+    }
+    // R1-3：安装目录 remove_dir_all + 删 DB 记录整段下沉 blocking；resume 在 join 后统一执行。
+    let join_result = {
+        let state_arc = state.inner().clone();
+        let plugin_id_c = plugin_id.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = state_arc
+                .db_writer
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            installer::uninstall_plugin(&install_root, &plugin_id_c, &conn)
+        })
+        .await
+    };
+    state.resume_after_quiesce(prev_paused);
+    join_result
+        .map_err(|e| AppError::System(e.to_string()))?
+        .map_err(|e| AppError::Exotic {
+            code: "uninstall_failed",
+            message: format!("卸载失败：{e}"),
+        })?;
+
+    if remove_license {
+        // R1-1：走注入 provider 撤销；移除授权失败不阻断卸载（目录/DB 已删净）。
+        // R1-3：keyring 删除是同步系统调用，同样离开 tokio worker。
+        let state_arc = state.inner().clone();
+        let pid = plugin_id.clone();
+        let _ =
+            tokio::task::spawn_blocking(move || state_arc.entitlement_provider().deactivate(&pid))
+                .await;
+    }
+    state.wake_exotic(WakeReason::ConfigChanged);
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 默认 Registry 基址必须 HTTPS：否则 `download_to_vec` 运行期即拒（NotHttps），
+    /// 但更重要的是防「手滑把常量改成 http:// 造成静默降级」——编译期/CI 即锁死。
+    #[test]
+    fn default_registry_base_is_https() {
+        assert!(
+            DEFAULT_REGISTRY_BASE_URL.starts_with("https://"),
+            "Registry 基址绝不可为非 HTTPS（安全红线）"
+        );
+    }
+}

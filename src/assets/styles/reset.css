@@ -1,0 +1,100 @@
+/* src/assets/styles/reset.css */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-size: 16px;
+  -webkit-text-size-adjust: 100%;
+  font-optical-sizing: auto;
+  /* text-rendering left as browser default (auto) — optimizeLegibility causes
+     sub-pixel kerning blur on Windows 125%/150% DPI scaling */
+  /* -webkit-font-smoothing left as browser default to preserve ClearType on Windows */
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: var(--font-size-base);
+  color: var(--color-text-primary);
+  background-color: var(--color-bg-primary);
+  line-height: 1.5;
+  overflow: hidden; /* Tauri desktop app — no page scroll */
+  user-select: none;
+}
+
+a {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+img,
+video,
+svg {
+  display: block;
+  max-width: 100%;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  background: none;
+  color: inherit;
+}
+
+input,
+textarea {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  background: transparent;
+  border: none;
+  outline: none;
+}
+
+ul,
+ol {
+  list-style: none;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: var(--scrollbar-width, 6px);
+  height: var(--scrollbar-width, 6px);
+}
+::-webkit-scrollbar-track {
+  background: var(--color-scrollbar-track);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-scrollbar-thumb);
+  border-radius: 3px;
+  transition: background var(--transition-fast);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-scrollbar-thumb-hover);
+}
+
+/* ── Selection highlight ─────────────────────────────────────── */
+::selection {
+  background: var(--color-accent-subtle);
+  color: var(--color-text-primary);
+}
+
+/* ── Focus-visible (keyboard navigation only) ────────────────── */
+:focus-visible {
+  outline: var(--focus-ring-width) solid var(--color-focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* ── Thin scrollbar utility ──────────────────────────────────── */
+.scrollbar-auto {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-scrollbar-thumb) transparent;
+}

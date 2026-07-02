@@ -1,0 +1,270 @@
+// src-tauri/src/ai/remote_registry.rs
+//! 动态发现自托管仓库 `gficcg/clip_cn_vit-onnx` 中可下载的 ONNX，按「架构文件夹 → batch 变体」分类。
+//! Dynamically discover downloadable ONNX in the self-hosted `gficcg/clip_cn_vit-onnx` repo,
+//! classified by "architecture folder → batch variant".
+//!
+//! # 为什么动态发现
+//! 仓库按架构分文件夹（clip_cn_vit-b-16 / -h-14 / -l-14-336 / -l-14），每个文件夹下提供图像塔的
+//! 多个固定 batch 导出（bN）+ 一个动态 batch（dyn）+ 一个文本塔，且未来还会增删。把这些写死在
+//! profile.rs 既冗长又易过期 —— 改为运行时拉 HF tree API 列文件，按命名约定归类。
+//!
+//! # 关键点
+//! - 所有 onnx 都是 LFS 文件，tree API 的 `lfs.oid` **即文件 sha256**、`lfs.size` 即真实大小，
+//!   故可直接生成「带校验」的下载清单（大小 + sha256），无需另抓清单。
+//! - 仅图像塔有 batch 变体（文件名含 `.img.<bN|dyn>.`）；文本塔单一（`.txt.`）。
+//! - `.onnx` 头与同名 `.extra_file`（外部权重）必须成对下载、同目录共存。
+//! - 结果带 10 分钟模块级缓存，供 `list_model_registry` 与 `download_model` 共用，避免重复联网。
+
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
+use serde::{Deserialize, Serialize};
+
+use crate::ai::profile::ModelAsset;
+
+/// 自托管仓库 id（全部 ViT 系列 fp32 ONNX）。
+/// Self-hosted repo id (all ViT-series fp32 ONNX).
+pub const REPO: &str = "gficcg/clip_cn_vit-onnx";
+
+/// 发现结果缓存有效期。
+const CACHE_TTL: Duration = Duration::from_secs(600);
+
+/// 模块级缓存：内容与镜像偏好无关（同一份文件树），命中即返回。
+static CACHE: Mutex<Option<(Instant, Vec<DiscoveredArch>)>> = Mutex::new(None);
+
+/// 图像塔 batch 轴类型：固定大小 `k` 或动态（任意批）。
+/// Image-tower batch-axis kind: fixed size `k`, or dynamic (any batch).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BatchKind {
+    Dynamic,
+    Fixed(u32),
+}
+
+/// 一个可下载文件（onnx 头或其 extra_file）的远程信息。
+/// Remote info for one downloadable file (an onnx header or its extra_file).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RemoteFile {
+    /// 仓库内相对路径，如 `clip_cn_vit-l-14/vit-l-14.img.b8.fp32.onnx`。
+    pub path: String,
+    /// 落地文件名（basename，扁平存入 models 目录）。
+    pub file: String,
+    pub size_bytes: u64,
+    /// LFS 文件的 sha256（来自 `lfs.oid`）；非 LFS 文件为 None。
+    pub sha256: Option<String>,
+}
+
+/// 一个图像塔 batch 变体（含其 `.extra_file`）。
+/// One image-tower batch variant (with its `.extra_file`).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ImageVariant {
+    pub batch: BatchKind,
+    pub onnx: RemoteFile,
+    pub extra: Option<RemoteFile>,
+}
+
+/// 一个架构（= 仓库的一个文件夹）发现到的图像变体 + 共享文本塔。
+/// What was discovered for one architecture (= one repo folder): image variants + shared text tower.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DiscoveredArch {
+    pub folder: String,
+    pub variants: Vec<ImageVariant>,
+    pub text_onnx: Option<RemoteFile>,
+    pub text_extra: Option<RemoteFile>,
+}
+
+// ── HF tree API 反序列化（仅取所需字段）────────────────────────────────────────
+// ── HF tree API deserialisation (only the fields we need) ──────────────────────
+
+#[derive(Deserialize)]
+struct TreeEntry {
+    #[serde(rename = "type")]
+    kind: String,
+    path: String,
+    #[serde(default)]
+    size: u64,
+    #[serde(default)]
+    lfs: Option<Lfs>,
+}
+
+#[derive(Deserialize)]
+struct Lfs {
+    /// LFS object id = 文件 sha256（小写 hex）。
+    oid: String,
+    #[serde(default)]
+    size: u64,
+}
+
+/// 从图像塔 onnx 文件名解析 batch 类型。
+/// 例：`vit-l-14.img.b8.fp32.onnx` → Fixed(8)；`...img.dyn...` → Dynamic；
+/// `vit-b-16.img.fp16.onnx`（eisneim 静态，batch 钉死为 1）→ None（无 `bN`/`dyn` 标记）。
+///
+/// Parse the batch kind from an image-tower onnx filename. Returns None when the name carries no
+/// `bN`/`dyn` marker (e.g. the eisneim fp16 export whose batch axis is pinned to 1).
+pub fn parse_batch(file: &str) -> Option<BatchKind> {
+    let after = file.split(".img.").nth(1)?; // "b8.fp32.onnx" / "dyn.fp32.onnx" / "fp16.onnx"
+    let tok = after.split('.').next()?; // "b8" / "dyn" / "fp16"
+    if tok == "dyn" {
+        return Some(BatchKind::Dynamic);
+    }
+    let n: u32 = tok.strip_prefix('b')?.parse().ok()?;
+    Some(BatchKind::Fixed(n))
+}
+
+/// 由远程文件构造一个带主源 + hf-mirror 镜像 + 大小/sha256 校验的下载资产。
+/// Build a download asset from a remote file (primary + hf-mirror URLs + size/sha256 verification).
+pub fn remote_asset(rf: &RemoteFile) -> ModelAsset {
+    ModelAsset {
+        url: format!("https://huggingface.co/{REPO}/resolve/main/{}", rf.path),
+        mirror_url: Some(format!(
+            "https://hf-mirror.com/{REPO}/resolve/main/{}",
+            rf.path
+        )),
+        dest: rf.file.clone(),
+        size_bytes: rf.size_bytes,
+        sha256: rf.sha256.clone(),
+    }
+}
+
+/// 拉取并解析仓库文件树，按文件夹归类为各架构的图像变体 + 文本塔（带缓存）。
+/// `mirror_first` 仅影响首选连接的主机（命中缓存时忽略）。
+///
+/// Fetch + parse the repo file tree into per-architecture image variants + text tower (cached).
+/// `mirror_first` only decides which host to try first (ignored on a cache hit).
+pub async fn discover(mirror_first: bool) -> Result<Vec<DiscoveredArch>, String> {
+    // 命中缓存（克隆后立即释放锁，不跨 await 持锁）。
+    {
+        let guard = CACHE.lock().unwrap();
+        if let Some((t, v)) = guard.as_ref() {
+            if t.elapsed() < CACHE_TTL {
+                return Ok(v.clone());
+            }
+        }
+    }
+
+    let entries = fetch_tree(mirror_first).await?;
+    let archs = classify(entries);
+
+    {
+        let mut guard = CACHE.lock().unwrap();
+        *guard = Some((Instant::now(), archs.clone()));
+    }
+    Ok(archs)
+}
+
+/// 拉取 tree JSON：按偏好顺序尝试官方源与 hf-mirror，任一成功即返回。
+/// Fetch the tree JSON, trying official + hf-mirror in preference order; first success wins.
+async fn fetch_tree(mirror_first: bool) -> Result<Vec<TreeEntry>, String> {
+    let hosts: [&str; 2] = if mirror_first {
+        ["https://hf-mirror.com", "https://huggingface.co"]
+    } else {
+        ["https://huggingface.co", "https://hf-mirror.com"]
+    };
+    let path = format!("/api/models/{REPO}/tree/main?recursive=true");
+    let client = reqwest::Client::new();
+
+    let mut last_err = String::from("no host tried");
+    for host in hosts {
+        let url = format!("{host}{path}");
+        match client
+            .get(&url)
+            .header("User-Agent", "picasa-next")
+            .send()
+            .await
+        {
+            Ok(resp) if resp.status().is_success() => match resp.json::<Vec<TreeEntry>>().await {
+                Ok(v) => return Ok(v),
+                Err(e) => last_err = format!("解析失败 {url}: {e}"),
+            },
+            Ok(resp) => last_err = format!("HTTP {} @ {url}", resp.status().as_u16()),
+            Err(e) => last_err = format!("{url}: {e}"),
+        }
+    }
+    Err(last_err)
+}
+
+/// 把扁平文件列表归类为各架构的图像变体 + 共享文本塔。无图像 onnx 的架构（如尚未导出的 h-14）跳过。
+/// Group the flat file list into per-architecture image variants + shared text tower.
+/// Architectures without any image onnx (e.g. not-yet-exported h-14) are skipped.
+fn classify(entries: Vec<TreeEntry>) -> Vec<DiscoveredArch> {
+    use std::collections::BTreeMap;
+
+    // folder → [(basename, RemoteFile)]
+    let mut by_folder: BTreeMap<String, Vec<(String, RemoteFile)>> = BTreeMap::new();
+    for e in entries {
+        if e.kind != "file" {
+            continue;
+        }
+        let Some((folder, base)) = e.path.split_once('/') else {
+            continue;
+        };
+        if !folder.starts_with("clip_cn_vit") {
+            continue;
+        }
+        // 仅关心 onnx 头与其 extra_file。
+        if !(base.ends_with(".onnx") || base.ends_with(".onnx.extra_file")) {
+            continue;
+        }
+        let (size, sha256) = match &e.lfs {
+            Some(l) => (l.size, Some(l.oid.clone())),
+            None => (e.size, None),
+        };
+        let rf = RemoteFile {
+            path: e.path.clone(),
+            file: base.to_string(),
+            size_bytes: size,
+            sha256,
+        };
+        by_folder
+            .entry(folder.to_string())
+            .or_default()
+            .push((base.to_string(), rf));
+    }
+
+    let mut out = Vec::new();
+    for (folder, files) in by_folder {
+        // basename → RemoteFile（用于把 onnx 头关联到同名 .extra_file）。
+        let index: std::collections::HashMap<&str, &RemoteFile> =
+            files.iter().map(|(b, f)| (b.as_str(), f)).collect();
+
+        let mut variants: Vec<ImageVariant> = Vec::new();
+        let mut text_onnx = None;
+        let mut text_extra = None;
+
+        for (base, rf) in &files {
+            if base.ends_with(".extra_file") {
+                continue; // extra 由对应 onnx 头关联，不单独成项
+            }
+            let extra_name = format!("{base}.extra_file");
+            let extra = index.get(extra_name.as_str()).map(|f| (*f).clone());
+
+            if base.contains(".img.") {
+                if let Some(batch) = parse_batch(base) {
+                    variants.push(ImageVariant {
+                        batch,
+                        onnx: rf.clone(),
+                        extra,
+                    });
+                }
+            } else if base.contains(".txt.") {
+                text_onnx = Some(rf.clone());
+                text_extra = extra;
+            }
+        }
+
+        if variants.is_empty() {
+            continue;
+        }
+        // 固定 batch 升序在前，dyn 垫底，UI 展示更直观。
+        variants.sort_by_key(|v| match v.batch {
+            BatchKind::Fixed(k) => k as i64,
+            BatchKind::Dynamic => i64::MAX,
+        });
+        out.push(DiscoveredArch {
+            folder,
+            variants,
+            text_onnx,
+            text_extra,
+        });
+    }
+    out
+}

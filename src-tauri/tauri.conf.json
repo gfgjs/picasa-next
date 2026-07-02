@@ -1,0 +1,68 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Picasa Next",
+  "version": "0.1.0",
+  "identifier": "com.picasanext.app",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "splashscreen",
+        "url": "splashscreen.html",
+        "title": "Picasa Next",
+        "width": 400,
+        "height": 280,
+        "decorations": false,
+        "resizable": false,
+        "center": true,
+        "visible": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true
+      },
+      {
+        "label": "main",
+        "title": "Picasa Next",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 800,
+        "minHeight": 560,
+        "decorations": true,
+        "resizable": true,
+        "center": true,
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost blob: data:; media-src 'self' asset: http://asset.localhost blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'; worker-src 'self' blob:; frame-src 'self' blob: data:",
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$APPDATA/**",
+          "$PICTURE/**",
+          "$DESKTOP/**",
+          "$DOCUMENT/**",
+          "$DOWNLOAD/**",
+          "$VIDEO/**",
+          "$AUDIO/**"
+        ]
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}

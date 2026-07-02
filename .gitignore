@@ -1,0 +1,55 @@
+!.models/*.py
+whale-windows-amd64.exe
+codewhale-tui-windows-x64.exe
+models
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Python environments
+venv/
+Chinese-CLIP/
+
+# 本地模型暂存/导出目录（源 .pt/.bin 与导出的 .onnx 大文件，勿入库）
+.models/
+
+# Temporary models and executables
+temp_*.onnx
+codewhale-tui-*.exe
+
+# Local tooling artifacts (codegraph index / reasonix) — not part of the project
+.codegraph/
+.reasonix/
+reasonix.toml
+
+# Rust / Cargo 构建产物（Cargo.lock 入库以锁版本）。
+# 根 /target：Part6 workspace 化后构建产物从 src-tauri/target 迁至根 target（原由 src-tauri/.gitignore 管）。
+/target
+# 冷门格式插件：worker / probe crates 的 Cargo 构建产物。
+crates/**/target/
+
+# 🔴 闭源 pro crate（Part6 §3.9）：本仓已为**私有 canonical 超集**，pro 作为一等 member 被跟踪于此
+# （其 target/ 由上面 crates/**/target/ 覆盖忽略）。**公开镜像**由 Copybara 经 origin_files glob 排除
+# crates/picasa-next-pro/**（见 Part6_3c 草稿），故 pro 永不入公开仓；此处不再整目录忽略，以便私有仓
+# 正常提交 pro（避免整目录忽略后新增 pro 文件被静默漏跟踪 → 违「绝不丢失」）。

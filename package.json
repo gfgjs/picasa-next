@@ -1,0 +1,49 @@
+{
+  "name": "picasa-next",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write src/",
+    "typecheck": "vue-tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "build": "vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "tauri:build:lite": "tauri build",
+    "tauri:build:perf": "tauri build --features perf -c src-tauri/tauri.perf.conf.json"
+  },
+  "dependencies": {
+    "@lucide/vue": "^1.17.0",
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2.7.1",
+    "@tauri-apps/plugin-fs": "^2.5.1",
+    "@tauri-apps/plugin-opener": "^2",
+    "@tauri-apps/plugin-shell": "^2.3.5",
+    "@tauri-apps/plugin-window-state": "^2.4.1",
+    "epubjs": "^0.3.93",
+    "onnxruntime-node": "^1.26.0",
+    "pdfjs-dist": "^4.10.38",
+    "pinia": "^3.0.4",
+    "vue": "^3.5.13",
+    "vue-i18n": "^9.14.5",
+    "vue-router": "^4.6.4"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "@vue/eslint-config-prettier": "^10.2.0",
+    "@vue/eslint-config-typescript": "^14.9.0",
+    "eslint": "^9.39.4",
+    "eslint-plugin-vue": "^9.33.0",
+    "prettier": "^3.9.1",
+    "typescript": "~5.6.2",
+    "vite": "^6.0.3",
+    "vitest": "^3.2.6",
+    "vue-tsc": "^2.1.10"
+  }
+}

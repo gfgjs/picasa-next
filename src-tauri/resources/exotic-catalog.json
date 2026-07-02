@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "sequence": 1,
+  "offerings": [
+    {
+      "plugin_id": "exotic-image-psd",
+      "name": "PSD 图像引擎",
+      "media_kind": "image",
+      "formats": ["psd"],
+      "capabilities": ["thumbnail"],
+      "license_tier": "paid",
+      "sku": "psd-engine-2026",
+      "platforms": ["x86_64-pc-windows-msvc", "aarch64-apple-darwin"],
+      "min_host_version": "0.1.0",
+      "override_common": false,
+      "store_url": "https://example.invalid/plugins/psd"
+    }
+  ]
+}

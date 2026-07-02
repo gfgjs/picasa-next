@@ -1,0 +1,71 @@
+// src/router/index.ts
+import { watch } from 'vue'
+import { createRouter, createWebHashHistory } from 'vue-router'
+import i18n from '../i18n'
+
+const router = createRouter({
+  history: createWebHashHistory(),
+  routes: [
+    {
+      path: '/',
+      component: () => import('../components/media/MediaGrid.vue'),
+      meta: { title: 'routes.allMedia' },
+    },
+    {
+      path: '/folder/:id',
+      component: () => import('../components/media/MediaGrid.vue'),
+      meta: { title: 'sidebar.folders' },
+    },
+    {
+      path: '/favorites',
+      component: () => import('../components/media/MediaGrid.vue'),
+      meta: { title: 'sidebar.favorites' },
+    },
+    {
+      path: '/collections',
+      component: () => import('../views/CollectionsView.vue'),
+      meta: { title: 'sidebar.collections' },
+    },
+    {
+      // 人物墙（F6）：人脸识别聚类出的人物簇，点卡片进入该人物的照片。
+      path: '/persons',
+      component: () => import('../views/PersonsView.vue'),
+      meta: { title: 'sidebar.persons' },
+    },
+    {
+      // 插件商店（T11）：浏览/安装 exotic 格式插件 + 激活 + 处理进度，路由级懒加载。
+      path: '/plugins',
+      component: () => import('../views/PluginStoreView.vue'),
+      meta: { title: 'sidebar.plugins' },
+    },
+    {
+      // 文档浏览器（P4, §5.1）：按格式分发 pdf.js / epub.js / 文本渲染器，路由级懒加载。
+      path: '/doc/:id',
+      component: () => import('../views/DocumentViewer.vue'),
+      meta: { title: 'routes.doc' },
+    },
+    {
+      // 音频播放器（P3, §3.6）：封面 + 控件 + 同步歌词 + 元数据面板，路由级懒加载。
+      path: '/audio/:id',
+      component: () => import('../views/AudioPlayer.vue'),
+      meta: { title: 'routes.audio' },
+    },
+    {
+      path: '/trash',
+      component: () => import('../components/media/MediaGrid.vue'),
+      meta: { title: 'sidebar.trash' },
+    },
+  ],
+})
+
+// meta.title 存 i18n 键，导航与切语言两个时机都要刷新窗口标题——
+// 只在 afterEach 翻译会让切语言后的标题滞留旧语言直到下次导航（R1-7 验收「en-US 全界面无中文」不允许）。
+function applyDocumentTitle() {
+  const titleKey = router.currentRoute.value.meta.title as string | undefined
+  document.title = titleKey ? `${i18n.global.t(titleKey)} — Picasa Next` : 'Picasa Next'
+}
+
+router.afterEach(() => applyDocumentTitle())
+watch(i18n.global.locale, () => applyDocumentTitle())
+
+export default router

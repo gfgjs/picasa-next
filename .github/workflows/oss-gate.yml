@@ -1,0 +1,143 @@
+# oss-gate —— 公开镜像发布 gate(Part6 ③c §6)。
+#
+# 定位:Copybara 把私有投影 push 到公开仓 `sync-staging` 分支后,本 gate 在 sync-staging 上跑**完整开源构建 +
+#       泄漏断言**,全绿方可提升到 main(提升为你侧动作:分支保护 + 手动/自动 ff,见文末说明)。
+#
+# 🔴 本文件**不被 copy.bara.sky 排除** → 随投影同步到公开仓,在公开仓生效。它也存在于私有仓,但:
+#    ①`if: github.repository == 'gfgjs/picasa-next'` 守门使它**只在公开仓执行**(私有仓 workflow_dispatch 也不跑);
+#    ②私有仓无 sync-staging 分支,push 触发在私有仓天然不发生。
+#    这样 ③b 后「私有 main 含 pro member」绝不会误触本 gate 的「assert 无 pro」而误报。
+name: oss-gate
+
+on:
+  push:
+    branches: [ "sync-staging" ]
+  workflow_dispatch:
+
+# 与 FORBIDDEN(copy.bara.sky)保持一致的硬指标;gate 侧再验一遍(双保险,防 Copybara 规则漏网)。
+env:
+  FORBIDDEN: "picasa_next_pro BEGIN-INTERNAL END-INTERNAL"
+
+jobs:
+  gate:
+    name: OSS strip-tree gate
+    # 🔴 只在公开仓执行,私有仓一律跳过。
+    if: github.repository == 'gfgjs/picasa-next'
+    # ⚠ 跑 windows 而非 ubuntu(2026-07-02 四跑实证的 fork 决策):gate 使命=「剥离未破坏构建」,基准须是
+    #   canonical 树**能构建的平台**(今天=Windows)。公开树当前在 Linux 上本就编不过(wic_engine.rs 无条件
+    #   编译 + `windows` crate 未做 target 限定)——那是跨平台适配(Part3 / 审查 R0-2)的路线图工作,与剥离
+    #   完整性无关。Linux 构建落地后回迁 ubuntu(见 todo C 节)。
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash        # windows runner 默认 pwsh;本文件脚本全为 bash(grep/[ ]/git ls-files)
+    steps:
+      - name: Checkout sync-staging
+        uses: actions/checkout@v4
+
+      # ① 静态断言:pro 目录/生产 keyset 必须不存在;禁词必须零出现(剥离成功的双验)。
+      - name: 断言 pro 源码 + 生产 keyset 已剥离
+        run: |
+          set -e
+          if [ -d crates/picasa-next-pro ]; then
+            echo "::error::crates/picasa-next-pro/ 出现在公开树 —— Copybara glob 排除失效"; exit 1
+          fi
+          if git ls-files | grep -q "exotic-keyset-prod.json"; then
+            echo "::error::生产 keyset 文件出现在公开树"; exit 1
+          fi
+          echo "✓ pro 目录 / 生产 keyset 均不在公开树"
+
+      - name: 禁词复验(剥离漏网双保险)
+        run: |
+          set -e
+          fail=0
+          for tok in $FORBIDDEN; do
+            # 范围与 copy.bara.sky verify_match **对齐**(rs/toml/json/yml 代码文件):FORBIDDEN 的语义是
+            # 「代码文件零出现」;计划/说明类 .md 会合法**讨论**这些标记名,全树 grep 必假阳性(gate 首跑实证)。
+            # ⚠ GNU grep 规则:--include/--exclude 矛盾时**最后匹配的选项获胜**——oss-gate.yml 的排除必须写在
+            #   include 之后,否则 --include='*.yml' 压过排除、gate 自指命中 env 里的 FORBIDDEN(第二跑实证踩坑)。
+            hits=$(grep -RIn --exclude-dir=.git \
+                   --include='*.rs' --include='*.toml' --include='*.json' --include='*.yml' \
+                   --exclude=oss-gate.yml \
+                   -e "$tok" . || true)
+            if [ -n "$hits" ]; then
+              echo "::error::禁词 [$tok] 出现在公开树代码文件:"; echo "$hits"; fail=1
+            fi
+          done
+          [ "$fail" = "0" ] && echo "✓ 禁词零出现(rs/toml/json/yml)" || exit 1
+
+      # ② Cargo.lock:公开 lock 绝不能含 pro(§10-3)。私有 lock 含 pro 时须重生;重生后仍须无 pro。
+      - name: 校验 + 重生 Cargo.lock 无 pro
+        run: |
+          set -e
+          if [ -f Cargo.lock ] && grep -q "picasa-next-pro" Cargo.lock; then
+            echo "::error::同步来的 Cargo.lock 含 picasa-next-pro —— 须在 gate 重生公开 lock"; exit 1
+          fi
+          # 重生一份(依当前剥离后的 Cargo.toml),确认可解析且不引入 pro。
+          cargo generate-lockfile
+          if grep -q "picasa-next-pro" Cargo.lock; then
+            echo "::error::重生的 Cargo.lock 仍含 picasa-next-pro"; exit 1
+          fi
+          echo "✓ 公开 Cargo.lock 无 pro"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # 编译缓存:gate 每次同步都跑,windows runner 冷编译慢,缓存 registry+target 大幅提速。
+      - name: Rust 编译缓存
+        uses: Swatinem/rust-cache@v2
+
+      # tauri::generate_context! 宏在编译期校验 frontendDist("../dist")存在(四跑实证,debug 也查)。
+      # gate 不做前端构建——前端 build/类型检查是 ci.yml 的职责(审查 R0-1),此处只需占位目录让宏通过。
+      - name: 占位 dist(generate_context 需 frontendDist 存在)
+        run: mkdir -p dist
+
+      # Windows 侧资源校验:tauri.windows.conf.json 的 bundle.resources 指向 node_modules 内的
+      # ONNX/DirectML 二进制,build script 校验其存在(五跑实证)。npm ci = 贡献者标准流程的环境复原
+      # (npm install → tauri dev),**不是前端质量门**——不跑 build/vue-tsc/vitest(属 ci.yml / 审查 R0-1)。
+      - name: Node 环境(npm 缓存)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: npm ci(材料化 onnxruntime 资源)
+        run: npm ci
+
+      # ③ 动态 gate:剥离后的树必须真能**解析+编译**——比静态 grep 更权威的泄漏兜底:任何**活跃**的 pro 符号/
+      #    清单引用若漏剥,workspace 根本过不了 cargo check。check 为强制门;test 为附加断言(项目测试多为
+      #    rusqlite 内存 DB/逻辑单测,可 headless 跑)。
+      - name: cargo check --workspace(强制:剥离未破坏解析/编译)
+        run: cargo check --workspace --locked
+
+      - name: cargo test --workspace(附加)
+        run: cargo test --workspace --locked
+
+      # ④ members 断言:workspace 成员绝不含 picasa-next-pro。
+      - name: 断言 workspace members 无 pro
+        run: |
+          set -e
+          if cargo metadata --no-deps --format-version 1 | grep -q '"name":"picasa-next-pro"'; then
+            echo "::error::workspace members 含 picasa-next-pro"; exit 1
+          fi
+          echo "✓ members 无 pro"
+
+  # ⑤ 密钥扫描:防生产 keyset / token 意外混入(独立于文件名断言)。拆成独立 ubuntu job(与 gate 并行):
+  #    gitleaks 是平台无关的文本扫描,而 gitleaks-action@v2 在 windows 上装不了二进制——它拼的下载名是
+  #    windows_x64.tar.gz,官方 release 的 Windows 资产是 .zip → 404(六跑实证)。ubuntu 是该动作的主流路径。
+  gitleaks:
+    name: gitleaks 密钥扫描
+    if: github.repository == 'gfgjs/picasa-next'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0     # 扫全部历史(rebaseline 后即单 commit,代价可忽略)
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+# ── 提升 sync-staging → main(你侧设置,gate 全绿后)──────────────────────────────────────────────
+#  本 gate 只做「验证」,不自动推 main(避免在分支保护上做脆弱假设)。提升二选一:
+#   (a) 手动:公开仓开 sync-staging → main 的 PR,gate 绿即 merge(推荐首发,人工把关 baseline)。
+#   (b) 自动:另加一个 needs: gate 的 job,用 PAT/GITHUB_TOKEN ff main→sync-staging;需分支保护放行该 actor。
+#  公开仓分支保护(§8):main 只接受 sync-bot / 本 gate 通过的提升,拦人类直接 push(防反向漂移被下次 SQUASH 无声覆盖)。

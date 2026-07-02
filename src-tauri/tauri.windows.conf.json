@@ -1,0 +1,11 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "resources": {
+      "../node_modules/onnxruntime-node/bin/napi-v6/win32/x64/onnxruntime.dll": "onnxruntime.dll",
+      "../node_modules/onnxruntime-node/bin/napi-v6/win32/x64/DirectML.dll": "DirectML.dll",
+      "../node_modules/onnxruntime-node/bin/napi-v6/win32/x64/dxcompiler.dll": "dxcompiler.dll",
+      "../node_modules/onnxruntime-node/bin/napi-v6/win32/x64/dxil.dll": "dxil.dll"
+    }
+  }
+}

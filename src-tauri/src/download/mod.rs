@@ -1,0 +1,349 @@
+// src-tauri/src/download/mod.rs
+//! R10 通用下载引擎（Part6 §3.1.2）。
+//!
+//! 此前 exotic（`exotic/fetch.rs`）与 AI/face（`ipc/ai_commands.rs::download_assets`）各写一套下载逻辑：
+//! sha256 循环、reqwest client 构建、`.part` 原子改名、size/sha 校验重复两份；且 exotic 缺 Range
+//! 续传/镜像回退/进度，AI 缺 HTTPS 强制/超时加固。本模块把**可共享的机制原语**收敛到一处：
+//! 安全 client（HTTPS 强制 + 重定向加固 + 分级超时）、单文件流式下载（Range 续传）、镜像回退、
+//! sha256 校验。各调用方保留自己的**领域编排**（exotic 的包校验、AI 的多资产清单/进度聚合），
+//! 仅机制下沉——延续「找真正解耦的单元、不强抽纠缠的胶水」原则。
+//!
+//! 安全不降级（合并自 exotic 的更严策略）：全程仅 HTTPS、拒非 HTTPS 重定向降级、连接超时防慢速挂起。
+
+use std::path::Path;
+use std::time::Duration;
+
+use tokio::io::AsyncWriteExt as _;
+
+/// 下载/校验错误。`code()` 稳定，可安全跨边界输出（不泄露内部细节）。
+#[derive(Debug, thiserror::Error)]
+pub enum DownloadError {
+    #[error("非 HTTPS 下载地址")]
+    NotHttps,
+    #[error("HTTP 请求失败：{0}")]
+    Http(String),
+    #[error("HTTP 状态码 {0}")]
+    Status(u16),
+    #[error("下载量超出上限（服务器超发）")]
+    TooLarge,
+    #[error("大小校验失败：期望 {expected} 实得 {got}")]
+    SizeMismatch { expected: u64, got: u64 },
+    #[error("sha256 校验失败（文件损坏或被篡改）")]
+    HashMismatch,
+    #[error("IO 失败：{0}")]
+    Io(String),
+}
+
+impl DownloadError {
+    pub fn code(&self) -> &'static str {
+        match self {
+            DownloadError::NotHttps => "not_https",
+            DownloadError::Http(_) => "http",
+            DownloadError::Status(_) => "status",
+            DownloadError::TooLarge => "too_large",
+            DownloadError::SizeMismatch { .. } => "size_mismatch",
+            DownloadError::HashMismatch => "hash_mismatch",
+            DownloadError::Io(_) => "io",
+        }
+    }
+}
+
+/// 超时策略。🔴 大文件不可套用小文件的整体超时——否则慢速链路下 ~1GB 模型 blob（Part6 T7）
+/// 会被整体超时**误杀**。故按调用方语义分级。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TimeoutPolicy {
+    /// 小文件（Registry index/sig、MB 级插件包）：连接 15s + **整体 300s 封顶**。
+    SmallFile,
+    /// 大文件（模型 blob ~GB）：仅连接 15s 超时，**不设整体上限**（续传 + 连接超时已足够防挂起）。
+    LargeFile,
+}
+
+/// 进度回调：以「本文件累计已接收字节」为参数。引擎内部已按 ~200ms 节流，回调侧无需再节流。
+/// `Send + Sync` 边界必需——回调会被跨 `.await` 持有，否则下载 future 非 Send、无法在多线程
+/// runtime 上的 Tauri 命令里 spawn（编译错误）。
+pub type OnBytes<'a> = dyn Fn(u64) + Send + Sync + 'a;
+
+/// 不发请求即拒非 HTTPS（首跳；后续跳由 client 的重定向策略把关）。
+fn require_https(url: &str) -> Result<(), DownloadError> {
+    if url.starts_with("https://") {
+        Ok(())
+    } else {
+        Err(DownloadError::NotHttps)
+    }
+}
+
+/// 构建强制全程 HTTPS 的安全 client：连接 15s；重定向跳非 https 即拒、>10 跳即停；
+/// 整体超时按 `policy` 分级。HF `resolve/` → CDN 的 302 是 HTTPS，故 AI 大文件下载兼容
+/// （只拒**降级**到非 HTTPS 的跳转，不拒 HTTPS 跳转）。
+pub fn secure_client(policy: TimeoutPolicy) -> Result<reqwest::Client, DownloadError> {
+    let mut builder = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if attempt.url().scheme() != "https" {
+                attempt.error("重定向到非 HTTPS 地址被拒")
+            } else if attempt.previous().len() > 10 {
+                attempt.stop()
+            } else {
+                attempt.follow()
+            }
+        }));
+    if policy == TimeoutPolicy::SmallFile {
+        builder = builder.timeout(Duration::from_secs(300));
+    }
+    builder
+        .build()
+        .map_err(|e| DownloadError::Http(e.to_string()))
+}
+
+/// 下载 `url` 全文到内存，流式封顶 `max_len`（仅 HTTPS）。供 Registry index/sig 用：体量极小、
+/// 无预知 size/sha（完整性由 Ed25519 验签在 `RegistryCache::accept` 内把关），此处只做传输安全。
+pub async fn download_to_vec(
+    client: &reqwest::Client,
+    url: &str,
+    max_len: u64,
+) -> Result<Vec<u8>, DownloadError> {
+    require_https(url)?;
+    let mut resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| DownloadError::Http(e.to_string()))?;
+    if !resp.status().is_success() {
+        return Err(DownloadError::Status(resp.status().as_u16()));
+    }
+    let mut buf: Vec<u8> = Vec::new();
+    while let Some(chunk) = resp
+        .chunk()
+        .await
+        .map_err(|e| DownloadError::Http(e.to_string()))?
+    {
+        let next = (buf.len() as u64)
+            .checked_add(chunk.len() as u64)
+            .ok_or(DownloadError::TooLarge)?;
+        if next > max_len {
+            return Err(DownloadError::TooLarge); // 服务器超发 → 立即中止
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    Ok(buf)
+}
+
+/// 把单个文件流式写入 `part_path`，`resume_from>0` 时经 HTTP Range 续传。边收边发节流进度（~5/s）。
+/// 请求了 Range 但服务器返回整文件（200 而非 206）→ 从 0 重写（覆盖 part）。
+pub async fn download_file(
+    client: &reqwest::Client,
+    url: &str,
+    part_path: &Path,
+    resume_from: u64,
+    on_bytes: &OnBytes<'_>,
+) -> Result<(), DownloadError> {
+    require_https(url)?;
+    if let Some(parent) = part_path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| DownloadError::Io(e.to_string()))?;
+    }
+
+    let mut req = client.get(url);
+    if resume_from > 0 {
+        req = req.header(reqwest::header::RANGE, format!("bytes={resume_from}-"));
+    }
+    let mut resp = req
+        .send()
+        .await
+        .map_err(|e| DownloadError::Http(e.to_string()))?;
+    if !resp.status().is_success() {
+        return Err(DownloadError::Status(resp.status().as_u16()));
+    }
+
+    // 请求了 Range 且服务器以 206 应答 → 追加续写；否则（含 200 整文件）从头创建。
+    let appending = resume_from > 0 && resp.status() == reqwest::StatusCode::PARTIAL_CONTENT;
+    let mut file = if appending {
+        tokio::fs::OpenOptions::new()
+            .append(true)
+            .open(part_path)
+            .await
+            .map_err(|e| DownloadError::Io(e.to_string()))?
+    } else {
+        tokio::fs::File::create(part_path)
+            .await
+            .map_err(|e| DownloadError::Io(e.to_string()))?
+    };
+
+    let mut file_received = if appending { resume_from } else { 0 };
+    let mut last = std::time::Instant::now();
+    while let Some(chunk) = resp
+        .chunk()
+        .await
+        .map_err(|e| DownloadError::Http(e.to_string()))?
+    {
+        file.write_all(&chunk)
+            .await
+            .map_err(|e| DownloadError::Io(e.to_string()))?;
+        file_received += chunk.len() as u64;
+        if last.elapsed().as_millis() >= 200 {
+            last = std::time::Instant::now();
+            on_bytes(file_received);
+        }
+    }
+    file.flush()
+        .await
+        .map_err(|e| DownloadError::Io(e.to_string()))?;
+    Ok(())
+}
+
+/// 按候选源顺序逐一尝试下载到 `part_path`，首个成功即返回；全失败返回最后一次错误。
+/// 镜像重试时从失败尝试留下的 `.part` 处续传；残留 `.part` 超过 `expected_size`（>0 时）则清零重来。
+pub async fn download_with_fallback(
+    client: &reqwest::Client,
+    urls: &[&str],
+    part_path: &Path,
+    mut resume_from: u64,
+    expected_size: u64,
+    on_bytes: &OnBytes<'_>,
+) -> Result<(), DownloadError> {
+    let mut last_err = DownloadError::Http("无候选下载源".to_string());
+    for url in urls {
+        match download_file(client, url, part_path, resume_from, on_bytes).await {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                last_err = e;
+                // 下一个候选源从已落地的 .part 处续传；若残留超出目标大小则丢弃重来。
+                resume_from = tokio::fs::metadata(part_path)
+                    .await
+                    .map(|m| m.len())
+                    .unwrap_or(0);
+                if expected_size > 0 && resume_from > expected_size {
+                    let _ = tokio::fs::remove_file(part_path).await;
+                    resume_from = 0;
+                }
+            }
+        }
+    }
+    Err(last_err)
+}
+
+/// 文件 sha256(小写 hex)。实现收拢于 utils::hash(R2-6);re-export 保持既有
+/// `crate::download::sha256_hex_of_file` 调用路径零破坏。
+pub use crate::utils::hash::sha256_hex_of_file;
+
+/// `expected` 为 `None`（无需校验）或文件 sha256 与之相等（大小写不敏感）时返回 true。
+pub fn sha256_matches(path: &Path, expected: Option<&str>) -> bool {
+    let expected = match expected {
+        Some(e) => e,
+        None => return true,
+    };
+    match sha256_hex_of_file(path) {
+        Ok(hex) => hex.eq_ignore_ascii_case(expected),
+        Err(_) => false,
+    }
+}
+
+/// 下载后完整性校验：先核大小，再核 sha256（`expected_sha=None` 时跳过哈希）。
+/// 任一失败返回对应错误，不删文件（由调用方决定清理 `.part`）。
+pub fn verify_size_sha(
+    path: &Path,
+    expected_size: u64,
+    expected_sha: Option<&str>,
+) -> Result<(), DownloadError> {
+    let got = std::fs::metadata(path)
+        .map(|m| m.len())
+        .map_err(|e| DownloadError::Io(e.to_string()))?;
+    if got != expected_size {
+        return Err(DownloadError::SizeMismatch {
+            expected: expected_size,
+            got,
+        });
+    }
+    if !sha256_matches(path, expected_sha) {
+        return Err(DownloadError::HashMismatch);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn noop() -> Box<OnBytes<'static>> {
+        Box::new(|_| {})
+    }
+
+    #[test]
+    fn require_https_rejects_http() {
+        assert!(matches!(
+            require_https("http://x.invalid/a"),
+            Err(DownloadError::NotHttps)
+        ));
+        assert!(require_https("https://x.invalid/a").is_ok());
+    }
+
+    #[test]
+    fn secure_client_builds_both_policies() {
+        assert!(secure_client(TimeoutPolicy::SmallFile).is_ok());
+        assert!(secure_client(TimeoutPolicy::LargeFile).is_ok());
+    }
+
+    #[test]
+    fn download_file_rejects_non_https() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let client = secure_client(TimeoutPolicy::SmallFile).unwrap();
+        let dest = std::env::temp_dir().join("dl-nohttps.part");
+        let cb = noop();
+        let r = rt.block_on(download_file(
+            &client,
+            "http://x.invalid/a",
+            &dest,
+            0,
+            cb.as_ref(),
+        ));
+        assert!(matches!(r, Err(DownloadError::NotHttps)));
+    }
+
+    #[test]
+    fn download_to_vec_rejects_non_https() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let client = secure_client(TimeoutPolicy::SmallFile).unwrap();
+        let r = rt.block_on(download_to_vec(
+            &client,
+            "http://x.invalid/index.json",
+            4096,
+        ));
+        assert!(matches!(r, Err(DownloadError::NotHttps)));
+    }
+
+    #[test]
+    fn sha256_matches_and_hex() {
+        let path = std::env::temp_dir().join("dl-sha-test.bin");
+        std::fs::write(&path, b"hello").unwrap();
+        // sha256("hello") = 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
+        let expect = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
+        assert_eq!(sha256_hex_of_file(&path).unwrap(), expect);
+        assert!(sha256_matches(&path, Some(expect)));
+        assert!(sha256_matches(&path, Some(&expect.to_uppercase())));
+        assert!(sha256_matches(&path, None)); // None = 不校验
+        assert!(!sha256_matches(&path, Some("00")));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn verify_size_sha_catches_size_mismatch() {
+        let path = std::env::temp_dir().join("dl-verify-test.bin");
+        std::fs::write(&path, b"hello").unwrap(); // 5 bytes
+        assert!(matches!(
+            verify_size_sha(&path, 99, None),
+            Err(DownloadError::SizeMismatch {
+                expected: 99,
+                got: 5
+            })
+        ));
+        assert!(verify_size_sha(&path, 5, None).is_ok());
+        let _ = std::fs::remove_file(&path);
+    }
+}

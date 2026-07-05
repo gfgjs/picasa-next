@@ -138,6 +138,7 @@ export default {
     dateClear: '清除',
     undo: '撤销 (Ctrl+Z)',
     redo: '重做 (Ctrl+Shift+Z)',
+    hgalleryLab: '横向画廊实验室',
     searchModeMixed: '混合搜索 (聚焦)',
     searchModeSemantic: '纯 AI 语义搜索',
     searchModeNormal: '纯普通搜索',
@@ -240,6 +241,9 @@ export default {
     hoverScaleDesc: '开启后，鼠标悬停在瀑布流缩略图上时会略微放大。如果觉得卡顿可以关闭。',
     hoverAutoplay: '悬停自动播放',
     hoverAutoplayDesc: '鼠标移入视频或动态照片格子时，自动静音循环播放预览。划走即停。',
+    bucketScroll: '分段虚拟滚动',
+    bucketScrollDesc:
+      '画廊默认使用 bucket 分段引擎：段内纯原生滚动、无坐标压缩，配合自研逻辑滚动条，大型图库滚动更顺滑。切换即时生效；关闭则回退到线性平移模式。',
     video: '视频',
     enableVideoCover: '提取视频封面',
     enableVideoCoverDesc:
@@ -752,6 +756,28 @@ export default {
     allMedia: '全部媒体',
     doc: '文档',
     audio: '音频',
+    hgalleryLab: '横向画廊实验室',
+  },
+  // ── H-Lab 横向画廊实验室(plan-docs/2026-07-02-horizontal-gallery-lab.md)────
+  hlab: {
+    title: '横向画廊实验室',
+    back: '返回画廊',
+    mode: '布局模式',
+    modePaged: 'A · 分屏 Justified',
+    modeLanes: 'B · 等高泳道',
+    modeColumns: 'C · 转置 Justified',
+    pageFactor: '页宽系数',
+    targetRowHeight: '目标行高',
+    laneCount: '泳道数',
+    balance: '漂移抑制',
+    targetColWidth: '目标列宽',
+    gap: '间距',
+    timeAsc: '时间正序',
+    computing: '计算中…',
+    stats: '{items} 项 · {blocks} 块 · 总宽 {width}px · 后端 {ms}ms',
+    overCap: '总宽超过 1000 万 px 实验滚动上限,右端不可达——请换更小的库或调大密度参数',
+    empty: '当前库为空——请先在主画廊添加文件夹并完成扫描',
+    hint: '滚轮横滚 · PgUp/PgDn 翻屏 · Home/End 首尾',
   },
   // 撤销 / 重做 toast（historyStore）
   history: {

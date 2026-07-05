@@ -12,8 +12,8 @@ mod decode;
 use std::io::{BufReader, BufWriter, Write};
 
 use exotic_protocol::{
-    read_frame, write_frame, FailureBody, Frame, FrameType, ProtocolError, ReadyBody, RequestBody,
-    SuccessBody, WorkerErrorCode, MAX_BLOB_LEN, PROTOCOL_VERSION,
+    capability, read_frame, write_frame, FailureBody, Frame, FrameType, ProtocolError, ReadyBody,
+    RequestBody, SuccessBody, WorkerErrorCode, MAX_BLOB_LEN, PROTOCOL_VERSION,
 };
 
 /// Worker 稳定标识（Host 握手校验）。
@@ -62,7 +62,7 @@ fn main() {
         worker_id: WORKER_ID.to_string(),
         worker_version: WORKER_VERSION.to_string(),
         protocol_version: PROTOCOL_VERSION,
-        capabilities: vec!["thumbnail".to_string()],
+        capabilities: vec![capability::THUMBNAIL.to_string()],
         max_blob_len: MAX_BLOB_LEN,
     };
     if let Err(e) = send(
@@ -109,8 +109,8 @@ fn main() {
                         // 已知 item_id/fingerprint 才能回 Failure；panic 时尽力解析请求体。
                         let (item_id, fp) = frame
                             .parse_json::<RequestBody>()
-                            .map(|r| (r.item_id(), r.input_fingerprint().to_string()))
-                            .unwrap_or((0, String::new()));
+                            .map(|r| (r.item_id(), r.input_fingerprint().map(str::to_string)))
+                            .unwrap_or((None, None));
                         let fail = FailureBody {
                             item_id,
                             input_fingerprint: fp,
@@ -142,8 +142,8 @@ fn handle_request(frame: &Frame) -> Frame {
             // 请求体都解析不了：无法可靠取 item_id；回 internal_error（request_id 仍匹配）。
             log(&format!("Request JSON 解析失败：{e}"));
             let fail = FailureBody {
-                item_id: 0,
-                input_fingerprint: String::new(),
+                item_id: None,
+                input_fingerprint: None,
                 code: WorkerErrorCode::InternalError,
                 retryable: false,
                 message: "bad request json".to_string(),
@@ -172,11 +172,27 @@ fn handle_request(frame: &Frame) -> Frame {
         } => {
             // 首发不实现 metadata 能力 → 稳定 unsupported_variant。
             let fail = FailureBody {
-                item_id,
-                input_fingerprint,
+                item_id: Some(item_id),
+                input_fingerprint: Some(input_fingerprint),
                 code: WorkerErrorCode::UnsupportedVariant,
                 retryable: false,
                 message: "metadata 能力未实现".to_string(),
+            };
+            Frame::control(FrameType::Failure, frame.request_id, &fail).unwrap()
+        }
+        // v2 会话/嵌入族 op:psd-worker 不声明 embedding/face 能力,host 按能力路由不会派发;
+        // 防御性兜底回稳定 unsupported_variant(而非 panic/协议损坏)。
+        other @ (RequestBody::SessionInit { .. }
+        | RequestBody::SessionClose { .. }
+        | RequestBody::EmbedBatch { .. }
+        | RequestBody::FaceDetectEmbed { .. }
+        | RequestBody::EncodeText { .. }) => {
+            let fail = FailureBody {
+                item_id: other.item_id(),
+                input_fingerprint: other.input_fingerprint().map(str::to_string),
+                code: WorkerErrorCode::UnsupportedVariant,
+                retryable: false,
+                message: "该 op 未实现(psd-worker 仅 thumbnail)".to_string(),
             };
             Frame::control(FrameType::Failure, frame.request_id, &fail).unwrap()
         }
@@ -195,8 +211,8 @@ fn handle_thumbnail(
             FrameType::Failure,
             request_id,
             &FailureBody {
-                item_id,
-                input_fingerprint: input_fingerprint.clone(),
+                item_id: Some(item_id),
+                input_fingerprint: Some(input_fingerprint.clone()),
                 code,
                 retryable,
                 message,
@@ -239,12 +255,12 @@ fn handle_thumbnail(
     match decode::decode_psd_to_webp(&bytes, target_long_edge) {
         Ok(out) => {
             let body = SuccessBody {
-                item_id,
-                input_fingerprint: input_fingerprint.clone(),
+                item_id: Some(item_id),
+                input_fingerprint: Some(input_fingerprint.clone()),
                 mime: Some("image/webp".to_string()),
                 width: Some(out.width),
                 height: Some(out.height),
-                metadata: None,
+                ..Default::default()
             };
             Frame::with_blob(FrameType::Success, request_id, &body, out.webp).unwrap()
         }

@@ -25,10 +25,10 @@ use std::time::{Duration, Instant};
 use tracing::{debug, warn};
 
 use super::worker::{
-    spawn_frame_reader, spawn_worker_process, TaskOutcome, WorkerConfig, WorkerConn, WorkerLimits,
-    WorkerSpec,
+    spawn_frame_reader, spawn_worker_process, RawOutcome, TaskOutcome, WorkerConfig, WorkerConn,
+    WorkerLimits, WorkerSpec,
 };
-use exotic_protocol::RequestBody;
+use exotic_protocol::{RequestBody, SuccessBody};
 
 /// 子进程句柄抽象(R2-5 测试缝):生产实现为 [`Child`] 的 1:1 机械委托。
 /// ExitStatus 被整体擦除——本模块所有调用点本就丢弃它(`let _ = wait()`、try_wait 只
@@ -55,6 +55,27 @@ impl ChildHandle for Child {
 /// stderr 环形缓冲上限：只保留最近 64 KiB 诊断，不无限累积内存（§3.4）。
 const STDERR_RING_CAP: usize = 64 * 1024;
 
+/// 已加载会话的 host 侧快照(T15,D3 §4②):记录 SessionInit 时的 model_profile 关键字段
+/// 与 SessionReady 应答。派批前 host 据此比对目标模型——不符则先 SessionClose 再
+/// SessionInit(切换语义);实例被 kill 时随之清零(重建后首个动作必然是重 Init,§4⑤)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionDescriptor {
+    pub session_id: u64,
+    /// CLIP 架构族 id(= `ai_embeddings.model_name`,向量空间身份)。
+    pub arch_id: String,
+    /// 选定的图像塔 batch 变体文件(同架构不同变体切换也须重 Init)。
+    pub image_file: String,
+    pub face_profile_id: Option<String>,
+    /// SessionReady 回报的嵌入维度(EmbedBatch blob 校验用)。
+    pub embed_dim: u32,
+    pub face_embed_dim: Option<u32>,
+    /// 本会话实际可服务的能力(worker 声明,host 派活依据)。
+    pub caps: Vec<String>,
+    /// worker 回声的执行提供器/GPU 名(T16;None=旧 worker 帧,host 保留既有配置)。
+    pub provider: Option<String>,
+    pub gpu_name: Option<String>,
+}
+
 /// 长驻 Worker 的监督者。
 pub struct WorkerSupervisor {
     child: Box<dyn ChildHandle>,
@@ -65,6 +86,8 @@ pub struct WorkerSupervisor {
     /// 实例死亡（超时/断开/协议违例后置位）；池据此回收并补新实例。
     alive: bool,
     worker_version: String,
+    /// 已加载会话快照(T15);None = 未加载/已卸载/实例已死。
+    session: Option<SessionDescriptor>,
 }
 
 impl WorkerSupervisor {
@@ -108,6 +131,7 @@ impl WorkerSupervisor {
             stderr_handle: Some(stderr_handle),
             alive: true,
             worker_version,
+            session: None,
         })
     }
 
@@ -117,6 +141,105 @@ impl WorkerSupervisor {
 
     pub fn is_alive(&self) -> bool {
         self.alive
+    }
+
+    /// 当前已加载会话的快照;None = 未加载(派批前 host 据此判定是否需先 Init/切换)。
+    pub fn session(&self) -> Option<&SessionDescriptor> {
+        self.session.as_ref()
+    }
+
+    /// 跑任意 op 的请求(T15 泛化,D3 §4①)。进程级异常(超时/断开/协议违例)时
+    /// `kill → wait` 并标死亡,与 [`Self::run_thumbnail`] 同一回收语义;返回的
+    /// `Success` **未经 op 校验**,由调用方按 op 分派验证。
+    pub fn run_request(
+        &mut self,
+        req: &RequestBody,
+        timeout: Duration,
+        cancelled: &dyn Fn() -> bool,
+    ) -> RawOutcome {
+        if !self.alive {
+            return RawOutcome::Disconnected;
+        }
+        let outcome = self.conn.run_request(req, timeout, cancelled);
+        match &outcome {
+            RawOutcome::Success { .. } | RawOutcome::Failure(_) => {}
+            RawOutcome::TimedOut | RawOutcome::Disconnected | RawOutcome::Protocol(_) => {
+                warn!(
+                    "Worker 实例异常（{}）→ kill 回收；stderr 尾部：{}",
+                    raw_outcome_label(&outcome),
+                    self.stderr_tail_lossy()
+                );
+                self.kill_and_reap();
+            }
+        }
+        outcome
+    }
+
+    /// 发送 SessionInit 并在成功时记录会话快照(D3 §4②)。`req` 必须是
+    /// `RequestBody::SessionInit`;超时用 host 侧 per-op 表的 SESSION_INIT 档
+    /// (300s,冷加载 ViT-L + DirectML 编译内核上界,D3 §2)。
+    /// 超时/断开走 [`Self::run_request`] 的 kill 回收,session 随实例清零(§4⑤)。
+    pub fn init_session(
+        &mut self,
+        req: &RequestBody,
+        timeout: Duration,
+        cancelled: &dyn Fn() -> bool,
+    ) -> RawOutcome {
+        let RequestBody::SessionInit {
+            session_id,
+            model_profile,
+            ..
+        } = req
+        else {
+            // host 调用错误(非 worker 过错):不发帧、不 kill,仅回诊断。
+            return RawOutcome::Protocol("init_session 需要 SessionInit 请求体".into());
+        };
+        let (session_id, model_profile) = (*session_id, model_profile.clone());
+
+        let outcome = self.run_request(req, timeout, cancelled);
+        if let RawOutcome::Success { body, .. } = &outcome {
+            match &body.session {
+                Some(ready) => {
+                    self.session = Some(SessionDescriptor {
+                        session_id,
+                        arch_id: model_profile.arch_id,
+                        image_file: model_profile.image_file,
+                        face_profile_id: model_profile.face_profile_id,
+                        embed_dim: ready.embed_dim,
+                        face_embed_dim: ready.face_embed_dim,
+                        caps: ready.caps.clone(),
+                        provider: ready.provider.clone(),
+                        gpu_name: ready.gpu_name.clone(),
+                    });
+                }
+                None => {
+                    // SessionReady 就是 SessionInit 的 Success(D3 §2);缺应答体即协议违例。
+                    warn!("SessionInit Success 缺 session 应答体 → kill 回收");
+                    self.kill_and_reap();
+                    return RawOutcome::Protocol("SessionInit Success 缺 session 应答体".into());
+                }
+            }
+        }
+        outcome
+    }
+
+    /// 发送 SessionClose 显式卸载(host 主导生命周期:空闲计时到期/切换模型前,D3 §4④)。
+    /// 幂等:无在载会话时不发帧、直接回成功语义;无论结果如何 host 侧快照即刻清空
+    /// (失败路径 run_request 已 kill,worker 端会话随进程消亡)。
+    pub fn close_session(&mut self, timeout: Duration, cancelled: &dyn Fn() -> bool) -> RawOutcome {
+        let Some(desc) = self.session.take() else {
+            return RawOutcome::Success {
+                body: SuccessBody::default(),
+                blob: Vec::new(),
+            };
+        };
+        self.run_request(
+            &RequestBody::SessionClose {
+                session_id: desc.session_id,
+            },
+            timeout,
+            cancelled,
+        )
     }
 
     /// 跑一个缩略图任务。超时/断开/协议违例时 `kill → wait` 并标死亡（不再复用本实例）。
@@ -153,6 +276,7 @@ impl WorkerSupervisor {
     }
 
     /// kill → wait → join 读取线程；标实例死亡。幂等。
+    /// 会话快照随实例清零(D3 §4⑤:重建后首个动作必然是重 Init,天然正确)。
     fn kill_and_reap(&mut self) {
         if !self.alive {
             return;
@@ -160,6 +284,7 @@ impl WorkerSupervisor {
         let _ = self.child.kill();
         let _ = self.child.wait();
         self.alive = false;
+        self.session = None;
         self.join_threads();
     }
 
@@ -227,6 +352,16 @@ fn outcome_label(o: &TaskOutcome) -> &'static str {
         TaskOutcome::TimedOut => "timeout",
         TaskOutcome::Disconnected => "disconnected",
         TaskOutcome::Protocol(_) => "protocol_violation",
+    }
+}
+
+fn raw_outcome_label(o: &RawOutcome) -> &'static str {
+    match o {
+        RawOutcome::Success { .. } => "success",
+        RawOutcome::Failure(_) => "failure",
+        RawOutcome::TimedOut => "timeout",
+        RawOutcome::Disconnected => "disconnected",
+        RawOutcome::Protocol(_) => "protocol_violation",
     }
 }
 
@@ -392,6 +527,7 @@ mod tests {
             stderr_handle: Some(std::thread::spawn(|| {})),
             alive,
             worker_version: "0.0-test".into(),
+            session: None,
         };
         (
             sup,
@@ -493,8 +629,8 @@ mod tests {
         // Host 校验(worker.rs 单测已覆盖协议侧),此处以 Failure 锁 supervisor 的保活语义。
         let (mut sup, parts) = make_sup(true, never_exits());
         let body = FailureBody {
-            item_id: 7,
-            input_fingerprint: "fp".into(),
+            item_id: Some(7),
+            input_fingerprint: Some("fp".into()),
             code: WorkerErrorCode::MalformedInput,
             retryable: false,
             message: "synthetic".into(),
@@ -639,8 +775,8 @@ mod tests {
         );
         assert_eq!(
             outcome_label(&TaskOutcome::Failure(FailureBody {
-                item_id: 1,
-                input_fingerprint: "f".into(),
+                item_id: Some(1),
+                input_fingerprint: Some("f".into()),
                 code: WorkerErrorCode::IoError,
                 retryable: true,
                 message: String::new(),
@@ -652,6 +788,167 @@ mod tests {
         assert_eq!(
             outcome_label(&TaskOutcome::Protocol(String::new())),
             "protocol_violation"
+        );
+    }
+
+    // ── T15 会话生命周期(D3 §4②⑤ + §5 T_t:SessionInit 超时→kill→session 清零)────────
+
+    use exotic_protocol::{
+        ModelDescriptor, ModelHandle, ModelProfileSnapshot, ModelRole, SessionReadyBody,
+        SuccessBody,
+    };
+
+    fn session_init_req(session_id: u64) -> RequestBody {
+        RequestBody::SessionInit {
+            session_id,
+            models: vec![ModelDescriptor {
+                role: ModelRole::ImageEncoder,
+                handle: ModelHandle::Path("C:/models/img.onnx".into()),
+                len: 3,
+                sha256: "ab".repeat(32),
+            }],
+            model_profile: ModelProfileSnapshot {
+                arch_id: "cn-clip-vit-b16".into(),
+                image_file: "img.onnx".into(),
+                text_file: "txt.onnx".into(),
+                batch_size: 16,
+                face_profile_id: Some("yunet-sface".into()),
+            },
+            models_root: "C:/models".into(),
+            ai_cache_dir: "C:/cache/ai".into(),
+            image_provider: "cpu".into(),
+        }
+    }
+
+    fn session_ready_success(request_id: u64) -> Frame {
+        let body = SuccessBody {
+            session: Some(SessionReadyBody {
+                embed_dim: 512,
+                face_embed_dim: Some(128),
+                caps: vec!["embedding".into(), "face_detect_embed".into()],
+                provider: Some("directml".into()),
+                gpu_name: Some("Mock GPU".into()),
+            }),
+            ..Default::default()
+        };
+        Frame::control(FrameType::Success, request_id, &body).unwrap()
+    }
+
+    #[test]
+    fn init_session_success_stores_descriptor() {
+        let (mut sup, parts) = make_sup(true, never_exits());
+        parts.tx.send(Ok(session_ready_success(1))).unwrap();
+        let out = sup.init_session(&session_init_req(7), Duration::from_secs(1), &|| false);
+        assert!(matches!(out, RawOutcome::Success { .. }));
+        let desc = sup.session().expect("成功后应记录会话快照");
+        assert_eq!(desc.session_id, 7);
+        assert_eq!(desc.arch_id, "cn-clip-vit-b16");
+        assert_eq!(desc.embed_dim, 512);
+        assert_eq!(desc.face_embed_dim, Some(128));
+        assert_eq!(desc.face_profile_id.as_deref(), Some("yunet-sface"));
+        assert!(sup.is_alive());
+        assert_eq!(parts.kills.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn init_session_failure_keeps_alive_without_session() {
+        let (mut sup, parts) = make_sup(true, never_exits());
+        let fail = FailureBody {
+            item_id: None,
+            input_fingerprint: None,
+            code: WorkerErrorCode::ModelLoadFailed,
+            retryable: false,
+            message: "sha 不符".into(),
+        };
+        parts
+            .tx
+            .send(Ok(Frame::control(FrameType::Failure, 1, &fail).unwrap()))
+            .unwrap();
+        let out = sup.init_session(&session_init_req(7), Duration::from_secs(1), &|| false);
+        assert!(matches!(out, RawOutcome::Failure(_)));
+        assert!(sup.session().is_none(), "失败不得记录会话");
+        assert!(sup.is_alive(), "数据类失败不杀进程");
+        assert_eq!(parts.kills.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn init_session_timeout_kills_and_clears_session() {
+        // D3 §5 T_t 链路的 supervisor 半边:SessionInit 超时 → kill_and_reap → session 清零。
+        // (池层重建 + 重 Init 由 T17 派发器驱动,重建后 session=None 天然成立。)
+        let (mut sup, parts) = make_sup(true, never_exits());
+        let out = sup.init_session(&session_init_req(7), Duration::from_millis(50), &|| false);
+        assert!(matches!(out, RawOutcome::TimedOut));
+        assert!(!sup.is_alive());
+        assert!(sup.session().is_none());
+        assert_eq!(parts.kills.load(Ordering::SeqCst), 1);
+        drop(parts.tx); // 显式:发送端存活至此,超时非 EOF 所致
+    }
+
+    #[test]
+    fn init_session_success_without_ready_body_is_protocol_kill() {
+        let (mut sup, parts) = make_sup(true, never_exits());
+        // Success 但缺 session 应答体 → 协议违例,kill 回收。
+        parts
+            .tx
+            .send(Ok(Frame::control(
+                FrameType::Success,
+                1,
+                &SuccessBody::default(),
+            )
+            .unwrap()))
+            .unwrap();
+        let out = sup.init_session(&session_init_req(7), Duration::from_secs(1), &|| false);
+        assert!(matches!(out, RawOutcome::Protocol(_)));
+        assert!(!sup.is_alive());
+        assert!(sup.session().is_none());
+        assert_eq!(parts.kills.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn init_session_rejects_non_session_request_without_side_effects() {
+        let (mut sup, parts) = make_sup(true, never_exits());
+        let out = sup.init_session(&thumb_req(), Duration::from_secs(1), &|| false);
+        assert!(matches!(out, RawOutcome::Protocol(_)));
+        assert!(sup.is_alive(), "host 调用错误不得殃及 worker");
+        assert!(parts.written.lock().unwrap().is_empty(), "不得发出任何帧");
+    }
+
+    #[test]
+    fn close_session_idempotent_and_clears_descriptor() {
+        // 无会话:幂等成功、零帧。
+        let (mut sup, parts) = make_sup(true, never_exits());
+        let out = sup.close_session(Duration::from_secs(1), &|| false);
+        assert!(matches!(out, RawOutcome::Success { .. }));
+        assert!(parts.written.lock().unwrap().is_empty());
+
+        // 有会话:发 SessionClose(request_id=1),Success 后快照清空、实例保活。
+        parts
+            .tx
+            .send(Ok(Frame::control(
+                FrameType::Success,
+                1,
+                &SuccessBody::default(),
+            )
+            .unwrap()))
+            .unwrap();
+        sup.session = Some(SessionDescriptor {
+            session_id: 9,
+            arch_id: "cn-clip-vit-b16".into(),
+            image_file: "img.onnx".into(),
+            face_profile_id: None,
+            embed_dim: 512,
+            face_embed_dim: None,
+            caps: vec!["embedding".into()],
+            provider: None,
+            gpu_name: None,
+        });
+        let out = sup.close_session(Duration::from_secs(1), &|| false);
+        assert!(matches!(out, RawOutcome::Success { .. }));
+        assert!(sup.session().is_none());
+        assert!(sup.is_alive());
+        assert!(
+            !parts.written.lock().unwrap().is_empty(),
+            "应已发送 SessionClose 帧"
         );
     }
 

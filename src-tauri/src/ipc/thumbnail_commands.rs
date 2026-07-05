@@ -104,7 +104,7 @@ pub async fn batch_request_thumbnails(
     // 最新的 thumb_status（避免先前生成后仍返回陈旧的 status=0）。
     if !fast_results.is_empty() {
         let fast_vec: Vec<ThumbResult> = fast_results.values().cloned().collect();
-        crate::layout::cache::apply_thumb_results(&state.layout_cache, &fast_vec);
+        state.apply_thumb_results(&fast_vec);
     }
 
     // ── 冷门格式让路（R3）：needs_gen 中命中未完成 Exotic 的项不进主 generator ──────────
@@ -365,7 +365,7 @@ pub async fn batch_request_thumbnails(
                     }
                     // Sync results into layout_cache so fetchRowsByY returns fresh data
                     // 同步结果到 layout_cache，使 fetchRowsByY 返回最新数据
-                    crate::layout::cache::apply_thumb_results(&state_arc.layout_cache, &results);
+                    state_arc.apply_thumb_results(&results);
                 }
                 info!("batch_request_thumbnails: finished parallel block | 批量请求生成完成 (Rayon Scheme 1)");
                 return;
@@ -375,6 +375,9 @@ pub async fn batch_request_thumbnails(
             let (decode_tx, decode_rx) = bounded(1024);
             let (encode_tx, encode_rx) = bounded(1024);
             let (result_tx, result_rx) = bounded(needs_gen.len().max(1024));
+            // T12(§3.5.1):deferred CPU 专用通道——CPU 密集回退绝不在 decode worker 上
+            // inline 跑(会占住 decode 线程、反让 GPU 提交空等),转投下方独立小池消化。
+            let (deferred_tx, deferred_rx) = bounded(1024);
 
             let needs_gen_clone = needs_gen.clone();
             let state_dispatcher = state_arc.clone();
@@ -428,6 +431,7 @@ pub async fn batch_request_thumbnails(
                 let rx = decode_rx.clone();
                 let tx = encode_tx.clone();
                 let res_tx = result_tx.clone();
+                let def_tx = deferred_tx.clone();
                 let cfg = config_decode.clone();
                 let state_worker = state_arc.clone();
                 std::thread::spawn(move || {
@@ -440,16 +444,13 @@ pub async fn batch_request_thumbnails(
                                 let _ = tx.send((item_id, cache_key, decoded));
                             }
                             Ok(DecodeResult::DeferredToCpu { item, abs_path }) => {
-                                // Fallback to CPU inline because we don't have deferred_tx in Scheme 2 batch request yet
-                                // Wait, to implement proper deferral in batch_request, we can just spawn CPU tasks.
-                                // Actually for batch_request_thumbnails it's okay to just process inline if we really want,
-                                // but for simplicity and correctness, let's process inline here since it's Scheme 2.
-                                match process_deferred_cpu(&item, &abs_path, &state_worker.engine_arena, &cfg) {
-                                    Ok(res) => { let _ = res_tx.send(res); }
-                                    Err(e) => {
-                                        error!("Deferred CPU Decode failed for id={}: {}", item.id, e);
-                                        let _ = res_tx.send(ThumbResult { item_id: item.id, thumb_status: 2, thumb_path: None, thumbhash: None });
-                                    }
+                                // T12(§3.5.1):不再 inline——CPU 密集回退会占住本 decode worker、
+                                // 反让 GPU decode 空等;转投专用 deferred 小池。通道已关(池退出)
+                                // 时兜底发失败结果,保持「每 id 恰一结果」不变量(问题9)。
+                                if let Err(e) = def_tx.send((item, abs_path)) {
+                                    let (item, _abs) = e.into_inner();
+                                    error!("Deferred channel closed for id={} | deferred 通道已关", item.id);
+                                    let _ = res_tx.send(ThumbResult { item_id: item.id, thumb_status: 2, thumb_path: None, thumbhash: None });
                                 }
                             }
                             Err(e) => {
@@ -461,6 +462,39 @@ pub async fn batch_request_thumbnails(
                 });
             }
             drop(encode_tx);
+            // 主句柄仅供 decode worker 克隆;此处即弃——decode 阶段全部退出后 deferred 池
+            // 随通道关闭收尾(否则其 result_tx 克隆悬活,result_rx 永不结束、invoke 不返回)。
+            drop(deferred_tx);
+
+            // T12(§3.5.1)deferred CPU 专用小池:与 decode/encode 阶段解耦。池宽 max(1, cores/2)
+            // ——CPU 密集解码本就吃核,池小不损吞吐,却保证 decode 通道永不被 CPU 回退占住。
+            let deferred_threads = (cpu_cores / 2).max(1);
+            let config_deferred = config.clone();
+            for _ in 0..deferred_threads {
+                let rx = deferred_rx.clone();
+                let res_tx = result_tx.clone();
+                let cfg = config_deferred.clone();
+                let state_worker = state_arc.clone();
+                std::thread::spawn(move || {
+                    while let Ok((item, abs_path)) = rx.recv() {
+                        match process_deferred_cpu(&item, &abs_path, &state_worker.engine_arena, &cfg)
+                        {
+                            Ok(res) => {
+                                let _ = res_tx.send(res);
+                            }
+                            Err(e) => {
+                                error!("Deferred CPU Decode failed for id={}: {}", item.id, e);
+                                let _ = res_tx.send(ThumbResult {
+                                    item_id: item.id,
+                                    thumb_status: 2,
+                                    thumb_path: None,
+                                    thumbhash: None,
+                                });
+                            }
+                        }
+                    }
+                });
+            }
 
             let config_encode = config.clone();
             for _ in 0..cpu_cores {
@@ -506,7 +540,7 @@ pub async fn batch_request_thumbnails(
                 }
                 // Sync results into layout_cache so fetchRowsByY returns fresh data
                 // 同步结果到 layout_cache，使 fetchRowsByY 返回最新数据
-                crate::layout::cache::apply_thumb_results(&state_arc.layout_cache, &results);
+                state_arc.apply_thumb_results(&results);
             }
 
             info!("batch_request_thumbnails: finished pipeline | 批量请求生成完成 (Pipeline Scheme 2)");
@@ -686,10 +720,7 @@ pub async fn start_full_thumbnail_generation(
                 }
 
                 if !successful_results.is_empty() {
-                    crate::layout::cache::apply_thumb_results(
-                        &state_arc.layout_cache,
-                        &successful_results,
-                    );
+                    state_arc.apply_thumb_results(&successful_results);
                 }
 
                 let current_gen = generated_count.load(std::sync::atomic::Ordering::Relaxed);
@@ -917,10 +948,7 @@ pub async fn start_full_thumbnail_generation(
                         }
                     }
 
-                    crate::layout::cache::apply_thumb_results(
-                        &state_arc.layout_cache,
-                        &successful_results,
-                    );
+                    state_arc.apply_thumb_results(&successful_results);
                     successful_results.clear();
                 }
             }
@@ -941,10 +969,7 @@ pub async fn start_full_thumbnail_generation(
                         let _ = tx.commit();
                     }
                 }
-                crate::layout::cache::apply_thumb_results(
-                    &state_arc.layout_cache,
-                    &successful_results,
-                );
+                state_arc.apply_thumb_results(&successful_results);
             }
 
             // Phase 2: CPU processing for deferred items

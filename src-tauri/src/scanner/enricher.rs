@@ -104,6 +104,16 @@ impl EnrichmentCompletedPayload {
 /// 此函数旨在从 `tokio::task::spawn_blocking` 调用
 /// so the async runtime isn't blocked.
 /// 因此异步运行时不会被阻塞。
+/// S1：enrichment 批提交后 bump 数据版本——尺寸回写与 EXIF 时间修正改变布局的几何与
+/// 顺序输入，items 取数缓存必须失效。经 AppHandle 取 AppState（测试无 managed state 时
+/// 静默跳过，行为即「无缓存可失效」）。
+fn bump_layout_data_version(app: &AppHandle) {
+    use tauri::Manager;
+    if let Some(state) = app.try_state::<std::sync::Arc<crate::state::AppState>>() {
+        state.bump_data_version();
+    }
+}
+
 pub fn run_enrichment(
     app: &AppHandle,
     writer: &Mutex<Connection>,
@@ -315,6 +325,8 @@ pub fn run_enrichment(
 
             tx.commit()?;
         }
+        // S1：本批尺寸/EXIF 时间已提交（几何与顺序输入变化）→ bump。
+        bump_layout_data_version(app);
 
         enriched_total += parsed.len() as i64;
         debug!("Enrichment batch done: {enriched_total}/{total}");
@@ -472,6 +484,8 @@ fn enrich_videos(
             }
             tx.commit()?;
         }
+        // S1：视频真实宽高已回填（几何输入变化）→ bump。
+        bump_layout_data_version(app);
 
         done_total += probed.len() as i64;
         // Nudge the gallery to recompute (corrected aspect ratios). Reuses the enrichment event.
@@ -576,6 +590,8 @@ fn enrich_audios(
             }
             tx.commit()?;
         }
+        // S1：音频时长已回填（duration 徽标随布局行下发）→ bump。
+        bump_layout_data_version(app);
 
         done_total += probed.len() as i64;
         let _ = app.emit(

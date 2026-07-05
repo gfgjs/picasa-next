@@ -68,6 +68,8 @@ pub struct StartupConfig {
     pub show_thumb_info: Option<String>,
     pub thumb_info_elements: Option<String>,
     pub hover_autoplay: Option<String>,
+    // T16 方案B(2026-07-04):bucket 分段虚拟滚动开关(B1)→ 共 15 键。
+    pub bucket_segmented_scroll: Option<String>,
     pub first_launch: Option<String>,
 }
 
@@ -90,6 +92,7 @@ pub async fn get_startup_config(state: State<'_, Arc<AppState>>) -> Result<Start
             show_thumb_info: get_config(&pool, "show_thumb_info")?,
             thumb_info_elements: get_config(&pool, "thumb_info_elements")?,
             hover_autoplay: get_config(&pool, "hover_autoplay")?,
+            bucket_segmented_scroll: get_config(&pool, "bucket_segmented_scroll")?,
             first_launch: get_config(&pool, "first_launch")?,
         })
     })

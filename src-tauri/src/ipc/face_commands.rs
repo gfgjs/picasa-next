@@ -2,15 +2,11 @@
 //! IPC commands for face-recognition pipeline management (F5).
 //! 人脸识别流水线管理的 IPC 命令（F5）。
 //!
-//! Mirrors `ai_commands` (start/pause/stop/restart/status) but for the face pipeline. Engine
-//! bring-up is shared: `ensure_engine_initialised` loads CLIP AND face sessions together (F1),
-//! so there's no separate face-engine init here. CLIP and face share ONE GPU-analysis slot
-//! (`AppState::gpu_analysis_owner`) and are mutually exclusive — these commands claim/release it
-//! the same way the CLIP commands do.
-//! 仿 `ai_commands`（开始/暂停/停止/重启/状态），但面向人脸流水线。引擎启动共享：
-//! `ensure_engine_initialised` 一并加载 CLIP 与人脸 session（F1），故此处无独立人脸引擎初始化。
-//! CLIP 与人脸共用唯一 GPU 分析槽（`AppState::gpu_analysis_owner`）且互斥——这些命令以与 CLIP
-//! 命令相同的方式占用/释放它。
+//! Mirrors `ai_commands` (start/pause/stop/restart/status) but for the face pipeline.
+//! 仿 `ai_commands`(开始/暂停/停止/重启/状态),但面向人脸流水线。模型加载发生在
+//! ai-worker 的 SessionInit(T16:host 无进程内引擎);就绪判定 = 配置启用 + 激活轨
+//! 双 onnx 在盘。CLIP 与人脸共用唯一 GPU 分析槽(`AppState::gpu_analysis_owner`)且
+//! 互斥——这些命令以与 CLIP 命令相同的方式占用/释放它。
 
 use std::sync::Arc;
 
@@ -29,11 +25,9 @@ use crate::db::queries::{
     count_processed_face_items, count_total_ai_items, create_person_from_faces, get_config,
     get_faces_for_item, list_likely_matches, list_persons, merge_persons, reassign_face_to_person,
     reject_face_candidate, rename_person, reset_face_data, set_config, set_person_hidden,
-    unassign_face,
+    sync_face_status_for_model, unassign_face,
 };
-use crate::ipc::ai_commands::{
-    download_assets, ensure_engine_initialised, models_dir, DownloadProgress,
-};
+use crate::ipc::ai_commands::{download_assets, models_dir, DownloadProgress};
 use crate::state::{AppState, GPU_OWNER_FACE};
 
 /// Both onnx files of a face track present on disk (single-file models, no shared vocab/extra
@@ -56,15 +50,12 @@ fn active_face_model_id(state: &AppState) -> String {
         .unwrap_or_else(|| DEFAULT_FACE_PROFILE_ID.to_string())
 }
 
-/// Whether both face sessions (detector + embedder) are currently loaded.
-/// 人脸双 session（检测器 + 嵌入器）当前是否均已加载。
+/// 人脸能力就绪判定:配置启用 + 激活轨双 onnx 在盘(T16:与 worker SessionInit
+/// 「会加载」的判定同源——active_face_profile 含 face_enabled 门;真正的模型加载
+/// 发生在 worker 端,host 不触引擎)。
 fn face_loaded(state: &AppState) -> bool {
-    state
-        .ai_engine
-        .read()
-        .unwrap()
-        .as_ref()
-        .map(|e| e.face_ready())
+    crate::ipc::ai_commands::active_face_profile(state)
+        .map(|p| face_variant_installed(&models_dir(state), &p.detect_file, &p.embed_file))
         .unwrap_or(false)
 }
 
@@ -93,7 +84,7 @@ pub async fn get_face_status(
         let total_items = count_total_ai_items(&conn).unwrap_or(0);
         let processed_items = count_processed_face_items(&conn).unwrap_or(0);
         let pending_items = count_pending_face_items(&conn).unwrap_or(0);
-        let person_count = count_persons(&conn).unwrap_or(0);
+        let person_count = count_persons(&conn, &model_id).unwrap_or(0);
         let face_count = count_faces_for_model(&conn, &model_id).unwrap_or(0);
 
         let face_loaded = face_loaded(&state);
@@ -162,19 +153,20 @@ pub async fn start_face_analysis(
 ) -> std::result::Result<(), String> {
     let state_arc = Arc::clone(&state);
 
+    // 就绪检查(在盘状态判定)含 DB 读,收进 blocking(rusqlite 硬化;模型加载在 worker SessionInit)。
     tokio::task::spawn_blocking({
         let s = Arc::clone(&state_arc);
-        move || ensure_engine_initialised(&s)
+        move || -> std::result::Result<(), String> {
+            // Face models may be disabled (face_enabled=0) or not downloaded.
+            // 人脸模型可能被禁用(face_enabled=0)或未下载(worker 后端按在盘状态判定)。
+            if !face_loaded(&s) {
+                return Err("人脸模型未启用或未下载".to_string());
+            }
+            Ok(())
+        }
     })
     .await
-    .map_err(|e| e.to_string())?
-    .map_err(|e| e.to_string())?;
-
-    // Face models may be disabled (face_enabled=0) or not downloaded → engine skips loading them.
-    // 人脸模型可能被禁用（face_enabled=0）或未下载 → 引擎跳过加载。
-    if !face_loaded(&state_arc) {
-        return Err("人脸模型未启用或未下载".to_string());
-    }
+    .map_err(|e| e.to_string())??;
 
     // F5 mutual exclusion: claim the shared GPU-analysis slot (fails fast if CLIP holds it).
     // F5 互斥：占用共享 GPU 分析槽（若 CLIP 持有则快速失败）。
@@ -195,28 +187,30 @@ pub async fn start_face_analysis(
     Ok(())
 }
 
-/// Restart face analysis from scratch: wipe ALL faces + persons (face_status → 0) then run.
-/// WARNING destroys user labor (named persons, confirmed assignments) — the frontend confirm
-/// dialog must say so.
-/// 从零重新开始人脸分析：清空所有人脸 + 人物（face_status → 0）后运行。警告会销毁用户劳动
-/// （已命名人物、确认指派）——前端确认框须明示。
+/// Restart face analysis from scratch: wipe the ACTIVE model's faces + persons (face_status → 0)
+/// then run — other models' rosters survive (Part4-T6 isolation). WARNING destroys THIS model's
+/// user labor (named persons, confirmed assignments) — the frontend confirm dialog must say so.
+/// 从零重新开始人脸分析:清空**当前激活模型**的人脸 + 人物(face_status → 0)后运行——其他
+/// 模型名册保留(Part4-T6 隔离)。警告会销毁本模型的用户劳动(已命名人物、确认指派)——
+/// 前端确认框须明示。
 #[tauri::command]
 pub async fn restart_face_analysis(
     state: State<'_, Arc<AppState>>,
 ) -> std::result::Result<(), String> {
     let state_arc = Arc::clone(&state);
 
+    // 同 start:就绪检查随 DB 读收进 blocking。
     tokio::task::spawn_blocking({
         let s = Arc::clone(&state_arc);
-        move || ensure_engine_initialised(&s)
+        move || -> std::result::Result<(), String> {
+            if !face_loaded(&s) {
+                return Err("人脸模型未启用或未下载".to_string());
+            }
+            Ok(())
+        }
     })
     .await
-    .map_err(|e| e.to_string())?
-    .map_err(|e| e.to_string())?;
-
-    if !face_loaded(&state_arc) {
-        return Err("人脸模型未启用或未下载".to_string());
-    }
+    .map_err(|e| e.to_string())??;
 
     // Claim BEFORE the destructive reset (so a rejection doesn't wipe faces). Release on reset
     // failure to avoid leaking the slot.
@@ -300,8 +294,10 @@ pub async fn list_face_persons(
 ) -> std::result::Result<Vec<PersonSummary>, String> {
     let state = Arc::clone(&state);
     tokio::task::spawn_blocking(move || -> std::result::Result<Vec<PersonSummary>, String> {
+        // 人物墙只呈现当前激活模型的名册(Part4-T6 隔离;旧轨名册保留但不混显)。
+        let model_id = active_face_model_id(&state);
         let conn = state.db_read_pool.get().map_err(|e| e.to_string())?;
-        list_persons(&conn).map_err(|e| e.to_string())
+        list_persons(&conn, &model_id).map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -362,7 +358,10 @@ pub async fn merge_face_persons(
     write_blocking_str(&state, move |c| {
         merge_persons(c, &src_ids, dst_id).map_err(|e| e.to_string())
     })
-    .await
+    .await?;
+    // S1：人物归属变化改变 personId 视图成员 → bump。
+    state.bump_data_version();
+    Ok(())
 }
 
 /// Full re-clustering: rebuild person clusters from scratch to fix incremental fragmentation
@@ -391,6 +390,8 @@ pub async fn recluster_faces(state: State<'_, Arc<AppState>>) -> std::result::Re
         // 与增量聚类同源:阈值取「运行期 override 或 profile 默认」(同一组 config 键,保持一致)。
         let (threshold, min_quality) = crate::ai::face_cluster::effective_thresholds(&state, &prof);
         crate::ai::face_cluster::recluster_all(&state, &model_id, threshold, min_quality);
+        // S1：全量重聚类重排人物归属 → bump。
+        state.bump_data_version();
         info!(
             "Face re-clustering done | 人脸重新聚类完成 (model={})",
             model_id
@@ -433,7 +434,10 @@ pub async fn reassign_faces(
     write_blocking_str(&state, move |c| {
         reassign_face_to_person(c, &face_ids, person_id).map_err(|e| e.to_string())
     })
-    .await
+    .await?;
+    // S1：personId 视图成员变化 → bump。
+    state.bump_data_version();
+    Ok(())
 }
 
 /// Unassign `faceIds` (误检/归错): clears person_id AND is_confirmed; recomputes source persons.
@@ -446,7 +450,10 @@ pub async fn unassign_faces(
     write_blocking_str(&state, move |c| {
         unassign_face(c, &face_ids).map_err(|e| e.to_string())
     })
-    .await
+    .await?;
+    // S1：personId 视图成员变化 → bump。
+    state.bump_data_version();
+    Ok(())
 }
 
 /// Reject `faceIds` as NOT `personId`: records negative samples + removes them from that person
@@ -461,7 +468,10 @@ pub async fn reject_faces(
     write_blocking_str(&state, move |c| {
         reject_face_candidate(c, &face_ids, person_id).map_err(|e| e.to_string())
     })
-    .await
+    .await?;
+    // S1：personId 视图成员变化 → bump。
+    state.bump_data_version();
+    Ok(())
 }
 
 /// Create a new person from `faceIds` (one-tap "make a person"), optional `name`. Returns the new
@@ -473,10 +483,13 @@ pub async fn create_person(
     name: Option<String>,
     state: State<'_, Arc<AppState>>,
 ) -> std::result::Result<i64, String> {
-    write_blocking_str(&state, move |c| {
+    let pid = write_blocking_str(&state, move |c| {
         create_person_from_faces(c, &face_ids, name.as_deref()).map_err(|e| e.to_string())
     })
-    .await
+    .await?;
+    // S1：personId 视图成员变化 → bump。
+    state.bump_data_version();
+    Ok(pid)
 }
 
 /// List likely-match groups for the batch-approval UI: unconfirmed faces grouped by candidate
@@ -503,27 +516,19 @@ pub async fn list_likely_face_matches(
 // ── Face model registry (F7, read-only) ─────────────────────────────────────
 // ── 人脸模型库（F7，只读）──────────────────────────────────────────────────────
 
-/// List the built-in face-model tracks with on-disk install status (F7, READ-ONLY).
+/// List the built-in face-model tracks with on-disk install status (F7).
 ///
-/// Display-only: there is NO download command and NO active-track switch yet. Downloading needs
-/// verified URLs+sha256+sizes and human license confirmation (the SCRFD/ArcFace track is
-/// non-commercial — `commercialOk=false`); switching tracks changes embed_dim (128↔512) which
-/// invalidates all stored face vectors and `persons` has no per-model column — both deferred.
+/// Downloading goes through `download_face_model` (verified-manifest tracks only); switching goes
+/// through the GATED `set_active_face_model` (Part4-T6) — only `verified` (cross-checked) tracks
+/// can be activated, so the SCRFD/ArcFace track (`detect_scrfd` UNVERIFIED) stays inert even when
+/// `installed=true`. `installed` is honest disk status, not "ready to use". Per-track rosters are
+/// isolated by `persons.model_name`, so switching never destroys the other track's labeling.
 ///
-/// IMPORTANT — the optional track has NO activation path yet. `face_model_active` is seeded to
-/// `yunet-sface` and never written (switch command deferred), so the engine only ever loads the
-/// default track and `detect_scrfd` is unreachable. Placing SCRFD/ArcFace onnx files makes
-/// `installed=true` here but does NOT enable them — activation awaits a gated
-/// `set_active_face_model` (+ InsightFace cross-check). `installed` is honest disk status, not
-/// "ready to use".
-///
-/// 列出内置人脸模型轨 + 磁盘安装状态（F7，**只读**）。仅供展示：尚无下载命令、无激活轨切换。
-/// 下载需已校验 URL+sha256+大小 + 人工确认许可（SCRFD/ArcFace 轨非商用，`commercialOk=false`）；
-/// 切换轨会改 embed_dim（128↔512）使所有已存人脸向量失效，且 `persons` 无按模型列——均推迟。
-/// **要害**：可选轨当前**无激活路径**。`face_model_active` 播种为 `yunet-sface` 且从不被写入
-/// （切换命令推迟），故引擎永远只加载默认轨、`detect_scrfd` 不可达。放置 SCRFD/ArcFace onnx 会让
-/// 此处 `installed=true`，但**不会**启用它——激活待 gated `set_active_face_model`（+ InsightFace
-/// 对拍）。`installed` 是诚实的磁盘状态，不代表"可用"。
+/// 列出内置人脸模型轨 + 磁盘安装状态(F7)。下载走 `download_face_model`(仅有已校验清单的轨);
+/// 切换走 **gated** `set_active_face_model`(Part4-T6)——仅 `verified`(已对拍)轨可激活,故
+/// SCRFD/ArcFace 轨(`detect_scrfd` UNVERIFIED)即便 `installed=true` 也不会被启用。
+/// `installed` 是诚实的磁盘状态,不代表「可用」;各轨名册按 `persons.model_name` 隔离,
+/// 切换不销毁另一轨的标注。
 #[tauri::command]
 pub async fn list_face_model_registry(
     state: State<'_, Arc<AppState>>,
@@ -540,6 +545,7 @@ pub async fn list_face_model_registry(
                 FaceModelInfo {
                     active,
                     installed,
+                    verified: p.verified,
                     // 有已校验下载清单才可一键下载（默认轨）；SCRFD 轨清单为空 → 仅手动导入。
                     downloadable: !p.assets.is_empty(),
                     detector: format!("{:?}", p.detector),
@@ -560,16 +566,89 @@ pub async fn list_face_model_registry(
     .map_err(|e| e.to_string())?
 }
 
+/// Switch the active face-model track (Part4-T6 / §3.5.2 — the previously-deferred gated command).
+///
+/// Gates in order: ① profile must exist; ② `verified` cross-check gate — UNVERIFIED tracks
+/// (SCRFD/ArcFace: `detect_scrfd` never cross-checked against InsightFace) are refused, the
+/// anti-silent-garbage door; ③ both onnx files must be installed. Then, mirroring CLIP's
+/// `set_active_ai_model`: cancel the running face pipeline, persist `face_model_active`,
+/// re-point the global `face_status` at the new track's coverage, and drop the engine so the
+/// next bring-up loads the new track's sessions. Old track's faces/persons stay (roster
+/// isolation) — switching back is cheap.
+///
+/// 切换激活人脸模型轨(Part4-T6 / §3.5.2,此前推迟的 gated 命令)。门(按序):①profile 须存在;
+/// ②`verified` 对拍门——未对拍轨(SCRFD/ArcFace:`detect_scrfd` 从未与 InsightFace 对拍)
+/// 拒绝激活,防静默算错;③两个 onnx 均已安装。之后仿 CLIP `set_active_ai_model`:取消运行中
+/// 的人脸流水线、落库 `face_model_active`、把全局 `face_status` 重新指向新轨覆盖、丢弃引擎
+/// 使下次启动加载新轨 session(不 eager 重载:人脸流水线由用户显式启动,且避免 CLIP 模型缺失
+/// 时连累本命令)。旧轨 faces/persons 保留(名册隔离)——切回零成本。
+#[tauri::command]
+pub async fn set_active_face_model(
+    model_id: String,
+    state: State<'_, Arc<AppState>>,
+) -> std::result::Result<(), String> {
+    let state_arc = Arc::clone(&state);
+    tokio::task::spawn_blocking(move || -> std::result::Result<(), String> {
+        let prof =
+            find_face_profile(&model_id).ok_or_else(|| format!("未知人脸模型 {model_id}"))?;
+        if !prof.verified {
+            return Err(format!(
+                "「{}」尚未通过对拍验证(输出可能静默算错),暂不可激活",
+                prof.display_name
+            ));
+        }
+        let models = models_dir(&state_arc);
+        if !face_variant_installed(&models, &prof.detect_file, &prof.embed_file) {
+            return Err(format!(
+                "「{}」尚未安装,请先下载或导入其模型文件",
+                prof.display_name
+            ));
+        }
+        if active_face_model_id(&state_arc) == prof.id {
+            return Ok(()); // 幂等:已是激活轨。
+        }
+
+        // 停当前轨流水线并释放共享 GPU 槽(同 pause;新轨由用户显式再启动)。
+        state_arc.cancel_face_analysis();
+        state_arc.release_gpu_analysis(GPU_OWNER_FACE);
+
+        {
+            let conn = state_arc
+                .db_writer
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            set_config(&conn, "face_model_active", &prof.id).map_err(|e| e.to_string())?;
+        }
+        // face_status 是全局列(非按模型)→ 指向新轨的 faces 覆盖(分批,批间自行取锁)。
+        sync_face_status_for_model(&state_arc.db_writer, &prof.id).map_err(|e| e.to_string())?;
+
+        // 关闭 worker 在载会话:下次(启动分析/搜索)按新轨 SessionInit 重建。
+        state_arc
+            .ai_worker
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .close_session();
+
+        info!(
+            "Active face model switched to {} | 已切换人脸模型:{}",
+            prof.id, prof.id
+        );
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Download a face-model track's onnx files into the models dir (verified size+sha256, per-file
 /// resume, progress over `on_progress`). Reuses the CLIP download machinery (`download_assets`).
 /// Only tracks with a non-empty `assets` manifest are downloadable (the default YuNet+SFace
 /// track); the SCRFD/ArcFace track has no verified manifest (non-commercial) → Err, manual import
-/// only. NOTE downloading the optional track's files does NOT activate it — activation awaits the
-/// (deferred) `set_active_face_model` + InsightFace cross-check (see `list_face_model_registry`).
+/// only. NOTE downloading the optional track's files does NOT activate it — activation goes
+/// through the gated `set_active_face_model`, which refuses unverified tracks.
 /// 把某条人脸模型轨的 onnx 下载到 models 目录（size+sha256 校验、逐文件续传、`on_progress` 进度）。
 /// 复用 CLIP 下载机制（`download_assets`）。仅有已校验清单的轨可下载（默认 YuNet+SFace）；SCRFD/
-/// ArcFace 轨无已校验清单（非商用）→ 报错，仅手动导入。注意：下载可选轨文件**不会**启用它——启用
-/// 待（推迟的）`set_active_face_model` + InsightFace 对拍（见 `list_face_model_registry`）。
+/// ArcFace 轨无已校验清单(非商用)→ 报错,仅手动导入。注意:下载可选轨文件**不会**启用它——
+/// 启用走 gated `set_active_face_model`(未对拍轨拒绝激活,见 `list_face_model_registry`)。
 #[tauri::command]
 pub async fn download_face_model(
     profile_id: String,

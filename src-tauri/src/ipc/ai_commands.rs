@@ -6,13 +6,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use tauri::State;
-use tracing::{info, warn};
+use tracing::info;
 
-use crate::ai::engine::AiEnginePool;
 use crate::ai::pipeline::start_ai_pipeline;
 use crate::ai::profile::{self, ModelProfile};
 use crate::ai::remote_registry::{self, BatchKind};
-use crate::ai::search::semantic_search;
 use crate::db::models::AiStatusSummary;
 use crate::db::queries::{
     count_embeddings_for_model, count_total_ai_items, get_config, reset_ai_embeddings, set_config,
@@ -39,11 +37,44 @@ fn join_err(e: tokio::task::JoinError) -> AppError {
     AppError::Internal(format!("后台任务异常 | blocking task failed: {e}"))
 }
 
+/// `ai_backend` 配置退役(T16):行为恒 worker,读到遗留非 worker 值仅提示日志
+/// (保键忽略值,不做 schema 迁移;一个版本周期后随例行清理删键)。
+pub(crate) fn warn_legacy_ai_backend(state: &AppState) {
+    let legacy = state
+        .db_read_pool
+        .get()
+        .ok()
+        .and_then(|conn| get_config(&conn, "ai_backend").ok().flatten());
+    if let Some(v) = legacy {
+        if v != "worker" {
+            info!("配置 ai_backend={v} 已退役:推理恒经 ai-worker 子进程(T16),该值被忽略");
+        }
+    }
+}
+
+/// worker 会话的 provider/gpu_name 回声落库(T16):EP 探测只发生在 worker 侧,host 写回
+/// 既有 `ai_provider`/`ai_gpu_name` 键——status 命令读法零改动;无会话/旧帧保留旧值。
+pub(crate) fn persist_provider_echo(state: &AppState) {
+    let echo = {
+        let client = state.ai_worker.lock().unwrap_or_else(|p| p.into_inner());
+        client.session().and_then(|d| {
+            d.provider
+                .clone()
+                .map(|p| (p, d.gpu_name.clone().unwrap_or_default()))
+        })
+    };
+    if let Some((provider, gpu_name)) = echo {
+        let conn = state.db_writer.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = set_config(&conn, "ai_provider", &provider);
+        let _ = set_config(&conn, "ai_gpu_name", &gpu_name);
+    }
+}
+
 /// Resolve the currently-active model profile from config (`ai_active_model`), falling back
 /// to the default. The id is also the `ai_embeddings.model_name` key for this model's vectors.
 /// 从配置（`ai_active_model`）解析当前激活的模型 profile，缺省回退默认。该 id 同时是本模型
 /// 向量在 `ai_embeddings.model_name` 的键。
-fn active_profile(state: &AppState) -> ModelProfile {
+pub(crate) fn active_profile(state: &AppState) -> ModelProfile {
     // 现在「激活模型」由两段配置组成：`ai_active_model`=架构 id（= 向量空间主键），
     // `ai_active_image_file`=选中的图像 onnx 变体文件名（决定加载哪份图像塔，不改向量身份）。
     // image_file 缺省时由 resolve_profile 取该架构的 dyn/fp16 缺省变体。
@@ -71,7 +102,9 @@ fn active_profile(state: &AppState) -> ModelProfile {
 /// 从配置（`face_model_active`）解析当前激活的人脸模型 profile，缺省回退默认。人脸功能关闭
 /// （`face_enabled=0`）时返回 `None`，引擎完全跳过加载人脸 session（省加载时间/显存）。
 /// 该 id 同时是人脸向量在 `faces.model_name` 的键。
-fn active_face_profile(state: &AppState) -> Option<crate::ai::face_profile::FaceProfile> {
+pub(crate) fn active_face_profile(
+    state: &AppState,
+) -> Option<crate::ai::face_profile::FaceProfile> {
     use crate::ai::face_profile;
     let conn = state.db_read_pool.get().ok()?;
     if get_config(&conn, "face_enabled").ok().flatten().as_deref() == Some("0") {
@@ -123,110 +156,34 @@ fn variant_fixed_batch(image_file: &str) -> Option<u32> {
     }
 }
 
-/// Ensure the AI engine is initialised (lazy init on first call). Loads CLIP AND face sessions
-/// together (F1), so `face_commands` reuses this rather than duplicating engine bring-up.
-/// 确保 AI 引擎已初始化（首次调用时懒加载初始化）。CLIP 与人脸 session 一并加载（F1），
-/// 故 `face_commands` 复用此函数而非另写一套引擎启动。
-pub(crate) fn ensure_engine_initialised(state: &AppState) -> Result<()> {
-    // Fast path: already initialised
-    // 快速路径：已初始化
-    {
-        let guard = state.ai_engine.read().unwrap();
-        if guard.is_some() {
-            return Ok(());
-        }
-    }
-
-    // Slow path: initialise under write lock
-    // 慢速路径：在写锁下初始化
-    let mut guard = state.ai_engine.write().unwrap();
-    if guard.is_some() {
-        return Ok(()); // Race check | 竞争检查
-    }
-
-    // [方案 5 准备] 指定加载系统自带的 onnxruntime.dll，避免打包官方 DLL 导致体积膨胀。
-    // 若要测试方案 5，请在 Cargo.toml 中切换 ort 依赖，并取消下面这行代码的注释：
-    // std::env::set_var("ORT_DYLIB_PATH", "C:\\Windows\\System32\\onnxruntime.dll");
-
-    // Initialise ORT runtime once, lazily (avoids blocking Tauri setup() and the
-    // white-screen delay caused by loading the 160 MB onnxruntime.dll at startup).
-    // 惰性初始化 ORT runtime（避免在 Tauri setup() 中阻塞并导致白屏）。
-    let ort_init_res = ort::init().with_name("PicasaNext").commit();
-    info!("ORT initialization result: {:?}", ort_init_res);
-
-    let models = models_dir(state);
-    std::fs::create_dir_all(&models).map_err(AppError::Io)?;
-
-    info!("Initialising AI engine | 正在初始化 AI 引擎...");
-    let conn = state.db_read_pool.get()?;
-    // Active model is now profile-driven: file names, image_size, embed_dim, normalisation,
-    // tokenizer and the embeddings model_name key all come from the ModelProfile (profile.rs),
-    // so switching among cn-clip sizes (and later other families) is data, not code.
-    // 当前模型改为 profile 驱动：文件名、image_size、embed_dim、归一化、分词器、嵌入向量
-    // model_name 键全部来自 ModelProfile（profile.rs），使在 cn-clip 各尺寸（及将来其它家族）
-    // 间切换变成换数据而非改代码。
-    let prof = active_profile(state);
-    let provider_override = get_config(&conn, "ai_provider_override")
-        .unwrap_or(None)
-        .unwrap_or_else(|| "auto".to_string());
-    drop(conn);
-
-    info!(
-        "Active AI model | 当前 AI 模型: {} ({})",
-        prof.id, prof.display_name
-    );
-    // 同时解析激活的人脸模型（F1：随 CLIP 引擎一并加载人脸 session 插槽；模型未下载则降级 None）。
-    let face_prof = active_face_profile(state);
-    let mut pool = AiEnginePool::init(&models, &prof, face_prof.as_ref(), &provider_override)?;
-
-    // Load tokenizer eagerly and cache it in the pool (profile decides which vocab/spec).
-    // Avoids reloading it on every semantic_search_cmd call.
-    // 立即加载分词器并缓存到池中（由 profile 决定词表/规格），避免每次搜索都重载。
-    match crate::ai::clip::ClipTokenizer::from_profile(&models, &prof) {
-        Ok(tokenizer) => {
-            pool.clip_tokenizer = Some(tokenizer);
-            info!("CLIP tokenizer cached in engine pool | CLIP 分词器已缓存到引擎池");
-        }
-        Err(e) => warn!(
-            "Failed to load tokenizer for {} | {} 分词器加载失败: {}",
-            prof.id, prof.id, e
-        ),
-    }
-
-    // Persist detected provider to app_config
-    // 将探测到的提供者持久化到 app_config
-    {
-        let conn = state.db_writer.lock().unwrap();
-        let _ = set_config(&conn, "ai_provider", pool.provider.as_str());
-        let _ = set_config(&conn, "ai_gpu_name", &pool.gpu_name);
-    }
-
-    *guard = Some(pool);
-    info!("AI engine initialised | AI 引擎初始化完成");
-    Ok(())
-}
-
 // ── Commands ──────────────────────────────────────────────────────────────────
 // ── 命令 ──────────────────────────────────────────────────────────────────────
 
-/// Detect and initialise the best available AI provider.
-/// 探测并初始化最优的 AI 提供者。
+/// 返回最近一次 worker 会话回声的 provider/GPU(T16:探测发生在 worker SessionInit,
+/// 本命令不再触发模型加载;冷启动未回声前为配置旧值/空)。
 ///
-/// Returns: `{ provider: string, gpu_name: string }`
+/// Returns: `{ provider: string, gpuName: string, clipLoaded: bool }`
 #[tauri::command]
 pub async fn detect_ai_provider(state: State<'_, Arc<AppState>>) -> Result<serde_json::Value> {
     let state = Arc::clone(&state);
 
     tokio::task::spawn_blocking(move || -> Result<serde_json::Value> {
-        ensure_engine_initialised(&state)?;
-
-        let guard = state.ai_engine.read().unwrap();
-        let pool = guard.as_ref().unwrap();
-
+        let conn = state.db_read_pool.get()?;
+        let provider = get_config(&conn, "ai_provider")
+            .unwrap_or_default()
+            .unwrap_or_default();
+        let gpu_name = get_config(&conn, "ai_gpu_name")
+            .unwrap_or_default()
+            .unwrap_or_default();
+        drop(conn);
+        let session_live = {
+            let client = state.ai_worker.lock().unwrap_or_else(|p| p.into_inner());
+            client.session().is_some()
+        };
         Ok(serde_json::json!({
-            "provider": pool.provider.as_str(),
-            "gpuName":  pool.gpu_name.clone(),
-            "clipLoaded": pool.clip_ready(),
+            "provider": provider,
+            "gpuName":  gpu_name,
+            "clipLoaded": session_live,
         }))
     })
     .await
@@ -259,8 +216,9 @@ pub async fn get_ai_status(state: State<'_, Arc<AppState>>) -> Result<AiStatusSu
         let pending_items = total_items.saturating_sub(analyzed_items);
 
         let clip_loaded = {
-            let guard = state.ai_engine.read().unwrap();
-            guard.as_ref().map(|e| e.clip_ready()).unwrap_or(false)
+            // T16:进程内引擎已删;「已加载」= worker 在载会话(SessionInit 后为真)。
+            let client = state.ai_worker.lock().unwrap_or_else(|p| p.into_inner());
+            client.session().is_some()
         };
 
         let is_analyzing = state.ai_analysis_token.lock().unwrap().is_some();
@@ -335,40 +293,25 @@ pub async fn semantic_search_cmd(
     let top_k = limit.unwrap_or(50).min(1000);
 
     tokio::task::spawn_blocking(move || -> Result<usize> {
-        // Ensure engine is ready
-        // 确保引擎就绪
-        ensure_engine_initialised(&state)?;
-
-        let engine_guard = state.ai_engine.read().unwrap();
-        let engine = engine_guard.as_ref().unwrap();
-
-        let text_session = match engine.clip_text_session.as_ref() {
-            Some(s) => s,
-            None => {
-                return Err(AppError::AiModelNotLoaded(
-                    "文本编码器未加载 | text encoder not loaded".into(),
-                ))
-            }
+        // T16 收束:查询向量恒经 ai-worker 的 EncodeText op 生成(host 零 ort/tokenizers)。
+        // 首次搜索会触发 SessionInit(模型冷加载,与旧进程内懒加载语义一致)。
+        let prof = active_profile(&state);
+        let spec = crate::ai::worker_client::build_session_spec(&state, prof.clone(), None);
+        let mut vecs = {
+            let mut client = state.ai_worker.lock().unwrap_or_else(|p| p.into_inner());
+            client.encode_text(&spec, std::slice::from_ref(&query), &|| false)?
         };
-
-        // semantic_search manages its own connections: it loads the resident embedding
-        // cache from the READ pool and only takes the write lock briefly to persist
-        // results — so scoring no longer blocks all DB writes.
-        // semantic_search 自行管理连接：从读连接池加载常驻嵌入缓存，仅在持久化结果时
-        // 短暂持有写锁 —— 打分阶段不再阻塞所有数据库写入。
-        // The profile the engine was built with drives query encoding + cache dim (must match
-        // the model that produced the stored vectors).
-        // 引擎所加载的 profile 驱动查询编码与缓存维度（须与生成已存向量的模型一致）。
-        let prof = &engine.profile;
-        if let Some(tokenizer) = engine.clip_tokenizer.as_ref() {
-            semantic_search(&state, text_session, tokenizer, &query, top_k, prof)
-        } else {
-            // Fallback: load tokenizer from disk (happens if vocab wasn't present at init time)
-            // 回退：从磁盘加载分词器（词表初始化时不存在的情况）
-            let models = models_dir(&state);
-            let tokenizer = crate::ai::clip::ClipTokenizer::from_profile(&models, prof)?;
-            semantic_search(&state, text_session, &tokenizer, &query, top_k, prof)
-        }
+        persist_provider_echo(&state);
+        let query_vec = vecs
+            .pop()
+            .ok_or_else(|| AppError::Internal("EncodeText 返回空向量集".into()))?;
+        crate::ai::search::semantic_search_with_vector(
+            &state,
+            &query_vec,
+            top_k,
+            &prof.id,
+            prof.embed_dim,
+        )
     })
     .await
     .map_err(join_err)?
@@ -400,15 +343,6 @@ async fn launch_ai_pipeline(state: &Arc<AppState>) -> Result<()> {
 #[tauri::command]
 pub async fn start_ai_analysis(state: State<'_, Arc<AppState>>) -> Result<()> {
     let state_arc = Arc::clone(&state);
-
-    // Initialise engine first (idempotent)
-    // 首先初始化引擎（幂等）
-    tokio::task::spawn_blocking({
-        let s = Arc::clone(&state_arc);
-        move || ensure_engine_initialised(&s)
-    })
-    .await
-    .map_err(join_err)??;
 
     // R1-3：active_profile（读池 SQL）+ sync_ai_status（写锁 SQL）一并下沉 blocking；
     // 保留 into_inner 毒锁恢复（AI 命令族契约：控制类写不因毒锁失效）。
@@ -457,13 +391,6 @@ pub async fn start_ai_analysis(state: State<'_, Arc<AppState>>) -> Result<()> {
 #[tauri::command]
 pub async fn restart_ai_analysis(state: State<'_, Arc<AppState>>) -> Result<()> {
     let state_arc = Arc::clone(&state);
-
-    tokio::task::spawn_blocking({
-        let s = Arc::clone(&state_arc);
-        move || ensure_engine_initialised(&s)
-    })
-    .await
-    .map_err(join_err)??;
 
     // F5 mutual exclusion: claim the slot BEFORE the destructive reset below (so a rejection
     // doesn't wipe embeddings). Re-entrant when CLIP already owns it. If the reset then fails,
@@ -613,21 +540,19 @@ pub async fn import_ai_model(source_path: String, state: State<'_, Arc<AppState>
     .map_err(join_err)?
 }
 
-/// Reload the AI engine with new models
+/// Reload the AI engine — T16 后语义:关闭 worker 在载会话,下次分析/搜索按当前
+/// 配置重新 SessionInit(命令名保持前端兼容)。
 #[tauri::command]
 pub async fn reload_ai_engine(state: State<'_, Arc<AppState>>) -> Result<()> {
-    info!("Reloading AI engine | 重新加载 AI 引擎");
-    // R1-3：引擎重建 = DB 读 + onnx session 加载（秒级重活），整体下沉 blocking。
+    info!("Reloading AI engine | 重新加载 AI 引擎(worker 会话重建语义)");
     let s = Arc::clone(&state);
     tokio::task::spawn_blocking(move || {
         s.cancel_ai_analysis();
-
-        {
-            let mut guard = s.ai_engine.write().unwrap();
-            *guard = None; // Drop the current engine
-        }
-
-        ensure_engine_initialised(&s)
+        s.ai_worker
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .close_session();
+        Ok(())
     })
     .await
     .map_err(join_err)?
@@ -712,8 +637,11 @@ pub async fn list_model_registry(state: State<'_, Arc<AppState>>) -> Result<serd
         })
         .await?;
 
-    // 动态发现（async，置于 spawn_blocking 之外）；失败则离线回退。
-    let discovered = remote_registry::discover(mirror_first).await;
+    // 动态发现(async,置于 spawn_blocking 之外);带磁盘 L2(Part4-T8:冷启动免重复联网、
+    // 断网用陈旧快照兜底)。语义微调:online=false 仅当「联网失败且无任何磁盘缓存」——
+    // 有缓存时照常列出(离线可浏览,A5 的意义所在)。
+    let disk_cache = models_dir(&state).join(remote_registry::DISK_CACHE_FILE);
+    let discovered = remote_registry::discover(mirror_first, Some(&disk_cache)).await;
     let online = discovered.is_ok();
     let discovered = discovered.unwrap_or_default();
 
@@ -864,13 +792,12 @@ pub async fn set_active_model(image_file: String, state: State<'_, Arc<AppState>
         sync_ai_status_for_model(&state_arc.db_writer, &arch_id)?;
         state_arc.invalidate_embedding_cache();
 
-        // Drop the current engine so the next ensure_engine_initialised loads the new variant.
-        // 丢弃当前引擎，使下次 ensure_engine_initialised 加载新变体。
-        {
-            let mut guard = state_arc.ai_engine.write().unwrap();
-            *guard = None;
-        }
-        ensure_engine_initialised(&state_arc)?;
+        // 关闭 worker 在载会话:spec 含 profile,下次派发/搜索自动按新变体重 SessionInit。
+        state_arc
+            .ai_worker
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .close_session();
 
         info!(
             "Active AI model switched to {} (variant {}) | 已切换 AI 模型: {}（变体 {}）",
@@ -953,9 +880,12 @@ pub async fn download_model(
         None => profile::static_fp16_b16_assets(),
         Some(folder) => {
             // 在线发现失败=网络/远端问题（可操作）→ System 直透详情；arch/variant 缺失=配置指向不存在=格式问题。
-            let archs = remote_registry::discover(mirror_first).await.map_err(|e| {
-                AppError::System(format!("获取在线模型列表失败 | discovery failed: {e}"))
-            })?;
+            let disk_cache = models_dir(&state).join(remote_registry::DISK_CACHE_FILE);
+            let archs = remote_registry::discover(mirror_first, Some(&disk_cache))
+                .await
+                .map_err(|e| {
+                    AppError::System(format!("获取在线模型列表失败 | discovery failed: {e}"))
+                })?;
             let arch = archs.iter().find(|a| a.folder == folder).ok_or_else(|| {
                 AppError::UnsupportedFormat(format!(
                     "仓库中找不到架构 | arch not in repo: {folder}"

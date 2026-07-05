@@ -131,6 +131,8 @@ pub async fn move_media_items(
             }
         }
 
+        // S1：移动已逐条删行（DB 成员变化）→ bump 数据版本。
+        state.bump_data_version();
         Ok(moved_ids)
     })
     .await
@@ -296,6 +298,8 @@ pub async fn relocate_media_items(
                 .layout_cache
                 .write()
                 .map_err(|e| AppError::System(e.to_string()))? = None;
+            // S1：成员/目录归属已变 → bump（items 取数缓存下次重排重查）。
+            state.bump_data_version();
         }
 
         Ok(results)
@@ -384,6 +388,8 @@ pub async fn copy_media_items_db(
                 .layout_cache
                 .write()
                 .map_err(|e| AppError::System(e.to_string()))? = None;
+            // S1：新行已插入（成员变化）→ bump。
+            state.bump_data_version();
         }
 
         Ok(results)
@@ -452,6 +458,8 @@ pub async fn remove_media_items_hard(ids: Vec<i64>, state: State<'_, Arc<AppStat
             .layout_cache
             .write()
             .map_err(|e| AppError::System(e.to_string()))? = None;
+        // S1：硬删（成员变化）→ bump。
+        state.bump_data_version();
         Ok(())
     })
     .await
@@ -897,6 +905,8 @@ pub async fn delete_directory_to_trash(
                 .map_err(|e| AppError::System(e.to_string()))?;
             if let Some(dir_id) = q::find_directory_id(&conn, root_id, &rel_path)? {
                 q::delete_directory_by_id(&conn, dir_id)?;
+                // S1：目录级联删除（成员变化）→ bump。
+                state.bump_data_version();
             }
         }
         Ok(())

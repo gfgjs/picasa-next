@@ -53,3 +53,11 @@ crates/**/target/
 # （其 target/ 由上面 crates/**/target/ 覆盖忽略）。**公开镜像**由 Copybara 经 origin_files glob 排除
 # crates/picasa-next-pro/**（见 Part6_3c 草稿），故 pro 永不入公开仓；此处不再整目录忽略，以便私有仓
 # 正常提交 pro（避免整目录忽略后新增 pro 文件被静默漏跟踪 → 违「绝不丢失」）。
+
+# 插件商店 dev registry 产物(含 dev 私钥,仅本机;scripts/exotic-dev-registry.mjs 生成)
+.dev-registry/
+
+# updater 签名密钥(Part7-T8,tauri signer generate 产物;私钥仅本机/CI secrets,绝不入仓。
+# 当前为 dev 密钥,首发前轮换或转正——公钥已内嵌 tauri.conf.json plugins.updater.pubkey,
+# 换密钥须同步换公钥并使既有安装版无法再收更新,故转正决策须在首个公开发布前定死)
+.release-keys/

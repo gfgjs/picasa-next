@@ -15,8 +15,6 @@ use half::f16;
 use rayon::prelude::*;
 use tracing::{debug, info};
 
-use crate::ai::clip::{encode_text, ClipTokenizer};
-use crate::ai::profile::ModelProfile;
 use crate::db::queries::get_all_embeddings;
 use crate::error::{AppError, Result};
 use crate::state::AppState;
@@ -101,27 +99,19 @@ fn ensure_cache(state: &AppState, model_name: &str, dim: usize) -> Result<()> {
     Ok(())
 }
 
-/// Perform semantic search: encode the query, compare against the resident cache
-/// in parallel, persist the top-K results to `ai_search_results`.
-///
-/// 执行语义搜索：编码查询，与常驻缓存并行比较，把 Top-K 结果持久化到 `ai_search_results`。
-pub fn semantic_search(
+/// 打分 + 持久化半段:查询向量恒由 ai-worker 的 EncodeText op 产出(T16 收束,
+/// 进程内编码路径已删),从这里进入。`model_name`/`dim` 须与产出该向量的
+/// 模型一致(向量空间身份)。
+pub fn semantic_search_with_vector(
     state: &AppState,
-    text_session_pool: &crate::ai::engine::SessionPool,
-    tokenizer: &ClipTokenizer,
-    query: &str,
+    query_vec: &[f32],
     top_k: usize,
-    profile: &ModelProfile,
+    model_name: &str,
+    dim: usize,
 ) -> Result<usize> {
-    info!("Semantic search started | 语义搜索开始: {:?}", query);
-
-    // 1. Encode the text query into an `embed_dim` unit vector (must match the cache's model).
-    // 1. 将文本查询编码为 `embed_dim` 维单位向量（须与缓存所用模型一致）。
-    let query_vec = encode_text(text_session_pool, tokenizer, query, profile)?;
-
     // 2. Make sure the resident cache is loaded for THIS model (one-time disk read).
     // 2. 确保当前模型的常驻缓存已加载（一次性磁盘读取）。
-    ensure_cache(state, &profile.id, profile.embed_dim)?;
+    ensure_cache(state, model_name, dim)?;
 
     // 3. Score every embedding in parallel (cosine == dot for unit vectors).
     // 3. 并行为每个嵌入向量打分（单位向量的余弦 == 点积）。
@@ -200,11 +190,18 @@ pub fn semantic_search(
 /// 对于单位向量：余弦相似度 = 点积。
 #[inline]
 pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-    debug_assert_eq!(
-        a.len(),
-        b.len(),
-        "Embedding dimension mismatch | 嵌入向量维度不匹配"
-    );
+    // 维度不匹配 = 跨向量空间比较(如切换人脸模型后 128 维旧质心 vs 512 维新嵌入)。
+    // 查询层已按 model_name 双过滤隔离(Part4-T6),此处是最后防线:返回 0.0(低于一切
+    // 同人/搜索阈值 → 永不判同)而非 panic——原 debug_assert 会让 debug 构建整个进程
+    // 炸掉,违背「模型切换不 panic」(T_t3);而 zip 截断在 release 下是静默算错,更糟。
+    if a.len() != b.len() {
+        tracing::warn!(
+            "Embedding dimension mismatch {} vs {} — treated as no-match | 嵌入维度不匹配,按不相似处理",
+            a.len(),
+            b.len()
+        );
+        return 0.0;
+    }
 
     let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
     // Clamp to [-1, 1] — both vectors should already be unit-normalised,

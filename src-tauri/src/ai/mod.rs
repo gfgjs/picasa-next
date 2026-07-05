@@ -3,7 +3,6 @@
 //! AI 推理模块 — CLIP 语义搜索 + （第 4B 阶段）人脸识别。
 
 pub mod clip;
-pub mod engine;
 pub mod face;
 pub mod face_cluster;
 pub mod face_pipeline;
@@ -14,3 +13,5 @@ pub mod provider;
 pub mod remote_registry;
 pub mod search;
 pub mod vector_store;
+pub mod worker_client;
+pub mod worker_pipeline;

@@ -8,10 +8,10 @@
 use rusqlite::{params, Connection, OptionalExtension, Row};
 
 use crate::db::models::{
-    AppStats, AudioMeta, Collection, DirFile, DirNode, Directory, DocumentMeta, ImageMeta,
-    LayoutItem, MediaDetail, MediaFilter, MediaItem, MediaMeta, NewVolume, ScanRoot, SearchResult,
-    SelectionDescriptor, StorageBackendInfo, ThumbResult, ViewDescriptor, ViewScope, Volume,
-    VolumeKind,
+    AppStats, AudioMeta, Collection, DirFile, DirLabel, DirNode, Directory, DocumentMeta,
+    ImageMeta, LayoutItem, MediaDetail, MediaFilter, MediaItem, MediaMeta, NewVolume, ScanRoot,
+    SearchResult, SelectionDescriptor, StorageBackendInfo, ThumbResult, ViewDescriptor, ViewScope,
+    Volume, VolumeKind,
 };
 use crate::error::{AppError, Result};
 use crate::exotic::task::{ExoticTaskRow, ExoticTaskStatus};
@@ -98,16 +98,14 @@ fn map_layout_item(row: &Row<'_>) -> rusqlite::Result<LayoutItem> {
         thumb_path: row.get(10)?,
         thumbhash: row.get(11)?,
         is_favorited: row.get::<_, i64>(12)? != 0,
-        dir_path: row.get(13)?,
-        dir_name: row.get(14)?,
-        dir_id: row.get(15)?,
-        availability: row.get(16)?,
-        // rating 紧随 availability（SELECT 第 17 列），similarity 顺移到第 18 列——
-        // 列位与 query_layout_items 的 SELECT 顺序严格对齐，错位会静默串列。
-        rating: row.get(17)?,
-        // color_label 紧随 rating（SELECT 第 18 列），similarity 顺移到第 19 列。
-        color_label: row.get(18)?,
-        similarity: row.get(19)?,
+        // S2 消脂：dir_path/dir_name 不再逐行 SELECT（标签经 query_dir_labels 映射还原），
+        // 列位自 13 起整体前移 2 —— 与 query_layout_items 的 SELECT 顺序严格对齐，
+        // 错位会静默串列（有 query_layout_items_maps_scalar_columns_by_position 锁位）。
+        dir_id: row.get(13)?,
+        availability: row.get(14)?,
+        rating: row.get(15)?,
+        color_label: row.get(16)?,
+        similarity: row.get(17)?,
     })
 }
 
@@ -562,6 +560,7 @@ pub fn find_directory_id(conn: &Connection, root_id: i64, rel_path: &str) -> Res
 
 /// Batch-upsert helper data for fast scan.
 /// 快速扫描的批量插入/更新辅助数据。
+#[derive(Clone)]
 pub struct FastScanItem {
     pub directory_id: i64,
     pub file_name: String,
@@ -588,6 +587,10 @@ pub enum UpsertOutcome {
     Inserted(i64),
     /// 已存在但源文件变化（mtime 不同）→ 缓存与任务须失效重做。
     SourceChanged(i64),
+    /// 可疑变更(mtime 变但 size 同,Part2 §3.3.2):可能是同步盘占位落地等 mtime 抖动
+    /// (内容未变),也可能是同大小的元数据编辑(内容变)。upsert **零写**返回本变体,
+    /// 调用方在写事务之外算内容指纹、经 `resolve_suspect_change` 定案——hash IO 不进写锁。
+    SuspectChanged(i64),
 }
 
 impl UpsertOutcome {
@@ -595,7 +598,8 @@ impl UpsertOutcome {
         match self {
             UpsertOutcome::Unchanged(id)
             | UpsertOutcome::Inserted(id)
-            | UpsertOutcome::SourceChanged(id) => *id,
+            | UpsertOutcome::SourceChanged(id)
+            | UpsertOutcome::SuspectChanged(id) => *id,
         }
     }
 }
@@ -654,6 +658,86 @@ pub fn invalidate_derived_for_item(conn: &Connection, item_id: i64) -> Result<()
     Ok(())
 }
 
+/// SourceChanged 落库(upsert「size 变」路径与 resolve「hash 变/无基线」路径共用):
+/// 覆写文件字段 + 重置主缩略图 + 写/清 content_hash 基线,并在同一事务语境内全失效派生。
+/// `content_hash=None` 表示无可信基线(size 变路径不算 hash;指纹计算失败)→ 置 NULL,
+/// 使下次可疑变更走「NULL 兜底保守失效」而非拿陈旧基线错比。
+fn apply_source_changed(
+    conn: &Connection,
+    id: i64,
+    item: &FastScanItem,
+    volume_id: Option<i64>,
+    content_hash: Option<&str>,
+) -> Result<()> {
+    // availability 经 CASE 顺带恢复(文件变 = 必在场);volume_id 经 COALESCE 治愈历史 NULL。
+    conn.execute(
+        "UPDATE media_items SET file_size=?1, file_mtime=?2, file_format=?3,
+                  media_type=?4, width=?5, height=?6, sort_datetime=?7,
+                  cache_key=?8, thumb_status=0, thumb_path=NULL, thumbhash=NULL,
+                  content_hash=?9,
+                  volume_id=COALESCE(volume_id, ?10),
+                  availability=CASE WHEN availability='missing' THEN 'online' ELSE availability END,
+                  updated_at=strftime('%s','now')
+         WHERE id=?11",
+        params![
+            item.file_size,
+            item.file_mtime,
+            item.file_format,
+            item.media_type,
+            item.width,
+            item.height,
+            item.sort_datetime,
+            item.cache_key,
+            content_hash,
+            volume_id,
+            id
+        ],
+    )?;
+    // 🔴 SourceChanged 全失效(Part2 §3.3):源文件变了,旧 EXIF/时长/编码必须作废,
+    // 否则 enricher 不再重选该项、元数据永久停滞。与 UPDATE 同一事务语境,避免半失效。
+    invalidate_derived_for_item(conn, id)
+}
+
+/// 「可疑变更」定案(Part2 §3.3.2 三环,P1-2/P1-4):比对存量 content_hash 基线与新指纹。
+/// - 基线存在且相同 → **touch**:仅更新 file_mtime(下次扫描回 Unchanged)+ availability/卷
+///   顺带治愈;meta/派生/cache_key 全保留——cache_key 含 mtime,保留旧 key 使既有缩略图
+///   继续命中(「cache_key 可由 path+mtime 重算」的不变量就此弱化;消费方一律读 DB 列,
+///   不受影响)→ 返回 Unchanged。
+/// - 基线 NULL(历史行首遇可疑变更)→ 保守判 SourceChanged(无旧值无法证明内容未变,
+///   宁可重派生),并写回新指纹建立基线,下次可疑变更即可精确比对。
+/// - 基线不同 → SourceChanged + 基线更新。
+/// - `current_hash=None`(指纹计算失败)→ 保守 SourceChanged,基线置 NULL。
+///
+/// 调用方须在**写事务之外**完成指纹计算(hash IO 不进写锁),本函数只做短写。
+pub fn resolve_suspect_change(
+    conn: &Connection,
+    id: i64,
+    item: &FastScanItem,
+    volume_id: Option<i64>,
+    current_hash: Option<&str>,
+) -> Result<UpsertOutcome> {
+    let stored: Option<String> = conn.query_row(
+        "SELECT content_hash FROM media_items WHERE id=?1",
+        params![id],
+        |row| row.get(0),
+    )?;
+    if let (Some(base), Some(cur)) = (stored.as_deref(), current_hash) {
+        if base == cur {
+            conn.execute(
+                "UPDATE media_items SET file_mtime=?2,
+                          volume_id=COALESCE(volume_id, ?3),
+                          availability=CASE WHEN availability='missing' THEN 'online' ELSE availability END,
+                          updated_at=strftime('%s','now')
+                 WHERE id=?1",
+                params![id, item.file_mtime, volume_id],
+            )?;
+            return Ok(UpsertOutcome::Unchanged(id));
+        }
+    }
+    apply_source_changed(conn, id, item, volume_id, current_hash)?;
+    Ok(UpsertOutcome::SourceChanged(id))
+}
+
 /// Insert or update a media item from the fast scan phase.
 /// 插入或更新来自快速扫描阶段的媒体项。
 /// Returns the [`UpsertOutcome`] so the caller can seed/invalidate exotic tasks.
@@ -669,15 +753,23 @@ pub fn upsert_fast_scan_item(
     // Check if exists with same mtime (no change needed)
     // 检查是否存在具有相同 mtime 的项（无需更改）；同时取 availability + volume_id 以支撑
     // missing→online 自动恢复 与 历史 NULL volume_id 的定向治愈。
-    let existing: Option<(i64, i64, String, Option<i64>)> = conn
+    let existing: Option<(i64, i64, i64, String, Option<i64>)> = conn
         .query_row(
-            "SELECT id, file_mtime, availability, volume_id FROM media_items WHERE directory_id=?1 AND file_name=?2",
+            "SELECT id, file_mtime, file_size, availability, volume_id FROM media_items WHERE directory_id=?1 AND file_name=?2",
             params![item.directory_id, item.file_name],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
         )
         .ok();
 
-    if let Some((id, mtime, availability, existing_vol)) = existing {
+    if let Some((id, mtime, size, availability, existing_vol)) = existing {
         if mtime == item.file_mtime {
             // Unchanged — skip（但若曾被标 missing 的文件原样重现，需自动恢复 online；
             // 或历史插入遗留 volume_id=NULL，需补绑本根卷使其可参与缺失检测）。
@@ -698,33 +790,14 @@ pub fn upsert_fast_scan_item(
             }
             return Ok(UpsertOutcome::Unchanged(id));
         }
-        // Changed — update（同时重置主缩略图状态；exotic 任务失效由调用方处理）
-        // 已更改 — 更新。availability 经 CASE 顺带恢复（文件变 = 必在场，曾 missing 则复位 online）；
-        // volume_id 经 COALESCE 顺带治愈历史 NULL（既有卷不变）。
-        conn.execute(
-            "UPDATE media_items SET file_size=?1, file_mtime=?2, file_format=?3,
-                      media_type=?4, width=?5, height=?6, sort_datetime=?7,
-                      cache_key=?8, thumb_status=0, thumb_path=NULL, thumbhash=NULL,
-                      volume_id=COALESCE(volume_id, ?9),
-                      availability=CASE WHEN availability='missing' THEN 'online' ELSE availability END,
-                      updated_at=strftime('%s','now')
-             WHERE id=?10",
-            params![
-                item.file_size,
-                item.file_mtime,
-                item.file_format,
-                item.media_type,
-                item.width,
-                item.height,
-                item.sort_datetime,
-                item.cache_key,
-                volume_id,
-                id
-            ],
-        )?;
-        // 🔴 SourceChanged 全失效（Part2 §3.3）：源文件变了，旧 EXIF/时长/编码必须作废，
-        // 否则 enricher 不再重选该项、元数据永久停滞。同一事务内，避免半失效。
-        invalidate_derived_for_item(conn, id)?;
+        // 🔴 可疑变更(Part2 §3.3.2 / P1-4):mtime 变但 size 同——可能是同步盘占位落地等
+        // mtime 抖动(内容未变,无条件失效会白重派生全链),也可能是同大小元数据编辑
+        // (内容变,仅 touch 会漏失效)。零写返回,由调用方在写事务外算指纹后经
+        // `resolve_suspect_change` 定案。size 变 → 内容必变,直接 SourceChanged 不算 hash。
+        if size == item.file_size {
+            return Ok(UpsertOutcome::SuspectChanged(id));
+        }
+        apply_source_changed(conn, id, item, volume_id, None)?;
         return Ok(UpsertOutcome::SourceChanged(id));
     }
 
@@ -849,7 +922,7 @@ pub fn query_layout_items(
     let mut sql = String::from(
         "SELECT m.id, m.width, m.height, m.file_size, m.sort_datetime, m.file_format, m.media_type, m.is_live_photo,
                 m.duration_ms, m.thumb_status, m.thumb_path, m.thumbhash, m.is_favorited,
-                CASE WHEN d.rel_path = '' THEN r.path ELSE r.path || '/' || d.rel_path END as dir_path, d.name as dir_name, m.directory_id as dir_id, m.availability, m.rating, m.color_label, "
+                m.directory_id as dir_id, m.availability, m.rating, m.color_label, "
     );
 
     // similarity is the final SELECT column — heavy EXIF/GPS/file_name columns are
@@ -877,6 +950,134 @@ pub fn query_layout_items(
     let mut stmt = conn.prepare(&sql)?;
     let refs: Vec<&dyn rusqlite::ToSql> = extras.iter().map(|b| b.as_ref()).collect();
     let rows = stmt.query_map(refs.as_slice(), map_layout_item)?;
+    rows.map(|r| r.map_err(AppError::from)).collect()
+}
+
+/// S1 取数缓存的「基准序」查询。与 `query_layout_items` 的差异（消脂 + 恒序）：
+/// - SELECT 列序与 `map_layout_item` 完全一致（similarity 恒 NULL —— ai 视图不走本函数）；
+/// - FROM 免 directories/scan_roots JOIN（1M 行 DB 副本实测占查询成本 2/3），仅当搜索
+///   scope 的谓词引用 d.* / image_meta 列时按需补 JOIN；
+/// - WHERE 经 `push_where_predicates` 与 View 路径同源（谓词单一事实源）；
+/// - 基准序 `(m.sort_datetime DESC, m.id DESC)` 由内存置换排序产出（S3.7，SQL 不再下发
+///   ORDER BY——索引序遍历逐行随机回表是冷启动大查询的病根，见 canonical_layout_sql）；
+///   分组轴/方向由 `layout::items_cache::derive_order` 内存派生，与 `view_to_sql` 的
+///   SQL 序**逐项等价**（SelectAll/flat_ids 契约，对拍测试锁定）。
+///
+/// 组装 canonical 布局查询 SQL（S3.7 抽出，供计划锁定测试对同一份 SQL 做 EXPLAIN）。
+fn canonical_layout_sql(filter: &MediaFilter) -> (String, Vec<Box<dyn rusqlite::ToSql>>) {
+    let mut sql = String::from(
+        "SELECT m.id, m.width, m.height, m.file_size, m.sort_datetime, m.file_format, m.media_type, m.is_live_photo,
+                m.duration_ms, m.thumb_status, m.thumb_path, m.thumbhash, m.is_favorited,
+                m.directory_id as dir_id, m.availability, m.rating, m.color_label, NULL as similarity
+         FROM media_items m",
+    );
+    let (needs_dir_join, needs_meta_join) = search_join_needs(filter);
+    if needs_dir_join {
+        sql.push_str("\n         JOIN directories d ON m.directory_id = d.id");
+    }
+    if needs_meta_join {
+        sql.push_str("\n         LEFT JOIN image_meta im ON m.id = im.item_id");
+    }
+    // 防御：ai 阈值谓词引用 ai 别名。调用方（compute_layout）对 ai 视图绕过本函数不缓存，
+    // 但保持 SQL 自洽以免误用时报「no such column」。
+    if filter.ai_search == Some(true) {
+        sql.push_str("\n         JOIN ai_search_results ai ON m.id = ai.file_id");
+    }
+
+    let mut extras: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    push_where_predicates(&mut sql, &mut extras, filter);
+    // S3.7：不下发 ORDER BY，且默认全量视图（基础谓词外无任何附加谓词）以 unary `+`
+    // 压制 partial index 匹配——EXPLAIN 实证：仅去 ORDER BY 规划器仍选 idx_media_sort
+    // （查询谓词与其部分索引 WHERE 逐字匹配），索引序遍历逐行随机回表，1M 库在表体积
+    // 随缩略图/富化回填变胖后实测 6.6s（页缓存 64MB 全程颠簸）。压制后退化为顺序全表
+    // 扫（每页只读一遍）；选择性视图（目录/收藏/类型等）不命中本后缀，各自索引照常
+    // （计划锁定测试在环）。基准序由内存置换排序补齐，与原 SQL 序逐项等价。
+    const BROAD_BASE: &str = "WHERE m.is_deleted=0 AND m.companion_of IS NULL";
+    if sql.ends_with(BROAD_BASE) {
+        let base_at = sql.len() - BROAD_BASE.len();
+        sql.truncate(base_at);
+        sql.push_str("WHERE +m.is_deleted=0 AND +m.companion_of IS NULL");
+    }
+    (sql, extras)
+}
+
+/// S1 基准序查询本体：SQL 组装见 [`canonical_layout_sql`]，序由 [`sort_canonical`] 补齐。
+pub fn query_layout_items_canonical(
+    conn: &Connection,
+    filter: &MediaFilter,
+) -> Result<Vec<LayoutItem>> {
+    let (sql, extras) = canonical_layout_sql(filter);
+    let mut stmt = conn.prepare(&sql)?;
+    let refs: Vec<&dyn rusqlite::ToSql> = extras.iter().map(|b| b.as_ref()).collect();
+    let rows = stmt.query_map(refs.as_slice(), map_layout_item)?;
+    let items: Vec<LayoutItem> = rows
+        .map(|r| r.map_err(AppError::from))
+        .collect::<Result<_>>()?;
+    Ok(sort_canonical(items))
+}
+
+/// 基准序内存排序（S3.7）：`(sort_datetime DESC, id DESC)`——与被替换的 SQL ORDER 逐项
+/// 等价（两键均 NOT NULL 整数，i64 比较与 SQLite INTEGER 排序一致）。装饰-排序-还原：
+/// 紧凑键元组排序 + 置换还原，避免直接搬动 ~200B 大结构体（同 S1.1 DSU 手法）。
+/// 1M 项实测 ~100ms 量级，换掉的是数秒级随机回表。
+fn sort_canonical(items: Vec<LayoutItem>) -> Vec<LayoutItem> {
+    let mut keys: Vec<(i64, i64, usize)> = items
+        .iter()
+        .enumerate()
+        .map(|(i, it)| (it.sort_datetime, it.id, i))
+        .collect();
+    keys.sort_unstable_by_key(|&(ts, id, _)| (std::cmp::Reverse(ts), std::cmp::Reverse(id)));
+    let mut slots: Vec<Option<LayoutItem>> = items.into_iter().map(Some).collect();
+    keys.iter()
+        .map(|&(_, _, i)| slots[i].take().expect("置换下标唯一"))
+        .collect()
+}
+
+/// 搜索 scope 的 JOIN 需求：`(directories, image_meta)`。folder/global 谓词引用
+/// d.rel_path/d.name；device/location/global 引用 image_meta 列（与 push_query_body 的
+/// needs_meta_join 判定同源语义）。
+fn search_join_needs(filter: &MediaFilter) -> (bool, bool) {
+    let Some(q) = filter.search_query.as_ref() else {
+        return (false, false);
+    };
+    if q.trim().is_empty() {
+        return (false, false);
+    }
+    let scope = filter.search_scope.as_deref().unwrap_or("filename");
+    (
+        matches!(scope, "folder" | "global"),
+        matches!(scope, "device" | "location" | "global"),
+    )
+}
+
+/// 全库目录标签映射（S2）：`dir_id → DirLabel`。目录量级 ~10^3，布局重算时一次性取回，
+/// 替代原布局查询里逐行（10^6）的双 JOIN 与路径拼接（1M 库实测占查询成本 2/3）。
+pub fn query_dir_labels(conn: &Connection) -> Result<std::collections::HashMap<i64, DirLabel>> {
+    let mut stmt = conn.prepare(
+        "SELECT d.id, d.rel_path, d.name, r.path
+         FROM directories d
+         JOIN scan_roots r ON d.root_id = r.id",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        let id: i64 = row.get(0)?;
+        let rel_path: String = row.get(1)?;
+        let name: String = row.get(2)?;
+        let root_path: String = row.get(3)?;
+        // display 语义 = 原 SQL `CASE WHEN d.rel_path='' THEN r.path ELSE r.path||'/'||d.rel_path END`。
+        let display = if rel_path.is_empty() {
+            root_path
+        } else {
+            format!("{root_path}/{rel_path}")
+        };
+        Ok((
+            id,
+            DirLabel {
+                rel_path,
+                display,
+                name,
+            },
+        ))
+    })?;
     rows.map(|r| r.map_err(AppError::from)).collect()
 }
 
@@ -915,6 +1116,18 @@ fn push_query_body(
         sql.push_str("\n         JOIN ai_search_results ai ON m.id = ai.file_id");
     }
 
+    push_where_predicates(sql, extras, filter);
+    push_order_by(sql, filter, group_by, sort_within, sort_order);
+}
+
+/// 画廊查询的 WHERE 基底 + 全部谓词（参数绑定）。`push_query_body`（View 全量形态）与
+/// `query_layout_items_canonical`（S1 基准序、免 JOIN）共用 —— 谓词单一事实源，杜绝
+/// 「缓存路径与 SelectAll 路径各持一套 WHERE」漂移（T18 §4 同旨）。
+fn push_where_predicates(
+    sql: &mut String,
+    extras: &mut Vec<Box<dyn rusqlite::ToSql>>,
+    filter: &MediaFilter,
+) {
     if filter.trashed_only == Some(true) {
         sql.push_str("\n         WHERE m.is_deleted=1 AND m.companion_of IS NULL");
     } else {
@@ -1085,7 +1298,19 @@ fn push_query_body(
             }
         }
     }
+}
 
+/// 画廊查询的 ORDER BY（View 全量形态：folder 轴引用 d.rel_path、特殊排序含
+/// NATURAL_CMP/similarity；全部分支末尾追加 m.id 同向 tiebreaker）。S1 canonical 缓存
+/// 路径不走本函数（恒 (sort_datetime, id) 基准序，分组/方向由 items_cache::derive_order
+/// 内存派生，与本函数产出的 SQL 序逐项等价——对拍测试锁定）。
+fn push_order_by(
+    sql: &mut String,
+    filter: &MediaFilter,
+    group_by: Option<&str>,
+    sort_within: Option<&str>,
+    sort_order: Option<&str>,
+) {
     let order_dir = match sort_order {
         Some("asc") => "ASC",
         _ => "DESC",
@@ -1402,6 +1627,14 @@ const NOT_BLOCKED_BY_EXOTIC: &str = "AND NOT EXISTS (
 const NOT_BLOCKED_BY_EXOTIC_M: &str = "AND NOT EXISTS (
         SELECT 1 FROM exotic_tasks et
         WHERE et.item_id = m.id AND et.capability='thumbnail' AND et.status<>2)";
+
+/// 全库 cache_key 全集(**含软删行**——软删可恢复,其缓存不算孤儿),供对账 GC
+/// (Part3 §3.3.2)判定「不在集即孤儿」。百万行 ≈ 十几 MB HashSet,内存可承受(复审 §467 ③)。
+pub fn all_cache_keys(conn: &Connection) -> Result<std::collections::HashSet<i64>> {
+    let mut stmt = conn.prepare("SELECT cache_key FROM media_items WHERE cache_key IS NOT NULL")?;
+    let rows = stmt.query_map([], |row| row.get::<_, i64>(0))?;
+    rows.map(|r| r.map_err(AppError::from)).collect()
+}
 
 pub fn get_pending_thumb_items(conn: &Connection, limit: i64) -> Result<Vec<(i64, i64)>> {
     let sql = format!(
@@ -2390,42 +2623,25 @@ pub fn batch_update_ai_status(conn: &Connection, item_ids: &[i64], status: i64) 
 pub struct PendingAiItem {
     pub id: i64,
     /// Absolute path to the original source file.
-    /// 源文件绝对路径。
+    /// 源文件绝对路径(缺 ai_cache 时现场派生的解码源,T18)。
     pub abs_path: String,
     pub file_format: String,
     /// `cache_key` — locates the AI-analysis cache file on disk via `ai_cache_path(cache_dir,
-    /// cache_key)`. When that file exists it is the highest-priority, cheapest decode source.
-    /// Discovery is by FILE existence (not a `media_derivations` row), so a cache produced as a
-    /// byproduct of thumbnail generation (one decode, two outputs) is found too.
-    /// `cache_key` —— 经 `ai_cache_path(cache_dir, cache_key)` 定位磁盘上的 AI 分析缓存文件。
-    /// 该文件存在时即最高优先级、最廉价的解码源。按**文件存在性**发现（而非 `media_derivations` 行），
-    /// 故缩略图生成时顺带产出的缓存（一次解码两份产物）同样能被发现。
+    /// cache_key)`. worker 端解码的唯一源;按**文件存在性**发现(而非 `media_derivations` 行),
+    /// 故缩略图生成时顺带产出的缓存(一次解码两份产物)同样能被发现。
     pub cache_key: i64,
-    /// 1 = a generated thumbnail exists (`thumb_path` is a tiered cache rel-path);
-    /// 3 = small-file direct display (`thumb_path` is the original abs path).
-    /// 1 = 已生成缩略图（`thumb_path` 为分档缓存相对路径）；3 = 小文件直显（`thumb_path` 即原图绝对路径）。
-    pub thumb_status: i64,
-    pub thumb_path: Option<String>,
-    /// Original pixel dimensions (0 when unknown) — used to predict the thumbnail's short edge
-    /// WITHOUT touching disk, deciding whether a thumbnail is large enough to feed CLIP.
-    /// 原图像素尺寸（未知为 0）—— 用于**不读盘**预测缩略图短边，判断其是否够大以喂入 CLIP。
-    pub width: i64,
-    pub height: i64,
 }
 
-/// Fetch a batch of images pending CLIP analysis, with thumbnail/dimension hints so the
-/// pipeline can avoid decoding the full-resolution original when a sufficiently large
-/// thumbnail (or AI cache) already exists.
-///
-/// 取一批待 CLIP 分析的图像，附带缩略图/尺寸提示，使流水线在已有足够大的缩略图（或 AI 缓存）时
-/// 免去解码全分辨率原图。
+/// Fetch a batch of images pending CLIP analysis(T16:worker 端按 cache_key 读
+/// ai_cache 解码,缩略图/尺寸提示字段已随进程内解码源决策退场)。
+/// 取一批待 CLIP 分析的图像。
 pub fn get_pending_ai_items(conn: &Connection, limit: i64) -> Result<Vec<PendingAiItem>> {
     let sql = format!(
         "SELECT m.id,
                 CASE WHEN d.rel_path = '' THEN r.path || '/' || m.file_name
                      ELSE r.path || '/' || d.rel_path || '/' || m.file_name
                 END,
-                m.file_format, m.cache_key, m.thumb_status, m.thumb_path, m.width, m.height
+                m.file_format, m.cache_key
          FROM media_items m
          JOIN directories d ON m.directory_id = d.id
          JOIN scan_roots r ON d.root_id = r.id
@@ -2440,10 +2656,6 @@ pub fn get_pending_ai_items(conn: &Connection, limit: i64) -> Result<Vec<Pending
             abs_path: row.get(1)?,
             file_format: row.get(2)?,
             cache_key: row.get(3)?,
-            thumb_status: row.get(4)?,
-            thumb_path: row.get(5)?,
-            width: row.get(6)?,
-            height: row.get(7)?,
         })
     })?;
     rows.map(|r| r.map_err(AppError::from)).collect()
@@ -2590,11 +2802,12 @@ fn sync_ai_status_batched(
 
 // ── 人脸识别（Face Recognition，F3）─────────────────────────────────────────
 
-/// One pending image awaiting face detection — same decode-source hints as `PendingAiItem`
-/// (no `cache_key`: the face pipeline never uses the AI-analysis cache, see
-/// `ai::face_pipeline::resolve_face_decode_source` for why).
-/// 一个待人脸检测的图像项 —— 解码源提示与 `PendingAiItem` 相同（无 `cache_key`：人脸流水线从不
-/// 使用 AI 分析缓存，原因见 `ai::face_pipeline::resolve_face_decode_source`）。
+/// One pending image awaiting face detection — same decode-source hints as `PendingAiItem`.
+/// `cache_key` addresses the face-specific 640px cache (`face_thumbs/`), NOT the 336px CLIP
+/// `ai_thumbs/` (still never used here — see `ai::face_pipeline` module header for why).
+/// 一个待人脸检测的图像项 —— 解码源提示与 `PendingAiItem` 相同。`cache_key` 用于寻址 face
+/// 专属的 640px 缓存(`face_thumbs/`,T16-R2 方案 A),而非 336px 的 CLIP `ai_thumbs/`
+/// (后者对 YuNet 输入太小,依旧不用——原因见 `ai::face_pipeline` 模块头)。
 pub struct PendingFaceItem {
     pub id: i64,
     pub abs_path: String,
@@ -2603,6 +2816,7 @@ pub struct PendingFaceItem {
     pub thumb_path: Option<String>,
     pub width: i64,
     pub height: i64,
+    pub cache_key: i64,
 }
 
 /// Fetch a batch of images pending face detection (`face_status=0`).
@@ -2613,7 +2827,7 @@ pub fn get_pending_face_items(conn: &Connection, limit: i64) -> Result<Vec<Pendi
                 CASE WHEN d.rel_path = '' THEN r.path || '/' || m.file_name
                      ELSE r.path || '/' || d.rel_path || '/' || m.file_name
                 END,
-                m.file_format, m.thumb_status, m.thumb_path, m.width, m.height
+                m.file_format, m.thumb_status, m.thumb_path, m.width, m.height, m.cache_key
          FROM media_items m
          JOIN directories d ON m.directory_id = d.id
          JOIN scan_roots r ON d.root_id = r.id
@@ -2631,6 +2845,7 @@ pub fn get_pending_face_items(conn: &Connection, limit: i64) -> Result<Vec<Pendi
             thumb_path: row.get(4)?,
             width: row.get(5)?,
             height: row.get(6)?,
+            cache_key: row.get(7)?,
         })
     })?;
     rows.map(|r| r.map_err(AppError::from)).collect()
@@ -2689,11 +2904,15 @@ pub fn count_processed_face_items(conn: &Connection) -> Result<i64> {
     .map_err(AppError::from)
 }
 
-/// Count clustered persons (the people wall's roster size).
-/// 统计已聚类的人物数（人物墙的名册规模）。
-pub fn count_persons(conn: &Connection) -> Result<i64> {
-    conn.query_row("SELECT COUNT(*) FROM persons", [], |row| row.get(0))
-        .map_err(AppError::from)
+/// Count clustered persons of ONE model (the people wall's roster size; Part4-T6 isolation).
+/// 统计某模型已聚类的人物数(人物墙的名册规模;Part4-T6 按模型隔离)。
+pub fn count_persons(conn: &Connection, model_name: &str) -> Result<i64> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM persons WHERE model_name=?1",
+        params![model_name],
+        |row| row.get(0),
+    )
+    .map_err(AppError::from)
 }
 
 /// Count stored faces for a model (across all images).
@@ -2707,15 +2926,15 @@ pub fn count_faces_for_model(conn: &Connection, model_name: &str) -> Result<i64>
     .map_err(AppError::from)
 }
 
-/// Wipe ALL face data for a fresh restart: delete this model's faces, delete every person
-/// (the `persons` table has no model_name column — single-model assumption, see
-/// `ai::face_cluster`), and reset `face_status` to Pending so the pipeline reprocesses
-/// everything. WARNING destroys user labor: named persons and `is_confirmed` assignments are
-/// gone (callers must warn the user; preserving labels across restart is deferred).
-/// 全量重来时清空所有人脸数据：删除该模型的 faces、删除所有 persons（`persons` 表无 model_name
-/// 列——单模型假设，见 `ai::face_cluster`），并把 `face_status` 重置为待处理，使流水线全量重跑。
-/// 警告会销毁用户劳动：已命名人物与 `is_confirmed` 指派将丢失（调用方须提示用户；跨重启保留标签
-/// 留待后续）。
+/// Reset ONE model's face data for a fresh restart: delete this model's faces AND this model's
+/// persons (Part4-T6 `persons.model_name` isolation — other models' rosters are user assets and
+/// survive), then reset `face_status` to Pending so the pipeline reprocesses everything.
+/// WARNING still destroys THIS model's user labor: its named persons and `is_confirmed`
+/// assignments are gone (callers must warn the user).
+/// 按模型重置人脸数据以全量重来:删除该模型的 faces 与该模型的 persons(Part4-T6
+/// `persons.model_name` 隔离——其他模型的名册是用户资产,保留不删),并把 `face_status`
+/// 重置为待处理,使流水线全量重跑。警告仍会销毁**本模型**的用户劳动:其已命名人物与
+/// `is_confirmed` 指派将丢失(调用方须提示用户)。
 ///
 /// R2-6 分批化(签名改 Mutex 的理由同 reset_ai_embeddings):faces→persons 两个 DELETE
 /// 保持单事务(FK 顺序;persons 行数小,不构成长事务),仅 face_status 全表 UPDATE 分批。
@@ -2732,7 +2951,10 @@ fn reset_face_data_batched(
         let conn = db.lock().unwrap_or_else(|e| e.into_inner());
         let tx = conn.unchecked_transaction()?;
         tx.execute("DELETE FROM faces WHERE model_name=?1", params![model_name])?;
-        tx.execute("DELETE FROM persons", [])?;
+        tx.execute(
+            "DELETE FROM persons WHERE model_name=?1",
+            params![model_name],
+        )?;
         tx.commit()?;
     }
     loop {
@@ -2750,6 +2972,48 @@ fn reset_face_data_batched(
     Ok(())
 }
 
+/// Re-point the global `face_status` at `model_name`'s face coverage (mirror of
+/// `sync_ai_status_for_model`): items that already have this model's faces → Done(2), the rest
+/// → Pending(0). Zero-write for already-synced rows; batched.
+/// 把全局 `face_status` 重新指向 `model_name` 的人脸覆盖(仿 `sync_ai_status_for_model`):
+/// 已有该模型 faces 的项 → 已完成(2),其余 → 待处理(0)。已同步行零写;分批执行。
+/// 注:曾被旧模型扫过但未检出脸的项没有 faces 行,会归 0 由新轨重扫——这是 §3.5.2 的
+/// 既定语义(faces 表即覆盖真相,无 per-model 扫描标记)。
+pub fn sync_face_status_for_model(
+    db: &std::sync::Mutex<Connection>,
+    model_name: &str,
+) -> Result<()> {
+    sync_face_status_batched(db, model_name, 10_000)
+}
+
+fn sync_face_status_batched(
+    db: &std::sync::Mutex<Connection>,
+    model_name: &str,
+    batch: i64,
+) -> Result<()> {
+    loop {
+        let conn = db.lock().unwrap_or_else(|e| e.into_inner());
+        let n = conn.execute(
+            "UPDATE media_items SET
+                face_status = CASE
+                    WHEN id IN (SELECT item_id FROM faces WHERE model_name=?1) THEN 2
+                    ELSE 0 END,
+                updated_at = strftime('%s','now')
+             WHERE rowid IN (
+                 SELECT rowid FROM media_items
+                 WHERE media_type='image' AND is_deleted=0
+                   AND face_status <> (CASE WHEN id IN
+                        (SELECT item_id FROM faces WHERE model_name=?1) THEN 2 ELSE 0 END)
+                 LIMIT ?2)",
+            params![model_name, batch],
+        )?;
+        if (n as i64) < batch {
+            break;
+        }
+    }
+    Ok(())
+}
+
 // ── 人物墙 / 详情画框（F6）─────────────────────────────────────────────────────
 
 /// List person clusters for the people wall (F6). Joins each person's cover face → its image's
@@ -2757,7 +3021,10 @@ fn reset_face_data_batched(
 /// "ignored" bucket (误检/非人脸); named persons sort first, then by face_count.
 /// 列出人物墙的人物簇（F6）。把每个人物的封面脸 → 其图像缩略图（status=3 vs 分档的约定同
 /// `get_search_results_by_ids`）。排除"忽略"桶（误检/非人脸）；已命名优先，再按 face_count。
-pub fn list_persons(conn: &Connection) -> Result<Vec<crate::db::models::PersonSummary>> {
+pub fn list_persons(
+    conn: &Connection,
+    model_name: &str,
+) -> Result<Vec<crate::db::models::PersonSummary>> {
     let mut stmt = conn.prepare(
         "SELECT p.id, p.name, p.face_count, p.is_named, p.is_hidden,
                 f.item_id,
@@ -2774,10 +3041,10 @@ pub fn list_persons(conn: &Connection) -> Result<Vec<crate::db::models::PersonSu
          LEFT JOIN media_items m ON m.id = f.item_id AND m.is_deleted = 0
          LEFT JOIN directories d ON m.directory_id = d.id
          LEFT JOIN scan_roots r ON d.root_id = r.id
-         WHERE p.is_ignored = 0
+         WHERE p.is_ignored = 0 AND p.model_name = ?1
          ORDER BY p.is_named DESC, p.face_count DESC, p.id ASC",
     )?;
-    let rows = stmt.query_map([], |row| {
+    let rows = stmt.query_map(params![model_name], |row| {
         let bx: Option<f64> = row.get(8)?;
         let by: Option<f64> = row.get(9)?;
         let bw: Option<f64> = row.get(10)?;
@@ -3513,14 +3780,18 @@ pub struct PersonRow {
 /// Load every person with a centroid (i.e. every person that already has ≥1 face), for
 /// in-memory nearest-centroid matching against newly-written faces.
 /// 加载所有已有质心的人物（即已有 ≥1 张脸的人物），供与新写入人脸做内存中最近质心匹配。
-pub fn get_all_persons_for_clustering(conn: &Connection) -> Result<Vec<PersonRow>> {
+pub fn get_all_persons_for_clustering(
+    conn: &Connection,
+    model_name: &str,
+) -> Result<Vec<PersonRow>> {
     let mut stmt = conn.prepare(
+        // 只取本模型名册(Part4-T6):跨向量空间的质心绝不进入最近质心匹配。
         "SELECT p.id, p.centroid, p.face_count, p.cover_face_id, COALESCE(f.quality, 0.0)
          FROM persons p
          LEFT JOIN faces f ON f.id = p.cover_face_id
-         WHERE p.centroid IS NOT NULL",
+         WHERE p.centroid IS NOT NULL AND p.model_name = ?1",
     )?;
-    let rows = stmt.query_map([], |row| {
+    let rows = stmt.query_map(params![model_name], |row| {
         Ok(PersonRow {
             id: row.get(0)?,
             centroid: row.get(1)?,
@@ -3595,16 +3866,21 @@ pub struct PersonClusterUpdate {
 /// then set `faces.person_id` for every face in each update.
 /// 在单个事务中应用增量聚类决策：插入新人物（经 `last_insert_rowid` 解析真实 id）、更新既有
 /// 人物的质心/计数/封面，然后为每条更新里的所有脸设置 `faces.person_id`。
-pub fn apply_face_clusters(conn: &Connection, updates: &[PersonClusterUpdate]) -> Result<()> {
+pub fn apply_face_clusters(
+    conn: &Connection,
+    model_name: &str,
+    updates: &[PersonClusterUpdate],
+) -> Result<()> {
     if updates.is_empty() {
         return Ok(());
     }
     let tx = conn.unchecked_transaction()?;
     for u in updates {
         let person_id = if u.id < 0 {
+            // 新人物随其向量空间落 model_name(Part4-T6:名册按模型隔离)。
             tx.execute(
-                "INSERT INTO persons (cover_face_id, centroid, face_count) VALUES (?1, ?2, ?3)",
-                params![u.cover_face_id, u.centroid, u.face_count],
+                "INSERT INTO persons (cover_face_id, centroid, face_count, model_name) VALUES (?1, ?2, ?3, ?4)",
+                params![u.cover_face_id, u.centroid, u.face_count, model_name],
             )?;
             tx.last_insert_rowid()
         } else {
@@ -3644,9 +3920,13 @@ pub struct PersonReclusterRow {
 
 /// Load every person (with flags + stored centroid) for the full re-cluster rebuild.
 /// 加载全部人物（含标志位 + 库存质心），供全量重聚类重建。
-pub fn get_persons_for_recluster(conn: &Connection) -> Result<Vec<PersonReclusterRow>> {
-    let mut stmt = conn.prepare("SELECT id, is_named, is_ignored, centroid FROM persons")?;
-    let rows = stmt.query_map([], |row| {
+pub fn get_persons_for_recluster(
+    conn: &Connection,
+    model_name: &str,
+) -> Result<Vec<PersonReclusterRow>> {
+    let mut stmt =
+        conn.prepare("SELECT id, is_named, is_ignored, centroid FROM persons WHERE model_name=?1")?;
+    let rows = stmt.query_map(params![model_name], |row| {
         let centroid: Option<Vec<u8>> = row.get(3)?;
         Ok(PersonReclusterRow {
             id: row.get(0)?,
@@ -3733,9 +4013,10 @@ pub fn rebuild_person_clusters(
     )?;
     for u in updates {
         let person_id = if u.id < 0 {
+            // 同 apply_face_clusters:新人物落本模型名册(Part4-T6)。
             tx.execute(
-                "INSERT INTO persons (cover_face_id, centroid, face_count) VALUES (?1, ?2, ?3)",
-                params![u.cover_face_id, u.centroid, u.face_count],
+                "INSERT INTO persons (cover_face_id, centroid, face_count, model_name) VALUES (?1, ?2, ?3, ?4)",
+                params![u.cover_face_id, u.centroid, u.face_count, model_name],
             )?;
             tx.last_insert_rowid()
         } else {
@@ -3754,10 +4035,11 @@ pub fn rebuild_person_clusters(
         }
     }
     // 清碎片：不再被任何脸引用的"未命名非忽略"人物。子查询已滤 NULL，故 NOT IN 安全。
+    // 限定本模型(Part4-T6):其他模型的名册不参与本次重建,不得被当碎片误删。
     tx.execute(
-        "DELETE FROM persons WHERE is_named=0 AND is_ignored=0
+        "DELETE FROM persons WHERE is_named=0 AND is_ignored=0 AND model_name=?1
          AND id NOT IN (SELECT person_id FROM faces WHERE person_id IS NOT NULL)",
-        [],
+        params![model_name],
     )?;
     tx.commit()?;
     Ok(())
@@ -4744,7 +5026,7 @@ pub fn get_exotic_plugin(
     let row = conn
         .query_row(
             "SELECT plugin_id, version, manifest_hash, package_sequence, install_state,
-                    installed_at, updated_at
+                    installed_at, updated_at, entitlement_source
              FROM exotic_plugins WHERE plugin_id=?1",
             params![plugin_id],
             |row| {
@@ -4756,6 +5038,7 @@ pub fn get_exotic_plugin(
                     install_state: row.get(4)?,
                     installed_at: row.get(5)?,
                     updated_at: row.get(6)?,
+                    entitlement_source: row.get(7)?,
                 })
             },
         )
@@ -4771,14 +5054,16 @@ pub fn upsert_exotic_plugin(
 ) -> Result<()> {
     conn.execute(
         "INSERT INTO exotic_plugins
-            (plugin_id, version, manifest_hash, package_sequence, install_state, installed_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            (plugin_id, version, manifest_hash, package_sequence, install_state, installed_at,
+             updated_at, entitlement_source)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
          ON CONFLICT(plugin_id) DO UPDATE SET
             version=excluded.version,
             manifest_hash=excluded.manifest_hash,
             package_sequence=excluded.package_sequence,
             install_state=excluded.install_state,
-            updated_at=excluded.updated_at",
+            updated_at=excluded.updated_at,
+            entitlement_source=excluded.entitlement_source",
         params![
             rec.plugin_id,
             rec.version,
@@ -4787,6 +5072,7 @@ pub fn upsert_exotic_plugin(
             rec.install_state,
             rec.installed_at,
             rec.updated_at,
+            rec.entitlement_source,
         ],
     )?;
     Ok(())
@@ -5172,6 +5458,17 @@ pub fn upsert_document_meta(
     Ok(())
 }
 
+/// 取媒体项的 file_format(doc_subtype 回填用权威源,不信前端回传;不存在返回 None)。
+pub fn get_item_file_format(conn: &Connection, item_id: i64) -> Result<Option<String>> {
+    conn.query_row(
+        "SELECT file_format FROM media_items WHERE id=?1",
+        params![item_id],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(AppError::from)
+}
+
 /// 取文档元数据（不存在返回 None）。
 pub fn get_document_meta(conn: &Connection, item_id: i64) -> Result<Option<DocumentMeta>> {
     conn.query_row(
@@ -5187,6 +5484,206 @@ pub fn get_document_meta(conn: &Connection, item_id: i64) -> Result<Option<Docum
     )
     .optional()
     .map_err(AppError::from)
+}
+
+#[cfg(test)]
+mod canonical_plan_tests {
+    use super::*;
+
+    /// EXPLAIN QUERY PLAN 的 detail 列拼串（参数以 NULL 占位绑定——EXPLAIN 不执行查询体）。
+    fn plan(c: &Connection, sql: &str) -> String {
+        let mut stmt = c.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+        let nulls: Vec<rusqlite::types::Value> = (0..stmt.parameter_count())
+            .map(|_| rusqlite::types::Value::Null)
+            .collect();
+        let rows: Vec<String> = stmt
+            .query_map(rusqlite::params_from_iter(nulls), |r| r.get::<_, String>(3))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        rows.join(" | ")
+    }
+
+    /// S3.7 计划锁定：默认全量视图必须顺序全表扫（unary + 压制 partial index 匹配）——
+    /// 索引序遍历逐行随机回表，1M 胖表冷启动实测 6.6s；选择性视图仍走各自索引。
+    /// 若 push_where_predicates 的基础谓词措辞改动导致 ends_with 失配，本测试即红。
+    #[test]
+    fn canonical_default_view_scans_table_not_sort_index() {
+        let c = Connection::open_in_memory().unwrap();
+        crate::db::migration::run_migrations(&c).unwrap();
+
+        // 默认全量视图：全表扫，不得走 idx_media_sort。
+        let (sql, _) = canonical_layout_sql(&MediaFilter::default());
+        assert!(
+            !sql.contains("ORDER BY"),
+            "canonical 查询不应再下发 ORDER BY: {sql}"
+        );
+        let p = plan(&c, &sql);
+        assert!(
+            !p.contains("idx_media_sort"),
+            "默认视图不得走 idx_media_sort 随机回表: {p}"
+        );
+
+        // 目录视图：保持索引查找（unary + 压制不得波及选择性谓词）。
+        let dir = MediaFilter {
+            directory_id: Some(5),
+            ..Default::default()
+        };
+        let (sql, _) = canonical_layout_sql(&dir);
+        let p = plan(&c, &sql);
+        assert!(
+            p.contains("idx_media_directory"),
+            "目录视图应保持 idx_media_directory 查找: {p}"
+        );
+    }
+
+    /// S3.7 对照基准(非门控,--release + --ignored 手动跑):1M **胖表**(thumb_path/
+    /// thumbhash 全填,sort_datetime 与 rowid 去相关=复现「索引序≠物理序」的随机回表
+    /// 形态)上,老计划(ORDER BY 吃 idx_media_sort)与新路径(顺序扫+内存置换排序)
+    /// 同库对跑。清库后的瘦表两者都快,无法区分——本基准是修复有效性的唯一本地证据。
+    /// cargo test --release --lib bench_canonical_fat_table_1m -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn bench_canonical_fat_table_1m() {
+        use std::time::Instant;
+        const N: i64 = 1_000_000;
+        let path = std::env::temp_dir().join(format!("picasa_bench_fat_{}.db", std::process::id()));
+        for suffix in ["", "-wal", "-shm"] {
+            let mut p = path.as_os_str().to_owned();
+            p.push(suffix);
+            let _ = std::fs::remove_file(std::path::PathBuf::from(p));
+        }
+        let c = Connection::open(&path).unwrap();
+        // 页缓存对齐生产(64MB);sync OFF 仅加速灌数据,不影响读基准。
+        c.execute_batch(
+            "PRAGMA journal_mode=WAL; PRAGMA synchronous=OFF; PRAGMA cache_size=-64000;",
+        )
+        .unwrap();
+        crate::db::migration::run_migrations(&c).unwrap();
+        c.execute_batch("PRAGMA foreign_keys=OFF;").unwrap();
+        c.execute_batch("INSERT INTO scan_roots (id, path, alias) VALUES (1, '/r', 'R');")
+            .unwrap();
+        {
+            let tx = c.unchecked_transaction().unwrap();
+            {
+                let mut stmt = tx
+                    .prepare("INSERT INTO directories (id, root_id, rel_path, name) VALUES (?1, 1, ?2, ?3)")
+                    .unwrap();
+                for d in 0..1000i64 {
+                    stmt.execute(params![d + 10, format!("dir/{d:04}"), format!("{d:04}")])
+                        .unwrap();
+                }
+            }
+            tx.commit().unwrap();
+        }
+        {
+            let tx = c.unchecked_transaction().unwrap();
+            {
+                let mut stmt = tx
+                    .prepare(
+                        "INSERT INTO media_items
+                            (id, directory_id, file_name, file_size, file_mtime, file_format,
+                             media_type, width, height, sort_datetime, cache_key, availability,
+                             thumb_status, thumb_path, thumbhash)
+                         VALUES (?1, ?2, ?3, 2048000, 0, 'jpg', 'image', 1600, 1200, ?4, 0,
+                                 'online', 1, ?5, ?6)",
+                    )
+                    .unwrap();
+                // LCG 伪随机时间戳:索引序与 rowid/物理序完全去相关(免 rand 依赖)。
+                let mut seed: u64 = 0x243F_6A88_85A3_08D3;
+                for i in 0..N {
+                    seed = seed
+                        .wrapping_mul(6364136223846793005)
+                        .wrapping_add(1442695040888963407);
+                    let ts = ((seed >> 16) & 0x3FFF_FFFF) as i64;
+                    let thumb = format!(
+                        "C:/Users/x/AppData/Local/picasa-next/cache/thumbs/{:02x}/{:016x}.webp",
+                        i & 0xff,
+                        seed
+                    );
+                    stmt.execute(params![
+                        i + 1,
+                        (i % 1000) + 10,
+                        format!("IMG_{i:07}.jpg"),
+                        ts,
+                        thumb,
+                        vec![7u8; 25],
+                    ])
+                    .unwrap();
+                }
+            }
+            tx.commit().unwrap();
+        }
+        let db_mb = std::fs::metadata(&path)
+            .map(|m| m.len() / 1_048_576)
+            .unwrap_or(0);
+        println!("fat db: {db_mb}MB, {N} rows");
+
+        // 老计划 SQL(仅作历史对照,非生产路径):ORDER BY 吃 idx_media_sort → 逐行随机回表。
+        let old_sql = "SELECT m.id, m.width, m.height, m.file_size, m.sort_datetime, m.file_format, m.media_type, m.is_live_photo, m.duration_ms, m.thumb_status, m.thumb_path, m.thumbhash, m.is_favorited, m.directory_id as dir_id, m.availability, m.rating, m.color_label, NULL as similarity FROM media_items m WHERE m.is_deleted=0 AND m.companion_of IS NULL ORDER BY m.sort_datetime DESC, m.id DESC";
+        for round in 1..=2 {
+            let t = Instant::now();
+            let mut stmt = c.prepare(old_sql).unwrap();
+            let n = stmt
+                .query_map([], map_layout_item)
+                .unwrap()
+                .filter(|r| r.is_ok())
+                .count();
+            println!(
+                "old(index-order) round{round}: {:.0}ms ({n} rows)",
+                t.elapsed().as_secs_f64() * 1e3
+            );
+        }
+        for round in 1..=2 {
+            let t = Instant::now();
+            let items = query_layout_items_canonical(&c, &MediaFilter::default()).unwrap();
+            println!(
+                "new(scan+sort) round{round}: {:.0}ms ({} rows)",
+                t.elapsed().as_secs_f64() * 1e3,
+                items.len()
+            );
+            // 序等价全查:严格 (ts DESC, id DESC)。
+            assert!(items
+                .windows(2)
+                .all(|w| (w[1].sort_datetime, w[1].id) < (w[0].sort_datetime, w[0].id)));
+        }
+        drop(c);
+        for suffix in ["", "-wal", "-shm"] {
+            let mut p = path.as_os_str().to_owned();
+            p.push(suffix);
+            let _ = std::fs::remove_file(std::path::PathBuf::from(p));
+        }
+    }
+
+    /// S3.7:sort_canonical 输出序与被替换的 SQL ORDER 等价——(ts DESC, id DESC),
+    /// 同 ts 由 id DESC 裁决。
+    #[test]
+    fn sort_canonical_matches_sql_order_semantics() {
+        let mk = |id: i64, ts: i64| crate::db::models::LayoutItem {
+            id,
+            width: 100,
+            height: 100,
+            file_size: 0,
+            sort_datetime: ts,
+            file_format: "jpg".into(),
+            media_type: "image".into(),
+            is_live_photo: false,
+            duration_ms: None,
+            thumb_status: 0,
+            thumb_path: None,
+            thumbhash: None,
+            is_favorited: false,
+            rating: 0,
+            color_label: 0,
+            availability: "online".into(),
+            dir_id: None,
+            similarity: None,
+        };
+        let items = vec![mk(1, 100), mk(3, 200), mk(2, 200), mk(4, 50)];
+        let sorted = sort_canonical(items);
+        let order: Vec<i64> = sorted.iter().map(|it| it.id).collect();
+        assert_eq!(order, vec![3, 2, 1, 4], "(ts DESC, id DESC) 序");
+    }
 }
 
 #[cfg(test)]
@@ -5387,6 +5884,18 @@ mod fast_scan_upsert_recovery_tests {
         }
     }
 
+    /// 同 `item` 但可指定 file_size 与 cache_key(size 变 → 直接 SourceChanged;
+    /// size 同 → SuspectChanged,见 content_hash 三环测试)。
+    fn item_sized(name: &str, mtime: i64, size: i64, cache_key: i64) -> FastScanItem {
+        FastScanItem {
+            file_size: size,
+            file_mtime: mtime,
+            sort_datetime: mtime,
+            cache_key,
+            ..item(name, 0)
+        }
+    }
+
     fn insert_missing(c: &Connection, id: i64, name: &str, mtime: i64) {
         c.execute(
             "INSERT INTO media_items
@@ -5423,12 +5932,12 @@ mod fast_scan_upsert_recovery_tests {
         assert_eq!(deleted, 0, "恢复不得碰 is_deleted");
     }
 
-    /// 变更重现（mtime 变）：SourceChanged + availability 经 CASE 恢复。
+    /// 变更重现(mtime+size 变=内容确变):SourceChanged + availability 经 CASE 恢复。
     #[test]
     fn changed_reappearance_recovers_missing() {
         let c = mem_db();
         insert_missing(&c, 2, "b.jpg", 100);
-        let out = upsert_fast_scan_item(&c, &item("b.jpg", 200), None).unwrap();
+        let out = upsert_fast_scan_item(&c, &item_sized("b.jpg", 200, 20, 0), None).unwrap();
         assert_eq!(out, UpsertOutcome::SourceChanged(2));
         assert_eq!(avail(&c, 2), "online");
     }
@@ -5537,8 +6046,8 @@ mod fast_scan_upsert_recovery_tests {
             "未变更不应删向量"
         );
 
-        // mtime 变 → SourceChanged → meta 全删 + 派生退回 pending + AI/人脸失效（T4）。
-        let out = upsert_fast_scan_item(&c, &item("d.jpg", 200), None).unwrap();
+        // mtime+size 变 → SourceChanged → meta 全删 + 派生退回 pending + AI/人脸失效(T4)。
+        let out = upsert_fast_scan_item(&c, &item_sized("d.jpg", 200, 20, 0), None).unwrap();
         assert_eq!(out, UpsertOutcome::SourceChanged(5));
         assert_eq!(meta_count(&c), 0, "SourceChanged 应删除全部旧 meta");
         assert_eq!(
@@ -5645,10 +6154,132 @@ mod fast_scan_upsert_recovery_tests {
             [],
         )
         .unwrap();
-        // mtime 变 → SourceChanged，传入卷 9，但既有卷 3 应被 COALESCE 保留。
-        let out = upsert_fast_scan_item(&c, &item("bound.jpg", 200), Some(9)).unwrap();
+        // mtime+size 变 → SourceChanged,传入卷 9,但既有卷 3 应被 COALESCE 保留。
+        let out = upsert_fast_scan_item(&c, &item_sized("bound.jpg", 200, 20, 0), Some(9)).unwrap();
         assert_eq!(out, UpsertOutcome::SourceChanged(11));
         assert_eq!(vol_of(&c, 11), Some(3), "既有卷不应被覆盖");
+    }
+
+    /// Part2 §3.3.2:可疑变更(mtime 变 size 同)→ upsert 零写返回 SuspectChanged,
+    /// 失效不发生、DB mtime 未动(等待事务外指纹定案)。
+    #[test]
+    fn suspect_change_returns_without_writes() {
+        let c = mem_db();
+        insert_missing(&c, 30, "s.jpg", 100);
+        c.execute("INSERT INTO image_meta (item_id) VALUES (30)", [])
+            .unwrap();
+        let out = upsert_fast_scan_item(&c, &item("s.jpg", 200), None).unwrap();
+        assert_eq!(out, UpsertOutcome::SuspectChanged(30));
+        let (mtime, meta): (i64, i64) = c
+            .query_row(
+                "SELECT file_mtime, (SELECT count(*) FROM image_meta WHERE item_id=30)
+                 FROM media_items WHERE id=30",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(mtime, 100, "未定案不得写 mtime");
+        assert_eq!(meta, 1, "未定案不得失效 meta");
+    }
+
+    /// Part2 §3.3.2 三环:NULL 基线保守失效+建基线;同 hash touch(保留 meta 与 cache_key);
+    /// 变 hash 失效+基线更新;指纹失败保守失效+基线置 NULL;size 变直接失效+陈旧基线清 NULL。
+    #[test]
+    fn content_hash_three_rings() {
+        let c = mem_db();
+        c.execute(
+            "INSERT INTO media_items
+                (id, directory_id, file_name, file_size, file_mtime, file_format,
+                 media_type, width, height, sort_datetime, cache_key)
+             VALUES (40, 1, 'r.jpg', 10, 100, 'jpg', 'image', 0, 0, 100, 777)",
+            [],
+        )
+        .unwrap();
+        let hash_of = |c: &Connection| -> Option<String> {
+            c.query_row(
+                "SELECT content_hash FROM media_items WHERE id=40",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        let seed_meta = |c: &Connection| {
+            c.execute("INSERT INTO image_meta (item_id) VALUES (40)", [])
+                .unwrap();
+        };
+        let meta_count = |c: &Connection| -> i64 {
+            c.query_row(
+                "SELECT count(*) FROM image_meta WHERE item_id=40",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+
+        // 环② NULL 兜底:无基线 → 保守 SourceChanged + 写回建立基线。
+        seed_meta(&c);
+        let out = resolve_suspect_change(
+            &c,
+            40,
+            &item_sized("r.jpg", 200, 10, 888),
+            None,
+            Some("sha256:aaa"),
+        )
+        .unwrap();
+        assert_eq!(out, UpsertOutcome::SourceChanged(40));
+        assert_eq!(hash_of(&c).as_deref(), Some("sha256:aaa"), "基线已建立");
+        assert_eq!(meta_count(&c), 0, "保守失效应删 meta");
+
+        // 环③ 同 hash → touch:mtime 更新、meta 与 cache_key 保留(既有派生继续命中)。
+        seed_meta(&c);
+        let out = resolve_suspect_change(
+            &c,
+            40,
+            &item_sized("r.jpg", 300, 10, 999),
+            None,
+            Some("sha256:aaa"),
+        )
+        .unwrap();
+        assert_eq!(out, UpsertOutcome::Unchanged(40));
+        let (mtime, key): (i64, i64) = c
+            .query_row(
+                "SELECT file_mtime, cache_key FROM media_items WHERE id=40",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(mtime, 300, "touch 应更新 mtime(下次扫描回 Unchanged)");
+        assert_eq!(key, 888, "touch 保留旧 cache_key,既有派生继续命中");
+        assert_eq!(meta_count(&c), 1, "touch 不失效 meta");
+
+        // 环① hash 变 → SourceChanged + 基线更新。
+        let out = resolve_suspect_change(
+            &c,
+            40,
+            &item_sized("r.jpg", 400, 10, 111),
+            None,
+            Some("sha256:bbb"),
+        )
+        .unwrap();
+        assert_eq!(out, UpsertOutcome::SourceChanged(40));
+        assert_eq!(hash_of(&c).as_deref(), Some("sha256:bbb"), "基线随内容更新");
+        assert_eq!(meta_count(&c), 0);
+
+        // 指纹计算失败 → 保守 SourceChanged + 基线置 NULL(下次仍走兜底)。
+        let out =
+            resolve_suspect_change(&c, 40, &item_sized("r.jpg", 500, 10, 222), None, None).unwrap();
+        assert_eq!(out, UpsertOutcome::SourceChanged(40));
+        assert_eq!(hash_of(&c), None, "失败不得留下可信假基线");
+
+        // size 变 → upsert 直接 SourceChanged(不算 hash),陈旧基线清 NULL。
+        c.execute(
+            "UPDATE media_items SET content_hash='sha256:old' WHERE id=40",
+            [],
+        )
+        .unwrap();
+        let out = upsert_fast_scan_item(&c, &item_sized("r.jpg", 600, 20, 333), None).unwrap();
+        assert_eq!(out, UpsertOutcome::SourceChanged(40));
+        assert_eq!(hash_of(&c), None, "size 变后旧基线作废,须清 NULL");
     }
 }
 
@@ -6132,6 +6763,7 @@ mod exotic_dao_tests {
             install_state: crate::exotic::install_state::INSTALLED.into(),
             installed_at: 100,
             updated_at: 100,
+            entitlement_source: "direct".into(),
         };
         upsert_exotic_plugin(&c, &rec).unwrap();
         let got = get_exotic_plugin(&c, PID).unwrap().unwrap();
@@ -6796,6 +7428,79 @@ mod selection_resolve_tests {
         c
     }
 
+    /// S1 序等价契约对拍：canonical 基准序 + items_cache::derive_order 的内存派生序，必须与
+    /// query_layout_items（push_order_by 的 SQL ORDER）**逐项一致** —— get_view_ids（flat_ids）
+    /// 与 view_to_sql（SelectAll 解析）分别源于这两条路径，错位即选区漂移。fixture 刻意包含：
+    /// 两根同 rel_path（BINARY 并列 → 组内 (ts,id) 跨目录交错）、大小写与 Unicode rel_path
+    /// （BINARY 字节序：大写 < 小写 < 多字节）、同 sort_datetime（id tiebreaker）、空 rel_path 根目录。
+    #[test]
+    fn canonical_derive_order_matches_sql_order() {
+        let c = Connection::open_in_memory().unwrap();
+        crate::db::migration::run_migrations(&c).unwrap();
+        c.execute_batch(
+            "INSERT INTO scan_roots (id, path, alias) VALUES (1, '/r1', 'R1'), (2, '/r2', 'R2');
+             INSERT INTO directories (id, root_id, rel_path, name) VALUES
+                 (10, 1, '', 'r1'),
+                 (11, 1, 'Albums', 'Albums'),
+                 (12, 1, 'albums', 'albums'),
+                 (13, 1, '相册', '相册'),
+                 (20, 2, 'albums', 'albums');
+             INSERT INTO media_items (id, directory_id, file_name, file_size, file_mtime, file_format, media_type, width, height, sort_datetime, cache_key) VALUES
+                 (1, 10, 'a.jpg', 1, 1, 'jpg', 'image', 100, 100, 500, 1),
+                 (2, 11, 'b.jpg', 1, 1, 'jpg', 'image', 100, 100, 300, 2),
+                 (3, 12, 'c.jpg', 1, 1, 'jpg', 'image', 100, 100, 400, 3),
+                 (4, 20, 'd.jpg', 1, 1, 'jpg', 'image', 100, 100, 400, 4),
+                 (5, 12, 'e.jpg', 1, 1, 'jpg', 'image', 100, 100, 400, 5),
+                 (6, 13, 'f.jpg', 1, 1, 'jpg', 'image', 100, 100, 100, 6),
+                 (7, 10, 'g.jpg', 1, 1, 'jpg', 'image', 100, 100, 500, 7);",
+        )
+        .unwrap();
+
+        let filter = MediaFilter::default();
+        let canonical = query_layout_items_canonical(&c, &filter).unwrap();
+        assert_eq!(canonical.len(), 7, "canonical 应取回全部 7 项");
+        let dir_labels = query_dir_labels(&c).unwrap();
+        let data = crate::layout::items_cache::ItemsCacheData {
+            filter_key: String::new(),
+            order: crate::layout::items_cache::CachedOrder::Canonical,
+            data_version: 0,
+            id_to_idx: crate::layout::items_cache::build_id_index(&canonical),
+            dir_rank: crate::layout::items_cache::build_dir_rank(&dir_labels),
+            items: canonical,
+            dir_labels,
+            filter: filter.clone(),
+            reusable: true,
+            median_aspect: std::sync::OnceLock::new(),
+            perm_memo: std::sync::Mutex::new(None),
+        };
+
+        for group_by in ["date", "none", "folder"] {
+            for sort_order in ["desc", "asc"] {
+                let sql_ids: Vec<i64> = query_layout_items(
+                    &c,
+                    &filter,
+                    Some(group_by),
+                    Some("datetime"),
+                    Some(sort_order),
+                    false,
+                )
+                .unwrap()
+                .iter()
+                .map(|it| it.id)
+                .collect();
+                let derived_ids: Vec<i64> =
+                    crate::layout::items_cache::derive_order(&data, group_by, sort_order)
+                        .iter()
+                        .map(|it| it.id)
+                        .collect();
+                assert_eq!(
+                    derived_ids, sql_ids,
+                    "内存派生序 != SQL 序：group_by={group_by} sort_order={sort_order}"
+                );
+            }
+        }
+    }
+
     fn all_view(version: u64) -> Box<ViewDescriptor> {
         Box::new(ViewDescriptor {
             scope: ViewScope::All,
@@ -7348,5 +8053,128 @@ mod r2_6_query_tests {
         assert_eq!(fs(2), 0);
         assert_eq!(fs(3), 0);
         assert_eq!(fs(9), 2, "非 image 不动");
+    }
+
+    /// T_t3(Part4-T6):sync_face_status 把全局 face_status 指向目标模型的 faces 覆盖——
+    /// 有该模型脸→2、无脸→0、只有他模型脸→0(向量空间不同不算覆盖);软删行不动。
+    #[test]
+    fn sync_face_status_batched_mirrors_model_coverage() {
+        let c = mem_db();
+        add_item(&c, 1, 10, "image", 0, 0, 0, None); // m1 有脸,face=0 → 2
+        add_item(&c, 2, 10, "image", 0, 0, 0, None); // 无脸,face=2 → 0
+        add_item(&c, 3, 10, "image", 0, 0, 0, None); // 仅 m2 有脸,face=2 → 0
+        add_item(&c, 4, 10, "image", 0, 1, 0, None); // 软删,不动
+        c.execute_batch(
+            "INSERT INTO faces (id, item_id, model_name, bbox_x, bbox_y, bbox_w, bbox_h,
+                                det_score, quality, embedding, is_confirmed)
+             VALUES (1, 1, 'm1', 0.1, 0.1, 0.2, 0.2, 0.9, 0.5, X'0000803F', 0),
+                    (2, 3, 'm2', 0.1, 0.1, 0.2, 0.2, 0.9, 0.5, X'0000803F', 0);
+             UPDATE media_items SET face_status=2 WHERE id IN (2,3,4);",
+        )
+        .unwrap();
+
+        let db = Mutex::new(c);
+        super::sync_face_status_batched(&db, "m1", 1).unwrap();
+
+        let c = db.lock().unwrap();
+        let fs = |id: i64| -> i64 {
+            c.query_row(
+                "SELECT face_status FROM media_items WHERE id=?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(fs(1), 2, "有本模型脸 → Done");
+        assert_eq!(fs(2), 0, "无脸 → Pending(由新轨重扫)");
+        assert_eq!(fs(3), 0, "他模型脸不算本模型覆盖");
+        assert_eq!(fs(4), 2, "软删行不参与同步");
+    }
+
+    /// T_t3(Part4-T6):reset 按模型隔离——目标模型 faces+persons 删净,他模型名册保留。
+    #[test]
+    fn reset_face_data_keeps_other_models_roster() {
+        let c = mem_db();
+        add_item(&c, 1, 10, "image", 0, 0, 0, None);
+        c.execute_batch(
+            "INSERT INTO persons (id, name, model_name, centroid, face_count)
+             VALUES (1, NULL, 'm1', NULL, 1), (2, NULL, 'm2', NULL, 1);
+             INSERT INTO faces (id, item_id, person_id, model_name, bbox_x, bbox_y, bbox_w, bbox_h,
+                                det_score, quality, embedding, is_confirmed)
+             VALUES (1, 1, 1, 'm1', 0.1, 0.1, 0.2, 0.2, 0.9, 0.5, X'0000803F', 0),
+                    (2, 1, 2, 'm2', 0.1, 0.1, 0.2, 0.2, 0.9, 0.5, X'0000803F', 0);",
+        )
+        .unwrap();
+
+        let db = Mutex::new(c);
+        super::reset_face_data_batched(&db, "m1", 10).unwrap();
+
+        let c = db.lock().unwrap();
+        let n = |sql: &str| -> i64 { c.query_row(sql, [], |r| r.get(0)).unwrap() };
+        assert_eq!(n("SELECT COUNT(*) FROM faces WHERE model_name='m1'"), 0);
+        assert_eq!(
+            n("SELECT COUNT(*) FROM faces WHERE model_name='m2'"),
+            1,
+            "他模型脸保留"
+        );
+        assert_eq!(n("SELECT COUNT(*) FROM persons WHERE model_name='m1'"), 0);
+        assert_eq!(
+            n("SELECT COUNT(*) FROM persons WHERE model_name='m2'"),
+            1,
+            "他模型名册保留(用户资产)"
+        );
+    }
+
+    /// T_t3(Part4-T6):增量聚类新建人物随向量空间落 model_name;全量重建的碎片清理只
+    /// 触达本模型——他模型的空名册人物不被误删。
+    #[test]
+    fn cluster_writes_stamp_model_and_rebuild_scoped() {
+        let c = mem_db();
+        add_item(&c, 1, 10, "image", 0, 0, 0, None);
+        c.execute_batch(
+            "INSERT INTO persons (id, name, model_name, centroid, face_count)
+             VALUES (7, NULL, 'm2', NULL, 0);
+             INSERT INTO faces (id, item_id, model_name, bbox_x, bbox_y, bbox_w, bbox_h,
+                                det_score, quality, embedding, is_confirmed)
+             VALUES (1, 1, 'm1', 0.1, 0.1, 0.2, 0.2, 0.9, 0.5, X'0000803F', 0);",
+        )
+        .unwrap();
+
+        // 增量:新人物(id<0 占位)落 m1。
+        let upd = super::PersonClusterUpdate {
+            id: -1,
+            centroid: vec![0, 0, 128, 63],
+            face_count: 1,
+            cover_face_id: 1,
+            face_ids: vec![1],
+        };
+        super::apply_face_clusters(&c, "m1", &[upd]).unwrap();
+        let model: String = c
+            .query_row(
+                "SELECT model_name FROM persons WHERE id=(SELECT person_id FROM faces WHERE id=1)",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(model, "m1", "增量新建人物落其向量空间");
+
+        // 全量重建 m1(空 updates → m1 未命名人物全按碎片清理);m2 的空名册人物保留。
+        super::rebuild_person_clusters(&c, "m1", &[]).unwrap();
+        let m2: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM persons WHERE model_name='m2'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(m2, 1, "他模型名册不被重建碎片清理误删");
+        let m1: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM persons WHERE model_name='m1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(m1, 0, "本模型未命名空人物按碎片清走");
     }
 }

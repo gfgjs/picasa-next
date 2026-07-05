@@ -1,7 +1,26 @@
 // src-tauri/src/lib.rs
-// src-tauri/src/lib.rs
 //! Library entry point — module declarations and Tauri app builder.
 //! 库入口点 — 模块声明和 Tauri 应用程序构建器。
+
+// ── 渠道 feature 互斥守卫(Part7-T10 / Part7 §3.6.1)─────────────────────────────────
+// Cargo feature 是叠加语义:`--features channel-msstore` 不会关掉 default 里的
+// channel-direct,两渠道并存 → 必须编译期直接报错,而非编出渠道语义混乱的二进制。
+// ① 多开互斥(两两组合)
+#[cfg(any(
+    all(feature = "channel-direct", feature = "channel-msstore"),
+    all(feature = "channel-direct", feature = "channel-steam"),
+    all(feature = "channel-msstore", feature = "channel-steam"),
+))]
+compile_error!("channel-direct / channel-msstore / channel-steam 互斥,只能开一个;非 direct 构建须加 --no-default-features");
+
+// ② 零 channel 守卫:--no-default-features 后若忘带任一 channel,三 feature 全关、
+//    Provider 工厂(Part7-T12)将无分支可选 → 显式报错,而非编出无授权渠道的残废二进制。
+#[cfg(not(any(
+    feature = "channel-direct",
+    feature = "channel-msstore",
+    feature = "channel-steam",
+)))]
+compile_error!("必须恰好开启一个 channel:channel-direct / channel-msstore / channel-steam(--no-default-features 后须显式 --features 带上目标 channel)");
 
 pub mod ai;
 pub mod audio;
@@ -44,9 +63,19 @@ use crate::db::queries::get_config;
 use crate::db::{create_read_pool, create_write_connection};
 use crate::state::AppState;
 
+/// T13 渠道占位(Part6 §8.4):Steam 构建的启动自检桩——Part8 接入 steamworks 后实装
+/// `SteamAPI_RestartAppIfNecessary`(非 Steam 拉起时经 Steam 重启并退出);现仅日志,
+/// 保 channel-steam 组合可编译(Part7-T10 三渠道互斥守卫在本文件顶部)。
+#[cfg(feature = "channel-steam")]
+fn steam_restart_if_necessary_stub() {
+    tracing::info!("channel-steam 构建:SteamAPI_RestartAppIfNecessary 占位(Part8 实装)");
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    #[cfg(feature = "channel-steam")]
+    steam_restart_if_necessary_stub();
+    let builder = tauri::Builder::default()
         // ── Plugins ───────────────────────────────────────────────────────
         // ── 插件 ───────────────────────────────────────────────────────
         .plugin(
@@ -61,11 +90,30 @@ pub fn run() {
                 // splashscreen 出现前闪烁（setup() 来不及 hide() 它）。
                 .with_state_flags(StateFlags::SIZE | StateFlags::POSITION | StateFlags::MAXIMIZED)
                 .skip_initial_state("splashscreen")
-                .build()
+                .build(),
         )
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_shell::init());
+    // T7/T9(Part7 §3.5):updater 仅 direct 渠道编入+注册(msstore/steam 物理排除——
+    // Store 政策禁「下载-执行」自更新;dep 经 channel-direct feature 绑定)。更新检查走
+    // Rust 侧 API(app.updater()),**不开放 webview ACL 权限/不引前端包**——现无更新 UI
+    // 消费者,IPC 面越小越好;Part8 做更新 UI 时再定「Rust 驱动+事件通知」或「JS 驱动
+    // +capability」。签名公钥/endpoints 见 tauri.direct-release.conf.json(dev 密钥,
+    // 首发前轮换或转正,.gitignore .release-keys 注有决策链)。
+    // T11/§3.6.5①(Part7):updater 配置块从基座 conf 迁入 direct 发布 overlay——tauri 的
+    // conf 合并只能加/改不能删,Store 渠道打包进安装包的 conf 必须**基座天生干净**。因此
+    // direct 渠道内再按「编译进 context 的最终配置是否携带 plugins.updater」决定注册:
+    // 插件 init 对缺配置是硬失败(Config.pubkey 必填),dev/无 overlay 构建不带块 → 不注册,
+    // tauri dev 与普通 build 不受影响;正式 direct 发布走 tauri:build:direct-release。
+    let tauri_context = tauri::generate_context!();
+    #[cfg(feature = "channel-direct")]
+    let builder = if tauri_context.config().plugins.0.contains_key("updater") {
+        builder.plugin(tauri_plugin_updater::Builder::new().build())
+    } else {
+        builder
+    };
+    builder
         // ── App setup ─────────────────────────────────────────────────────
         // ── 应用程序设置 ─────────────────────────────────────────────────────
         .setup(|app| {
@@ -306,6 +354,13 @@ pub fn run() {
             info!("Picasa Next starting up, database path: {:?} | Picasa Next 正在启动，数据库路径: {:?}", db_path, db_path);
             info!("Log level set to: {} | 日志级别已设置为: {}", log_level, log_level);
 
+            // 启动期 WAL 截断（S3.6/S3.7）：必须在 tracing 就绪后执行（否则日志静默丢弃）、
+            // 管线拉起前执行（无并发读者,TRUNCATE 可截干净）。
+            {
+                let conn = db_writer.lock().unwrap();
+                crate::db::connection::checkpoint_wal_at_boot(&conn, &db_path);
+            }
+
             // ── Build AppState ─────────────────────────────────────────────
             // ── 构建 AppState ─────────────────────────────────────────────
             // 内置冷门格式能力目录（编译期嵌入）。解析失败不致命：降级为空目录并告警，
@@ -349,6 +404,7 @@ pub fn run() {
             let app_state_for_task = app_state.clone();
             let app_state_for_coord = app_state.clone();
             let app_state_for_volwatch = app_state.clone();
+            let db_pool_for_gc = app_state.db_read_pool.clone(); // 缓存治理周期任务(下方 h2)用
             app.manage(app_state);
             info!("AppState initialised | 应用状态 (AppState) 初始化完成");
 
@@ -401,10 +457,43 @@ pub fn run() {
             handles_pool.lock().unwrap().push(h1);
 
             let cache_dir_clone = cache_dir_for_task;
+            // 缓存治理周期任务(Part3-T6 / §3.3):对账 GC(删 DB 无主孤儿)→ LRU 上限收敛。
+            // 节奏:启动后 5 分钟首跑(错开上方 3 分钟的 PRAGMA optimize,避开冷启动高峰),
+            // 此后每 24h 一轮;「全量重建完成后即时触发」为 T6 余项,暂未接事件。
+            // epoch 护栏:GC 只删早于进程启动时刻的文件——本会话新写的产物可能尚未落
+            // DB 行(写文件与写行之间有窗口),留到下次会话收敛,见 reconcile_orphan_gc。
+            let gc_epoch = std::time::SystemTime::now();
             let h2 = tauri::async_runtime::spawn(async move {
-                // Delay cache enforcement by 1 minute | 延迟 1 分钟执行缓存清理
-                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
-                crate::thumbnail::cache::enforce_cache_limit(&cache_dir_clone, thumb_cache_max_mb);
+                tokio::time::sleep(std::time::Duration::from_secs(5 * 60)).await;
+                loop {
+                    let pool = db_pool_for_gc.clone();
+                    let cache_dir = cache_dir_clone.clone();
+                    let joined = tauri::async_runtime::spawn_blocking(move || {
+                        // 取 key 全集后连接随作用域即还池,不跨磁盘扫描持有池连接。
+                        let live_keys = match pool.get() {
+                            Ok(conn) => match crate::db::queries::all_cache_keys(&conn) {
+                                Ok(keys) => keys,
+                                Err(e) => {
+                                    tracing::warn!("对账 GC 读取 cache_key 全集失败,本轮跳过 | orphan GC key query failed: {e}");
+                                    return;
+                                }
+                            },
+                            Err(e) => {
+                                tracing::warn!("对账 GC 获取读连接失败,本轮跳过 | orphan GC pool get failed: {e}");
+                                return;
+                            }
+                        };
+                        crate::thumbnail::cache::reconcile_orphan_gc(
+                            &cache_dir, &live_keys, gc_epoch,
+                        );
+                        crate::thumbnail::cache::enforce_cache_limit(&cache_dir, thumb_cache_max_mb);
+                    })
+                    .await;
+                    if let Err(e) = joined {
+                        tracing::warn!("缓存治理任务 join 失败 | cache governance task join failed: {e}");
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(24 * 3600)).await;
+                }
             });
             handles_pool.lock().unwrap().push(h2);
 
@@ -488,9 +577,13 @@ pub fn run() {
             ipc::layout_commands::get_view_ids, // T14.5/T18：按布局序的视图全集 id（Part5 选区前置）
             ipc::layout_commands::get_layout_rows,
             ipc::layout_commands::get_layout_rows_by_y,
+            ipc::layout_commands::get_bucket_rows, // T16 方案B:bucket 段精确取行(B0)
             ipc::layout_commands::get_separator_y_by_group_id,
             ipc::layout_commands::get_item_y_by_id,
             ipc::layout_commands::get_subtree_scroll_target,
+            // H-Lab 横向画廊实验(独立缓存,与生产布局命令平行)
+            ipc::hgallery_commands::compute_h_layout,
+            ipc::hgallery_commands::get_h_blocks_by_x,
             // media
             // media
             ipc::media_commands::get_media_detail,
@@ -610,6 +703,7 @@ pub fn run() {
             ipc::face_commands::list_likely_face_matches,
             ipc::face_commands::list_face_model_registry,
             ipc::face_commands::download_face_model,
+            ipc::face_commands::set_active_face_model,
             // derivation pipeline (video cover/keyframes, doc thumb, audio cover/meta)
             // 派生流水线（视频封面/关键帧、文档缩略图、音频封面/元数据）
             ipc::derive_commands::start_derivation,
@@ -687,7 +781,7 @@ pub fn run() {
                 }
             }
         })
-        .build(tauri::generate_context!())
+        .build(tauri_context)
         .expect("Error while building Tauri application")
         .run(|app_handle, event| {
             match event {

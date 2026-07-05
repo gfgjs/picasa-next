@@ -5,18 +5,18 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Mutex, RwLock};
 use std::time::Instant;
 
 use tokio_util::sync::CancellationToken;
 
-use crate::ai::engine::AiEnginePool;
 use crate::ai::search::EmbeddingCache;
 use crate::db::{DbPool, DbWriter};
 use crate::engine::EngineArena;
 use crate::exotic::CatalogStore;
 use crate::layout::cache::new_layout_cache;
+use crate::layout::items_cache::{new_items_cache, ItemsCache};
 use crate::layout::LayoutCache;
 use crate::thumbnail::generator::ThumbConfig;
 
@@ -38,6 +38,20 @@ pub struct AppState {
     /// In-memory Justified Layout cache.
     /// 内存中的两端对齐布局缓存。
     pub layout_cache: LayoutCache,
+
+    /// S1 视图取数缓存（compute_layout 的百万级 SQL 段跳过器，Part2 重排提速 2026-07-04）。
+    /// 命中键 = filter JSON + data_version + 序形态；详见 layout/items_cache.rs 模块文档。
+    pub layout_items_cache: ItemsCache,
+
+    /// 全局数据版本（S1 失效契约）：任何改变画廊视图**成员/几何/顺序**的写路径必须 bump
+    /// （扫描批提交、enricher 尺寸回写、软删/恢复、文件操作、相册成员、人物指派、卷可用态
+    /// 等，见 bump_data_version）；纯展示写（缩略图结果、favorite/rating/color 的非敏感
+    /// 视图）走双缓存 patch 不 bump。漏 bump 的代价 = 下次重排沿用旧视图集合——宁可多
+    /// bump（bump 只是让下次重排回退为全量重查，即 S1 之前的常态行为）。
+    pub data_version: AtomicU64,
+
+    /// H-Lab 横向画廊实验布局缓存——与 layout_cache 平行且互不可见(实验解耦契约)。
+    pub h_layout_cache: crate::layout::HLayoutCache,
 
     /// Image engine arena (format → engine dispatch).
     /// 图像引擎容器（格式 → 引擎分发）。
@@ -69,9 +83,10 @@ pub struct AppState {
     /// 在 backup 清理/rename 之间产生破损窗口(无 current)。串行化保证同一时刻只一个目录变更操作。
     pub exotic_install_lock: tokio::sync::Mutex<()>,
 
-    /// AI inference engine pool (lazily initialised, None until first use).
-    /// AI 推理引擎池（懒加载，首次使用前为 None）。
-    pub ai_engine: RwLock<Option<AiEnginePool>>,
+    /// AI worker 子进程句柄(Part4-T17「AiEnginePool→worker 句柄」;`ai_backend=worker`
+    /// 才实际 spawn)。std Mutex 按调用粒度持锁——worker 严格串行,批与批之间可插入
+    /// 搜索请求;访问 into_inner 毒锁恢复(AI 命令族契约,同 exotic token)。
+    pub ai_worker: Mutex<crate::ai::worker_client::AiWorkerClient>,
 
     /// Resident half-precision embedding cache for semantic search (C1).
     /// Loaded once from SQLite, reused across queries, invalidated on embedding writes.
@@ -126,6 +141,12 @@ pub struct AppState {
     /// 共享同一全局预算、按到达顺序公平交错。
     /// 由 derivation 与 exotic 两条流水线共享的公平后台重活池（R4）。
     pub background_heavy_limiter: std::sync::Arc<crate::exotic::limiter::BackgroundHeavyLimiter>,
+
+    /// GPU 推理令牌(Part4 D2/T11):全局额度 1 的**物理并发**闸——AI/face worker 池发
+    /// 推理批前 acquire(顺序天条:先 CPU permit 后 GPU 令牌,见 `GpuToken` 文档)。与上面
+    /// `gpu_analysis_owner`(**会话语义**门闩,分钟级)分层不合并;acquire 接线随 T13/T15
+    /// 批派发落地,在此先建实例保证全部 GPU 消费者共享同一令牌(D2 §3.3 两形态一致)。
+    pub gpu_token: std::sync::Arc<crate::exotic::limiter::GpuToken>,
 
     /// exotic Coordinator 句柄（setup 内创建后写入；扫描/命令经此 wake 调度）。用 `OnceLock` 因为
     /// Coordinator 需 `AppHandle`（setup 才有），晚于 AppState 构造；一次写入、多处只读。
@@ -189,6 +210,9 @@ impl AppState {
             db_read_pool,
             scan_tokens: Mutex::new(HashMap::new()),
             layout_cache: new_layout_cache(),
+            layout_items_cache: new_items_cache(),
+            data_version: AtomicU64::new(1),
+            h_layout_cache: crate::layout::hcache::new_h_layout_cache(),
             engine_arena: EngineArena::phase1(),
             exotic_catalog,
             thumb_config: RwLock::new(ThumbConfig {
@@ -204,7 +228,7 @@ impl AppState {
             log_dir,
             exotic_dir,
             exotic_install_lock: tokio::sync::Mutex::new(()),
-            ai_engine: RwLock::new(None),
+            ai_worker: Mutex::new(crate::ai::worker_client::AiWorkerClient::new()),
             ai_embedding_cache: RwLock::new(None),
             ai_analysis_token: Mutex::new(None),
             face_analysis_token: Mutex::new(None),
@@ -221,6 +245,8 @@ impl AppState {
                     .unwrap_or(4)
                     .max(2),
             ),
+            // GPU 推理令牌额度恒 1(D2 §3.1;多 permit 放行留 T22 按 VRAM 档位实测)。
+            gpu_token: crate::exotic::limiter::GpuToken::new(),
             exotic_coordinator: std::sync::OnceLock::new(),
             startup_instant: Instant::now(),
             interactive_until_ms: AtomicI64::new(0),
@@ -239,6 +265,44 @@ impl AppState {
     /// 用户是否正在主动交互（处于节流窗口内）。
     pub fn is_interactive(&self) -> bool {
         now_millis() < self.interactive_until_ms.load(Ordering::Relaxed)
+    }
+
+    /// bump 全局数据版本（S1 失效契约，调用清单见 `data_version` 字段文档）。
+    pub fn bump_data_version(&self) {
+        self.data_version.fetch_add(1, Ordering::Release);
+    }
+
+    /// 读全局数据版本（compute_layout 的填充/命中判定用）。
+    pub fn data_version(&self) -> u64 {
+        self.data_version.load(Ordering::Acquire)
+    }
+
+    /// 缩略图结果 → items 取数缓存就地 patch（**不 bump**：缩略图不改视图成员/几何——
+    /// 浏览期的持续缩略图生成若走失效，取数缓存将长期冰冷）。S3 后布局行仅存几何，
+    /// 出口拼装自 items 缓存取载荷，patch 单点即达（D3 布局侧 patch 已退役）。
+    pub fn apply_thumb_results(&self, results: &[crate::db::models::ThumbResult]) {
+        crate::layout::items_cache::apply_thumb_results(&self.layout_items_cache, results);
+    }
+
+    /// 可视区尺寸回填 → items 缓存就地 patch（布局行几何须经重排产生，不 patch layout_cache）。
+    pub fn set_dimensions_cached(&self, dims: &[(i64, i64, i64)]) {
+        crate::layout::items_cache::set_dimensions(&self.layout_items_cache, dims);
+    }
+
+    /// 收藏写 → items 缓存就地 patch（S3 单点，滚出滚回新鲜度由出口拼装保证）；
+    /// favoritedOnly 视图（写改成员）由 items_cache 内部降级不可复用（下次 compute 重查）。
+    pub fn set_favorite_cached(&self, ids: &[i64], value: bool) {
+        crate::layout::items_cache::set_favorite(&self.layout_items_cache, ids, value);
+    }
+
+    /// 评分写 → items 缓存就地 patch（S3 单点）；minRating 过滤视图降级不可复用。
+    pub fn set_rating_cached(&self, ids: &[i64], rating: i64) {
+        crate::layout::items_cache::set_rating(&self.layout_items_cache, ids, rating);
+    }
+
+    /// 色标写 → items 缓存就地 patch（S3 单点）；colorLabel 过滤视图降级不可复用。
+    pub fn set_color_label_cached(&self, ids: &[i64], color_label: i64) {
+        crate::layout::items_cache::set_color_label(&self.layout_items_cache, ids, color_label);
     }
 
     /// Drop the resident embedding cache so the next semantic search reloads it.

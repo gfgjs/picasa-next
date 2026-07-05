@@ -66,7 +66,7 @@ pub enum AppError {
     Cancelled,
 
     #[error("AI inference error: {0}")]
-    Ai(#[from] ort::Error),
+    Ai(String),
 
     #[error("AI model not loaded: {0}")]
     AiModelNotLoaded(String),
@@ -104,6 +104,21 @@ pub enum AppError {
 
     #[error("Target already has a folder named: {0}")]
     DirectoryExists(String),
+}
+
+/// AI 推理核错误收敛(Part4-T15/T16):picasa-next-ai-core 自持 AiError,此处映射回既有
+/// 变体,调用点 `?` 传播与前端 IPC code(Ai/AiTokenizer/Internal)完全不变。T16 收口后
+/// host 关闭 ai-core 的 `inference` feature(ort 直依赖已拆),AiError 为 non_exhaustive:
+/// 通配臂携带字符串进 Ai 变体——workspace feature 并集把 Ort 臂带回来时同样落此臂。
+impl From<picasa_next_ai_core::AiError> for AppError {
+    fn from(e: picasa_next_ai_core::AiError) -> Self {
+        use picasa_next_ai_core::AiError;
+        match e {
+            AiError::Internal(m) => AppError::Internal(m),
+            AiError::Tokenizer(m) => AppError::AiTokenizer(m),
+            other => AppError::Ai(other.to_string()),
+        }
+    }
 }
 
 impl Serialize for AppError {

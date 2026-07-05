@@ -27,6 +27,7 @@ export interface StartupConfig {
   showThumbInfo: string | null
   thumbInfoElements: string | null
   hoverAutoplay: string | null
+  bucketSegmentedScroll: string | null
   firstLaunch: string | null
 }
 
@@ -188,6 +189,18 @@ export const useUiStore = defineStore('ui', () => {
   function setLayoutMode(mode: 'justified' | 'grid') {
     layoutMode.value = mode
     invokeIpc(IPC.SET_APP_CONFIG, { key: 'layout_mode', value: mode }).catch(console.error)
+  }
+
+  // ── Bucket 分段虚拟滚动(T16 方案B;B0-B3.2 真机验收后转默认引擎)──────────────
+  // 开(默认)= 画廊用 bucket 分段引擎(零坐标平移,useBucketVirtualScroll + 自研逻辑
+  // 滚动条);关 = 回退方案 A 线性平移。运行时即切即生效(MediaGrid 双引擎互斥)。
+  const bucketSegmentedScroll = ref<boolean>(true)
+
+  function setBucketSegmentedScroll(val: boolean) {
+    bucketSegmentedScroll.value = val
+    invokeIpc(IPC.SET_APP_CONFIG, { key: 'bucket_segmented_scroll', value: String(val) }).catch(
+      console.error,
+    )
   }
 
   // ── Toasts ─────────────────────────────────────────────────────────────
@@ -389,6 +402,10 @@ export const useUiStore = defineStore('ui', () => {
         } catch {}
       }
       if (cfg.hoverAutoplay != null) hoverAutoplay.value = cfg.hoverAutoplay !== 'false'
+      // 默认开(T16 转正):仅显式 'false' 才回退方案 A——历史上显式开过的 'true'
+      // 与未配置的新装置都落在 bucket 引擎。
+      if (cfg.bucketSegmentedScroll != null)
+        bucketSegmentedScroll.value = cfg.bucketSegmentedScroll !== 'false'
     })
     .catch(console.error)
 
@@ -481,5 +498,8 @@ export const useUiStore = defineStore('ui', () => {
     // 悬停自动播放
     hoverAutoplay,
     setHoverAutoplay,
+    // bucket 分段虚拟滚动(T16 方案B)
+    bucketSegmentedScroll,
+    setBucketSegmentedScroll,
   }
 })

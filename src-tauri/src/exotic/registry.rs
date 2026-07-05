@@ -84,6 +84,33 @@ pub struct RegistryEntry {
     pub package_sha256: String,
     #[serde(default)]
     pub store_url: Option<String>,
+    /// 模型权重 blob 清单(Part4 §3.7.1/T12):独立于插件 zip **分步下载**的大文件。
+    /// 旧 index 无此字段 → 默认空(向后兼容)。
+    #[serde(default)]
+    pub model_blobs: Vec<ModelBlob>,
+    /// 多渠道预留(T13/§8.4):Steam DLC AppID(SteamDepot 分发面);旧 index 无此字段 → None。
+    #[serde(default)]
+    pub steam_dlc_app_id: Option<u32>,
+}
+
+/// 单个模型权重 blob(Part4 §3.7.1/T12)。
+///
+/// 不进插件 zip → `InstallLimits` 的 zip-bomb 检查(压缩比/总解压量/512MB 总量)对其
+/// **天然不适用**(这正是「大模型分步下载」的动机:ViT-L fp32 ≈1.7GB 无法进 512MB zip,
+/// 且 ONNX 近 1:1 压缩比使 zip 无收益)。自身防线 = HTTPS + size 精确封顶(下载层)+
+/// sha256 + 落盘文件名白名单(本文件 `validate_entry`)+ 单文件大小硬上限。
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct ModelBlob {
+    /// 下载地址(必须 HTTPS)。
+    pub url: String,
+    /// 64 位小写 hex(对**分发形态**字节;加密权重即密文的 sha256,Part6 §8.3)。
+    pub sha256: String,
+    pub size: u64,
+    /// "model_weight" 等(展示/策略用,同 `PackageFile.kind` 风格)。
+    pub kind: String,
+    /// 落盘文件名:单路径分量(白名单校验),落 models 目录(D1 Level A:
+    /// `SessionInit` 传路径即可用,无需再过安装器)。
+    pub file_name: String,
 }
 
 /// index 顶层（§6.1）。
@@ -156,6 +183,14 @@ pub fn verify_and_parse(
     Ok(VerifiedRegistry { index, expired })
 }
 
+/// 下载地址 scheme 白名单:HTTPS 恒放行;dev 构建 + `PICASA_EXOTIC_DEV_FILE_URLS=1`
+/// 显式开关下额外放行 file://(本地 registry 测试;传输与完整性语义见 download 模块
+/// dev 段)。Release 构建开关恒 false → 恒 HTTPS-only,行为与改动前逐位一致。
+fn url_scheme_ok(url: &str) -> bool {
+    url.starts_with("https://")
+        || (crate::download::dev_file_urls_enabled() && url.starts_with("file://"))
+}
+
 /// 单条目校验：plugin_id/format 合规、不撞常见格式、HTTPS、sha256 hex、size>0、media_kind 已知。
 fn validate_entry(e: &RegistryEntry) -> Result<(), RegistryError> {
     let bad = |reason: &str| RegistryError::InvalidEntry {
@@ -189,8 +224,9 @@ fn validate_entry(e: &RegistryEntry) -> Result<(), RegistryError> {
     if e.sku.is_empty() {
         return Err(bad("sku 为空"));
     }
-    // 只接受 HTTPS（前端只传 plugin_id，URL 来自已验签 index；仍强制 scheme）。
-    if !e.package_url.starts_with("https://") {
+    // 只接受 HTTPS（前端只传 plugin_id，URL 来自已验签 index；仍强制 scheme;
+    // dev file:// 经 url_scheme_ok 显式开关放行）。
+    if !url_scheme_ok(&e.package_url) {
         return Err(bad("package_url 必须为 HTTPS"));
     }
     if e.package_size == 0 {
@@ -202,7 +238,40 @@ fn validate_entry(e: &RegistryEntry) -> Result<(), RegistryError> {
     if e.target.is_empty() || !e.target.bytes().all(|b| b.is_ascii_graphic()) {
         return Err(bad("target 非法"));
     }
+    // model blobs(§3.7.1/T12):独立分步下载的大文件,数据面在此设防(执行面在 fetch)。
+    for b in &e.model_blobs {
+        if !url_scheme_ok(&b.url) {
+            return Err(bad("model_blob url 必须为 HTTPS"));
+        }
+        if !is_sha256_hex(&b.sha256) {
+            return Err(bad("model_blob sha256 必须为 64 位小写 hex"));
+        }
+        if b.size == 0 || b.size > MAX_MODEL_BLOB_SIZE {
+            return Err(bad("model_blob size 非法(0 或超单文件上限)"));
+        }
+        if b.kind.is_empty() || !b.kind.bytes().all(|c| c.is_ascii_graphic()) {
+            return Err(bad("model_blob kind 非法"));
+        }
+        if !is_safe_blob_file_name(&b.file_name) {
+            return Err(bad("model_blob file_name 非法(须安全单路径分量)"));
+        }
+    }
     Ok(())
+}
+
+/// 模型 blob 单文件大小硬上限(§3.7.1/T12):ViT-L fp32 ≈1.7GB,8GiB 留足余量;
+/// 防条目被构造成天文数字致磁盘耗尽(下载层另有 size 精确封顶,双保险)。
+const MAX_MODEL_BLOB_SIZE: u64 = 8 * 1024 * 1024 * 1024;
+
+/// blob 落盘文件名白名单:单路径分量(无分隔符/盘符/父引用),防写出 models 目录。
+/// 字符集从紧([A-Za-z0-9._-],1-96 字节,不以点开头——顺带排除 "."/".."/隐藏文件);
+/// 文件名由我方 Registry 签发,从紧无兼容代价。
+fn is_safe_blob_file_name(name: &str) -> bool {
+    let b = name.as_bytes();
+    (1..=96).contains(&b.len())
+        && b[0] != b'.'
+        && b.iter()
+            .all(|&c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'-'))
 }
 
 /// 本地 Registry 缓存：持已接受最高 sequence + 缓存目录（index.json/.sig 原子落地）。
@@ -338,6 +407,96 @@ mod tests {
         let bytes = json.as_bytes().to_vec();
         let sig = sign(sk, &bytes);
         (bytes, sig)
+    }
+
+    /// 带一个 model blob 的 index(T12);file_name/url/size 参数化以覆盖各拒绝分支。
+    fn index_with_blob(file_name: &str, url: &str, size: u64) -> String {
+        format!(
+            r#"{{"schema":1,"key_id":"release-test","sequence":1,
+              "generated_at":1700000000,"expires_at":{exp},
+              "plugins":[{{
+                "plugin_id":"exotic-ai-clip","version":"1.0.0","package_sequence":1,
+                "media_kind":"image","formats":["clipx"],"capabilities":["embedding"],
+                "sku":"clip-engine-2026","min_host_version":"0.1.0",
+                "target":"x86_64-pc-windows-msvc",
+                "package_url":"https://cdn.example.invalid/clip-1.0.0-win.zip",
+                "package_size":1048576,
+                "package_sha256":"{pk}",
+                "model_blobs":[{{"url":"{url}","sha256":"{sh}","size":{size},
+                  "kind":"model_weight","file_name":"{file_name}"}}]
+              }}]}}"#,
+            exp = NOW + 1000,
+            pk = "a".repeat(64),
+            sh = "b".repeat(64),
+        )
+    }
+
+    #[test]
+    fn model_blobs_parse_and_legacy_default_empty() {
+        let sk = signing_key(9);
+        let ks = release_keyset(&sk);
+        // 旧 index(无 model_blobs 字段)→ 默认空(向后兼容)。
+        let (bytes, sig) = signed(&sk, &good_index(1, NOW + 1000));
+        let v = verify_and_parse(&bytes, &sig, &ks, NOW, 0).unwrap();
+        assert!(v.index.plugins[0].model_blobs.is_empty());
+
+        // 合法 blob 条目通过并可读出。
+        let (bytes, sig) = signed(
+            &sk,
+            &index_with_blob(
+                "vit-l-14.onnx",
+                "https://cdn.example.invalid/vit-l-14.onnx",
+                1_700_000_000,
+            ),
+        );
+        let v = verify_and_parse(&bytes, &sig, &ks, NOW, 0).unwrap();
+        let blobs = &v.index.plugins[0].model_blobs;
+        assert_eq!(blobs.len(), 1);
+        assert_eq!(blobs[0].file_name, "vit-l-14.onnx");
+        assert_eq!(blobs[0].kind, "model_weight");
+        assert_eq!(blobs[0].size, 1_700_000_000);
+    }
+
+    #[test]
+    fn model_blob_invalid_entries_rejected() {
+        let sk = signing_key(9);
+        let ks = release_keyset(&sk);
+        let cases: &[(&str, &str, u64)] = &[
+            // 非 HTTPS
+            ("vit.onnx", "http://cdn.example.invalid/v.onnx", 100),
+            // 父引用(以点开头一并拦截)
+            ("..evil.onnx", "https://cdn.example.invalid/v.onnx", 100),
+            // 路径分隔符
+            ("a/b.onnx", "https://cdn.example.invalid/v.onnx", 100),
+            // 隐藏文件/点开头
+            (".hidden", "https://cdn.example.invalid/v.onnx", 100),
+            // size=0
+            ("vit.onnx", "https://cdn.example.invalid/v.onnx", 0),
+            // 超单文件上限(8GiB)
+            (
+                "vit.onnx",
+                "https://cdn.example.invalid/v.onnx",
+                9 * 1024 * 1024 * 1024,
+            ),
+        ];
+        for (name, url, size) in cases {
+            let (bytes, sig) = signed(&sk, &index_with_blob(name, url, *size));
+            assert!(
+                matches!(
+                    verify_and_parse(&bytes, &sig, &ks, NOW, 0),
+                    Err(RegistryError::InvalidEntry { .. })
+                ),
+                "应拒绝:{name} {url} {size}"
+            );
+        }
+        // 非法 sha256(替换为等长非 hex)同样拒绝。
+        let bad_sha = index_with_blob("vit.onnx", "https://cdn.example.invalid/v.onnx", 100)
+            .replace(&"b".repeat(64), &"z".repeat(64));
+        let (bytes, sig) = signed(&sk, &bad_sha);
+        assert!(matches!(
+            verify_and_parse(&bytes, &sig, &ks, NOW, 0),
+            Err(RegistryError::InvalidEntry { .. })
+        ));
     }
 
     #[test]

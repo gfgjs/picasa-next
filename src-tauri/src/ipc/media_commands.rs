@@ -78,6 +78,9 @@ pub async fn prioritize_dimensions(
                 q::update_media_dimensions(&tx, *id, *w, *h)?;
             }
             tx.commit()?;
+            // S1：尺寸是布局几何输入 → 就地 patch items 取数缓存（0×0 守卫同 SQL），不失效
+            // 不 bump——补尺寸阶段高频写走失效会让缓存长冷；前端随后重算布局即得新比例。
+            state_arc.set_dimensions_cached(&results);
         }
         Ok(n)
     })
@@ -224,10 +227,10 @@ pub async fn get_keyframe_sprite(
 pub async fn toggle_favorite(item_id: i64, state: State<'_, Arc<AppState>>) -> Result<bool> {
     // R1-3：写锁等待与执行都在 blocking 线程；布局缓存同步回到 async 侧（锁已释放）。
     let new_val = write_blocking(&state, move |c| q::toggle_favorite(c, item_id)).await?;
-    // Keep the resident layout cache consistent so the star doesn't revert on
-    // scroll-out/scroll-in (D3).
-    // 同步常驻布局缓存，避免滚出再滚回时收藏标记回退（D3）。
-    crate::layout::cache::set_favorite_in_cache(&state.layout_cache, &[item_id], new_val);
+    // Keep the resident caches consistent so the star doesn't revert on
+    // scroll-out/scroll-in (D3; S1 起 layout + items 双缓存成对 patch).
+    // 同步常驻双缓存，避免滚出再滚回时收藏标记回退（D3）。
+    state.set_favorite_cached(&[item_id], new_val);
     Ok(new_val)
 }
 
@@ -279,9 +282,9 @@ pub async fn batch_toggle_favorite(
     })
     .await?;
 
-    // Sync the resident layout cache so favorites survive scroll-out/scroll-in (D3).
-    // 同步常驻布局缓存，使收藏在滚出再滚回后仍保持（D3）。
-    crate::layout::cache::set_favorite_in_cache(&state.layout_cache, &ids, value);
+    // Sync the resident caches so favorites survive scroll-out/scroll-in (D3; S1 双缓存).
+    // 同步常驻双缓存，使收藏在滚出再滚回后仍保持（D3）。
+    state.set_favorite_cached(&ids, value);
 
     // S4 验收证据：payload 与选区大小无关——解析出的实际规模只在此后端日志可见。
     tracing::info!(
@@ -305,7 +308,10 @@ pub async fn set_rating(item_id: i64, rating: i64, state: State<'_, Arc<AppState
     write_blocking(&state, move |conn| {
         q::set_rating(conn, item_id, rating.clamp(0, 5))
     })
-    .await
+    .await?;
+    // S1：评分双缓存 patch（minRating 过滤视图由 items_cache 内部整体失效）。
+    state.set_rating_cached(&[item_id], rating.clamp(0, 5));
+    Ok(())
 }
 
 /// Batch-set rating (0-5) for many items in a single UPDATE + IN. Mirrors `batch_toggle_favorite`;
@@ -313,7 +319,8 @@ pub async fn set_rating(item_id: i64, rating: i64, state: State<'_, Arc<AppState
 /// that a per-item loop would incur on large selections). Returns the affected row count.
 /// 批量设置评分（0-5），单条 UPDATE + IN 完成。镜像 `batch_toggle_favorite`,支撑画廊键盘 1-5 对
 /// 当前选区快捷评分（避免逐项 loop 在大选区上的 N 次 IPC 往返）。返回受影响行数。
-/// 注:rating 不在布局缓存(布局行不携带该列)，故与 set_favorite 不同，此处无需同步布局缓存。
+/// 注：LayoutRowItem 携带 rating（网格星级显示），S1 起与 favorite 同样走双缓存 patch
+/// （顺手修复：此前不 patch，行滚出滚回星级会回退）。
 #[tauri::command]
 pub async fn batch_set_rating(
     state: State<'_, Arc<AppState>>,
@@ -324,6 +331,9 @@ pub async fn batch_set_rating(
         q::batch_set_rating(conn, ids, rating) // 0-5 钳制在 db 层
     })
     .await?;
+
+    // S1：评分双缓存 patch（minRating 过滤视图整体失效）。
+    state.set_rating_cached(&ids, rating.clamp(0, 5));
 
     tracing::info!(
         "Batch rating(S4): resolved {} ids, affected {}, rating {} | 批量评分：解析 {} 项，影响 {} 行，评分 {}",
@@ -350,7 +360,10 @@ pub async fn set_color_label(
     write_blocking(&state, move |conn| {
         q::set_color_label(conn, item_id, color_label.clamp(0, 7))
     })
-    .await
+    .await?;
+    // S1：色标双缓存 patch（colorLabel 过滤视图由 items_cache 内部整体失效）。
+    state.set_color_label_cached(&[item_id], color_label.clamp(0, 7));
+    Ok(())
 }
 
 /// Batch-set color label (0-7) for many items in a single UPDATE + IN. Mirrors `batch_set_rating`;
@@ -367,6 +380,9 @@ pub async fn batch_set_color_label(
         q::batch_set_color_label(conn, ids, color_label) // 0-7 钳制在 db 层
     })
     .await?;
+
+    // S1：色标双缓存 patch（colorLabel 过滤视图整体失效）。
+    state.set_color_label_cached(&ids, color_label.clamp(0, 7));
 
     tracing::info!(
         "Batch color label(S4): resolved {} ids, affected {} | 批量色签：解析 {} 项，影响 {} 行",
@@ -390,6 +406,8 @@ pub async fn soft_delete_items(
         q::soft_delete_items(conn, ids)
     })
     .await?;
+    // S1：软删改变一切视图成员 → bump 数据版本（下次重排强制重查）。
+    state.bump_data_version();
     tracing::info!(
         "Soft delete(S4): resolved {} ids | 软删除：解析 {} 项",
         ids.len(),
@@ -406,6 +424,8 @@ pub async fn restore_items(
     state: State<'_, Arc<AppState>>,
 ) -> Result<()> {
     let (ids, ()) = resolve_then_write(&state, selection, q::restore_items).await?;
+    // S1：恢复改变视图成员（回收站 ↔ 常规视图）→ bump。
+    state.bump_data_version();
     tracing::info!(
         "Restore(S4): resolved {} ids | 恢复：解析 {} 项",
         ids.len(),

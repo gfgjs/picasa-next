@@ -22,13 +22,10 @@ pub enum ResizeHint {
 
 /// A decoded image ready for processing (thumbnail generation, ThumbHash, etc.).
 /// 准备处理（缩略图生成、ThumbHash 等）的解码图像。
-pub struct DecodedImage {
-    /// Raw RGBA pixel data.
-    /// 原始 RGBA 像素数据。
-    pub pixels: Vec<u8>,
-    pub width: u32,
-    pub height: u32,
-}
+///
+/// T15 起定义体迁至 `picasa-next-ai-core::decoded`(推理核与解码层的唯一数据契约,
+/// ai-worker 子进程需同一类型),此处再导出保持全库引用路径不变。
+pub use picasa_next_ai_core::DecodedImage;
 
 /// Trait that all image decoding backends must implement.
 /// 所有图像解码后端必须实现的 Trait。

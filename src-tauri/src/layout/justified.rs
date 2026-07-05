@@ -18,31 +18,33 @@
 //!   - When the `sort_datetime` crosses a day boundary, insert a separator row first.
 //!   - 当 `sort_datetime` 跨越日期边界时，首先插入分隔符行。
 
+use std::borrow::Borrow;
+use std::collections::HashMap;
+
 use chrono::{Datelike, TimeZone, Utc};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::db::models::LayoutItem;
+use crate::db::models::{DirLabel, LayoutItem};
 
 // ── Output types ─────────────────────────────────────────────────────────────
 // ── 输出类型 ─────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", tag = "rowType")]
+/// 常驻布局行（S3 几何/载荷分离）：Normal 行仅存瘦行项（id + 几何），厚载荷在出口
+/// （get_layout_rows 系命令）经 items 取数缓存按可视区拼装为 [`HydratedRow`]。
+/// 百万项下常驻 ~32B/项（原 ~200B + 5 段堆载荷），重排零载荷克隆、旧代 drop 近零。
+#[derive(Debug, Clone)]
 pub enum LayoutRow {
-    #[serde(rename = "separator")]
     Separator {
         y: f64,
         height: f64,
-        #[serde(rename = "separatorLabel")]
         separator_label: String,
-        #[serde(rename = "groupId")]
         group_id: Option<String>,
     },
-    #[serde(rename = "normal")]
     Normal {
         y: f64,
         height: f64,
-        items: Vec<LayoutRowItem>,
+        items: Vec<SlimRowItem>,
     },
 }
 
@@ -62,14 +64,42 @@ impl LayoutRow {
     }
 }
 
+/// 常驻瘦行项（S3）：id + 行内几何，Copy、零堆载荷。
+#[derive(Debug, Clone, Copy)]
+pub struct SlimRowItem {
+    pub id: i64,
+    pub x: f64,
+    pub w: f64,
+    pub h: f64,
+}
+
+/// 线上（IPC）布局行：serde 形状与 S3 前的 LayoutRow 完全一致（rowType 标签、camelCase），
+/// **前端零改动**。由出口拼装产生（[`crate::layout::items_cache::hydrate_rows`]），不常驻。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "rowType")]
+pub enum HydratedRow {
+    #[serde(rename = "separator")]
+    Separator {
+        y: f64,
+        height: f64,
+        #[serde(rename = "separatorLabel")]
+        separator_label: String,
+        #[serde(rename = "groupId")]
+        group_id: Option<String>,
+    },
+    #[serde(rename = "normal")]
+    Normal {
+        y: f64,
+        height: f64,
+        items: Vec<LayoutRowItem>,
+    },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-/// Resident per-item row data — kept small so the whole layout fits in memory at
-/// the million-item scale. Heavy metadata (file name, dir path, EXIF, GPS) lives
-/// in `MediaMeta` and is fetched on demand for the visible viewport only.
-///
-/// 常驻的逐项行数据 —— 保持精简，使整份布局在百万项规模下仍可驻留内存。
-/// 重型元数据（文件名、目录路径、EXIF、GPS）放在 `MediaMeta`，仅为可视区按需拉取。
+/// 线上（IPC）逐项行数据（S3 后不再常驻）：由出口拼装（[`hydrate_item`]）按可视区从
+/// items 取数缓存现场组装，serde 形状与 S3 前完全一致（前端零改动）。重型元数据
+/// （文件名、目录路径、EXIF、GPS）仍在 `MediaMeta`，仅为可视区按需拉取。
 pub struct LayoutRowItem {
     pub id: i64,
     pub x: f64,
@@ -121,14 +151,15 @@ const MAX_ROW_HEIGHT_FACTOR: f64 = 2.0;
 // ── Shared helpers (justified + grid) ──────────────────────────────────────────
 // ── 共享辅助（justified + grid 两种布局共用）────────────────────────────────────
 
-/// 由 `LayoutItem` + 已定好的 (x, w, h) 构造常驻行项。justified 与 grid 共用——保证两种
-/// 布局产出的逐项字段完全一致（仅几何 x/w/h 不同），新增 LayoutRowItem 字段只需改这一处。
-fn make_row_item(item: &LayoutItem, x: f64, w: f64, h: f64) -> LayoutRowItem {
+/// 出口拼装（S3 几何/载荷分离）：瘦行项几何 + `LayoutItem` 载荷 → 线上行项。字段集与
+/// S3 前的常驻行完全一致（serde 形状不变，前端零改动）；仅对可视区行调用（10^2 级），
+/// 载荷克隆成本无关紧要。新增 LayoutRowItem 字段只需改这一处（与 placeholder_item 成对）。
+pub fn hydrate_item(item: &LayoutItem, slot: &SlimRowItem) -> LayoutRowItem {
     LayoutRowItem {
-        id: item.id,
-        x,
-        w,
-        h,
+        id: slot.id,
+        x: slot.x,
+        w: slot.w,
+        h: slot.h,
         file_size: item.file_size,
         file_format: item.file_format.clone(),
         media_type: item.media_type.clone(),
@@ -148,24 +179,85 @@ fn make_row_item(item: &LayoutItem, x: f64, w: f64, h: f64) -> LayoutRowItem {
     }
 }
 
-/// 分组键：`(分隔符标签, group_id)`。justified 与 grid 共用，确保两种布局的分隔符/月桶
+/// items 取数缓存查无此 id 时的占位行项（布局与快照换代的竞态窗口/清库后未重算的瞬态）：
+/// 几何保留使行形不塌（虚拟滚动行高稳定），载荷置空，thumb_status=0 → 前端按待生成
+/// 骨架渲染，下次布局换代自愈。availability 置空串（≠ "offline"，不触发置灰样式）。
+pub fn placeholder_item(slot: &SlimRowItem) -> LayoutRowItem {
+    LayoutRowItem {
+        id: slot.id,
+        x: slot.x,
+        w: slot.w,
+        h: slot.h,
+        file_size: 0,
+        file_format: String::new(),
+        media_type: String::new(),
+        is_live_photo: false,
+        duration_ms: None,
+        thumb_status: 0,
+        thumb_path: None,
+        thumbhash: None,
+        is_favorited: false,
+        rating: 0,
+        color_label: 0,
+        availability: String::new(),
+        similarity: None,
+        original_width: 0,
+        original_height: 0,
+        sort_datetime: 0,
+    }
+}
+
+/// 分组边界的逐项廉价键（S2 布局消脂）：date = UTC 日序数（`div_euclid(86400)` 与
+/// `timestamp_to_date_label` 的 Utc 日界严格一致），folder = 目录 id。百万项下逐项
+/// chrono 格式化 + 2 个 String 分配曾占布局段大头，现降为纯整数比较，标签仅在边界
+/// 变化处构造（调用量级 10^6 → 10^3，见 group_label）。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GroupMark {
+    Day(i64),
+    Dir(i64),
+    /// folder 分组但 dir_id 缺失（列 NOT NULL，理论死分支，防御保留）：标签走 "Unknown"。
+    DirUnknown,
+}
+
+fn group_mark(item: &LayoutItem, group_by: &str) -> GroupMark {
+    match group_by {
+        "folder" => item
+            .dir_id
+            .map(GroupMark::Dir)
+            .unwrap_or(GroupMark::DirUnknown),
+        _ => GroupMark::Day(item.sort_datetime.div_euclid(86400)),
+    }
+}
+
+/// 分组标签：`(分隔符标签, group_id)`。justified 与 grid 共用，确保两种布局的分隔符/月桶
 /// 边界严格一致（grid 复用同样的 `YYYY-MM` group_id → get_summary 月桶推导零改动）。
-/// - folder：目录路径（空路径回退目录名/Root），group_id = 目录 id 字符串。
+/// **仅在 GroupMark 边界变化时调用**（原 group_key 逐项调用，S2 优化）。
+/// - folder：展示路径经 DirLabel 映射还原（语义 = 原 SQL 逐行拼接的 dir_path；空路径回退
+///   目录名/Root，查无映射回退 "Unknown"），group_id = 目录 id 字符串。
 /// - none：空标签、无 group_id（调用方据此不产分隔符）。
 /// - date（默认）：中文日标签 + `YYYY-MM` group_id（T14 §3.8.2）。
-fn group_key(item: &LayoutItem, group_by: &str) -> (String, Option<String>) {
+fn group_label(
+    item: &LayoutItem,
+    group_by: &str,
+    dir_labels: &HashMap<i64, DirLabel>,
+) -> (String, Option<String>) {
     match group_by {
         "folder" => {
-            let name = if let Some(path) = &item.dir_path {
-                if path.is_empty() {
-                    item.dir_name.clone().unwrap_or_else(|| "Root".to_string())
-                } else {
-                    path.clone()
-                }
-            } else {
-                "Unknown".to_string()
+            let Some(dir_id) = item.dir_id else {
+                return ("Unknown".to_string(), None);
             };
-            (name, item.dir_id.map(|id| id.to_string()))
+            let name = match dir_labels.get(&dir_id) {
+                Some(dl) if dl.display.is_empty() => {
+                    if dl.name.is_empty() {
+                        "Root".to_string()
+                    } else {
+                        dl.name.clone()
+                    }
+                }
+                Some(dl) => dl.display.clone(),
+                None => "Unknown".to_string(),
+            };
+            (name, Some(dir_id.to_string()))
         }
         "none" => ("".to_string(), None),
         _ => (
@@ -175,24 +267,90 @@ fn group_key(item: &LayoutItem, group_by: &str) -> (String, Option<String>) {
     }
 }
 
+// ── 并行骨架（S3.4）───────────────────────────────────────────────────────────
+
+/// S3.4 组间并行布局骨架（justified / grid 共用）：按 GroupMark 切连续段 → rayon 并行
+/// 逐组打包（组内 y 从局部 0 起）→ 组高前缀和缝合绝对 y。
+///
+/// **顺序等价**：分组语义/行几何与原顺序实现逐行相同；y 均为整数和（分隔符 36 + gap、
+/// 行高 ceil + gap），「基线 + 局部 y」与顺序累加**位级一致**（整数在 f64 中精确，
+/// 特征化测试锁定）。none 分组 = 单段——行打包链式依赖（断行取决于前一行终点），
+/// 组内不可切分，该轴无并行收益（维持原顺序耗时）。
+fn layout_groups_parallel<I, F>(items: &[I], group_by: &str, pack_group: F) -> Vec<LayoutRow>
+where
+    I: Borrow<LayoutItem> + Sync,
+    F: Fn(&[I]) -> (Vec<LayoutRow>, f64) + Sync,
+{
+    if items.is_empty() {
+        return Vec::new();
+    }
+    // 段表：连续同 GroupMark 区间（整数比较 O(N) 轻扫，百万项数 ms 级）。
+    let mut segments: Vec<(usize, usize)> = Vec::new();
+    if group_by == "none" {
+        segments.push((0, items.len()));
+    } else {
+        let mut start = 0usize;
+        let mut last = group_mark(items[0].borrow(), group_by);
+        for (i, it) in items.iter().enumerate().skip(1) {
+            let mark = group_mark(it.borrow(), group_by);
+            if mark != last {
+                segments.push((start, i));
+                start = i;
+                last = mark;
+            }
+        }
+        segments.push((start, items.len()));
+    }
+
+    // 并行逐组打包（rayon 全局池；调用方已运行在 spawn_blocking 阻塞线程上）。
+    let mut outs: Vec<(Vec<LayoutRow>, f64)> = segments
+        .par_iter()
+        .map(|&(start, end)| pack_group(&items[start..end]))
+        .collect();
+
+    // 组高前缀和 → 并行偏移各组局部 y → 顺序拼接（容量一次预留）。
+    let mut bases: Vec<f64> = Vec::with_capacity(outs.len());
+    let mut acc = 0.0f64;
+    for (_, h) in &outs {
+        bases.push(acc);
+        acc += *h;
+    }
+    outs.par_iter_mut()
+        .zip(bases.par_iter())
+        .for_each(|((rows, _), &base)| {
+            if base != 0.0 {
+                for row in rows.iter_mut() {
+                    match row {
+                        LayoutRow::Separator { y, .. } | LayoutRow::Normal { y, .. } => *y += base,
+                    }
+                }
+            }
+        });
+    let total_rows: usize = outs.iter().map(|(rows, _)| rows.len()).sum();
+    let mut all_rows: Vec<LayoutRow> = Vec::with_capacity(total_rows);
+    for (rows, _) in outs {
+        all_rows.extend(rows);
+    }
+    all_rows
+}
+
 // ── Main algorithm ────────────────────────────────────────────────────────────
 // ── 主算法 ────────────────────────────────────────────────────────────
 
-pub fn compute_justified_layout(items: &[LayoutItem], params: &LayoutParams) -> Vec<LayoutRow> {
+pub fn compute_justified_layout<I: Borrow<LayoutItem> + Sync>(
+    items: &[I],
+    params: &LayoutParams,
+    dir_labels: &HashMap<i64, DirLabel>,
+    placeholder_aspect: Option<f64>,
+) -> Vec<LayoutRow> {
     // Placeholder aspect for not-yet-measured (0×0) items: the median of the
     // measured items, so deferred-dimension photos render at a plausible shape
     // (not a square) and reflow only slightly when their real dims arrive.
     // 未测量(0×0)项的占位宽高比：取已测量项的中位数，使延后取尺寸的照片以合理形状
     // （而非正方形）渲染，真实尺寸到达时只发生轻微重排。
-    let placeholder_aspect = median_measured_aspect(items);
-
-    let mut rows: Vec<LayoutRow> = Vec::new();
-    let mut current_y = 0.0f64;
-
-    let mut pending_items: Vec<&LayoutItem> = Vec::new();
-    let mut pending_ar_sum = 0.0f64; // sum of (w/h) aspect ratios
-                                     // (w/h) 宽高比总和
-    let mut last_label: Option<String> = None;
+    // S3.5：中位数只依赖项集、不依赖布局参数——调用方传快照缓存值（OnceLock）免每次
+    // 重排 O(N) 重算；None = 现算（测试/独立调用）。
+    let placeholder_aspect = placeholder_aspect.unwrap_or_else(|| median_measured_aspect(items));
 
     let emit_separator =
         |label: &str, group_id: Option<String>, y: &mut f64, rows: &mut Vec<LayoutRow>| {
@@ -205,13 +363,16 @@ pub fn compute_justified_layout(items: &[LayoutItem], params: &LayoutParams) -> 
             *y += SEPARATOR_HEIGHT + params.gap;
         };
 
+    // S3.5：宽度暂存由调用方复用（每组一个，跨行 clear）——原每行 2 个临时 Vec，真机
+    // 行密度（1-3 项/行、数十万行）下即数百万次堆分配，占 layout 段大头。
     let commit_row = |pending: &mut Vec<&LayoutItem>,
                       ar_sum: &mut f64,
                       y: &mut f64,
                       target_h: f64,
                       rows: &mut Vec<LayoutRow>,
                       params: &LayoutParams,
-                      is_last: bool| {
+                      is_last: bool,
+                      widths: &mut Vec<f64>| {
         if pending.is_empty() {
             return;
         }
@@ -240,32 +401,36 @@ pub fn compute_justified_layout(items: &[LayoutItem], params: &LayoutParams) -> 
         let hit_cap = ideal_h > target_h * MAX_ROW_HEIGHT_FACTOR;
         let should_snap_last = !is_incomplete && !hit_cap;
 
-        let mut unrounded_widths: Vec<f64> = pending
-            .iter()
-            .map(|item| aspect_ratio(item, placeholder_aspect) * row_h)
-            .collect();
+        widths.clear();
+        widths.extend(
+            pending
+                .iter()
+                .map(|item| aspect_ratio(item, placeholder_aspect) * row_h),
+        );
 
         // Only adjust to exactly fill the container if it's a fully justified row
         // 仅在完全两端对齐的行时调整以精确填充容器
         if should_snap_last && pending.len() > 1 {
-            let total_unrounded: f64 = unrounded_widths.iter().sum();
+            let total_unrounded: f64 = widths.iter().sum();
             let target_total_w = available_w;
             // Distribute the difference proportionally to avoid dumping rounding errors on the last item
             // 按比例分配差异，以避免将舍入误差倾倒在最后一个项目上
             if total_unrounded > 0.0 {
                 let scale = target_total_w / total_unrounded;
-                for w in unrounded_widths.iter_mut() {
+                for w in widths.iter_mut() {
                     *w *= scale;
                 }
             }
         }
 
-        // Now round the widths and distribute any remaining integer pixel difference
-        // 现在对宽度进行舍入并分配任何剩余的整数像素差异
-        let mut final_widths: Vec<f64> = unrounded_widths.iter().map(|w| w.round()).collect();
+        // Round in place and distribute any remaining integer pixel difference
+        // 就地舍入并分配剩余整数像素差异（S3.5：未舍入值此后不再使用，单缓冲复用）
+        for w in widths.iter_mut() {
+            *w = w.round();
+        }
 
         if should_snap_last && pending.len() > 1 {
-            let current_total: f64 = final_widths.iter().sum();
+            let current_total: f64 = widths.iter().sum();
             let mut diff = (available_w.round() - current_total) as i32;
 
             // Distribute the 1px differences across items until diff is 0
@@ -275,13 +440,13 @@ pub fn compute_justified_layout(items: &[LayoutItem], params: &LayoutParams) -> 
             // or just left-to-right. Left-to-right is fine.
             // 或者只是从左到右。从左到右也可以。
             let mut i = 0;
-            let len = final_widths.len();
+            let len = widths.len();
             while diff != 0 {
                 if diff > 0 {
-                    final_widths[i % len] += 1.0;
+                    widths[i % len] += 1.0;
                     diff -= 1;
                 } else {
-                    final_widths[i % len] -= 1.0;
+                    widths[i % len] -= 1.0;
                     diff += 1;
                 }
                 i += 1;
@@ -289,18 +454,18 @@ pub fn compute_justified_layout(items: &[LayoutItem], params: &LayoutParams) -> 
         }
 
         let mut x = 0.0f64;
-        let mut row_items: Vec<LayoutRowItem> = Vec::with_capacity(pending.len());
+        let mut row_items: Vec<SlimRowItem> = Vec::with_capacity(pending.len());
 
         for (i, item) in pending.iter().enumerate() {
-            let item_w = final_widths[i];
+            let item_w = widths[i];
 
-            // x/w/h 与原内联构造完全一致（x 取整、w 保底 1、h 取整），仅抽出字段复制到 make_row_item。
-            row_items.push(make_row_item(
-                item,
-                x.round(),
-                item_w.max(1.0),
-                row_h.round(),
-            ));
+            // x/w/h 语义不变（x 取整、w 保底 1、h 取整）；S3：行内仅存 id + 几何，零载荷克隆。
+            row_items.push(SlimRowItem {
+                id: item.id,
+                x: x.round(),
+                w: item_w.max(1.0),
+                h: row_h.round(),
+            });
 
             x += item_w + params.gap;
         }
@@ -316,81 +481,60 @@ pub fn compute_justified_layout(items: &[LayoutItem], params: &LayoutParams) -> 
         *ar_sum = 0.0;
     };
 
-    for item in items {
-        // Grouping separator check
-        // 分组分隔符检查（date 分组的 "YYYY-MM" group_id 供前端按月→y 定向滚动 + get_summary 月桶）。
-        let (current_label, current_group_id) = group_key(item, &params.group_by);
+    // S3.4 单组打包（组内 y 从局部 0 起算）：分组语义与顺序版逐行相同——组首发分隔符
+    //（none 分组无），组内满行 is_last=false、组末不满行 is_last=true（原「分隔符前冲掉
+    // 挂起行」即组末提交）。边界标签仅每组构造一次（承接 S2：标签构造量级 10^3 不变）。
+    let pack_group = |group: &[I]| -> (Vec<LayoutRow>, f64) {
+        let mut rows: Vec<LayoutRow> = Vec::new();
+        let mut y = 0.0f64;
+        let mut pending: Vec<&LayoutItem> = Vec::new();
+        let mut ar_sum = 0.0f64;
+        let mut widths_scratch: Vec<f64> = Vec::new();
 
-        let needs_separator = if params.group_by == "none" {
-            false
-        } else {
-            match &last_label {
-                None => true,
-                Some(prev) => *prev != current_label,
+        if params.group_by != "none" {
+            let (label, group_id) = group_label(group[0].borrow(), &params.group_by, dir_labels);
+            emit_separator(&label, group_id, &mut y, &mut rows);
+        }
+        for item in group {
+            let item = item.borrow();
+            pending.push(item);
+            ar_sum += aspect_ratio(item, placeholder_aspect);
+
+            // Check if row is full
+            // 检查行是否已满
+            let total_gaps = params.gap * (pending.len().saturating_sub(1)) as f64;
+            let available_w = params.container_width - total_gaps;
+            if ar_sum * params.target_row_height >= available_w {
+                commit_row(
+                    &mut pending,
+                    &mut ar_sum,
+                    &mut y,
+                    params.target_row_height,
+                    &mut rows,
+                    params,
+                    false,
+                    &mut widths_scratch,
+                );
             }
-        };
-
-        if needs_separator {
-            // Commit any pending row before the separator
-            // 提交分隔符之前的任何挂起行
-            let _pending_clone = pending_items.clone();
+        }
+        // Commit last partial row of the group
+        // 提交组末的非满行
+        if !pending.is_empty() {
             commit_row(
-                &mut pending_items,
-                &mut pending_ar_sum,
-                &mut current_y,
+                &mut pending,
+                &mut ar_sum,
+                &mut y,
                 params.target_row_height,
                 &mut rows,
                 params,
-                true, // Treat rows before a separator as the "last row" of that group
-                      // 将分隔符之前的行视为该组的“最后一行”
-            );
-            emit_separator(
-                &current_label,
-                current_group_id.clone(),
-                &mut current_y,
-                &mut rows,
-            );
-            last_label = Some(current_label);
-        }
-
-        let ar = aspect_ratio(item, placeholder_aspect);
-        pending_items.push(item);
-        pending_ar_sum += ar;
-
-        // Check if row is full
-        // 检查行是否已满
-        let total_gaps = params.gap * (pending_items.len().saturating_sub(1)) as f64;
-        let available_w = params.container_width - total_gaps;
-        let current_row_w = pending_ar_sum * params.target_row_height;
-
-        if current_row_w >= available_w {
-            commit_row(
-                &mut pending_items,
-                &mut pending_ar_sum,
-                &mut current_y,
-                params.target_row_height,
-                &mut rows,
-                params,
-                false,
+                true,
+                &mut widths_scratch,
             );
         }
-    }
+        (rows, y)
+    };
 
-    // Commit last partial row
-    // 提交最后的非满行
-    if !pending_items.is_empty() {
-        commit_row(
-            &mut pending_items,
-            &mut pending_ar_sum,
-            &mut current_y,
-            params.target_row_height,
-            &mut rows,
-            params,
-            true,
-        );
-    }
-
-    rows
+    layout_groups_parallel(items, &params.group_by, pack_group)
 }
 
 /// 均匀宫格布局（T20，方案 a「后端 uniform-packing」）。与 justified 共享分组/分隔符/月桶逻辑
@@ -400,7 +544,11 @@ pub fn compute_justified_layout(items: &[LayoutItem], params: &LayoutParams) -> 
 ///
 /// 列数 = `⌊(W+gap) / (cell_target+gap)⌋`（至少 1）；实际单元边长 = `(W - (cols-1)·gap)/cols`
 /// 撑满宽。`target_row_height` 复用作单元目标边长（即工具栏 gridRowHeight 密度滑块）。
-pub fn compute_grid_layout(items: &[LayoutItem], params: &LayoutParams) -> Vec<LayoutRow> {
+pub fn compute_grid_layout<I: Borrow<LayoutItem> + Sync>(
+    items: &[I],
+    params: &LayoutParams,
+    dir_labels: &HashMap<i64, DirLabel>,
+) -> Vec<LayoutRow> {
     let gap = params.gap.max(0.0);
     let target = params.target_row_height.max(1.0);
     let width = params.container_width.max(1.0);
@@ -408,11 +556,6 @@ pub fn compute_grid_layout(items: &[LayoutItem], params: &LayoutParams) -> Vec<L
     // 列数：容器宽内能放下几个 (target+gap)，至少 1 列；随后把单元放大到精确撑满宽。
     let cols = (((width + gap) / (target + gap)).floor() as usize).max(1);
     let cell = ((width - gap * (cols as f64 - 1.0)) / cols as f64).max(1.0);
-
-    let mut rows: Vec<LayoutRow> = Vec::new();
-    let mut current_y = 0.0f64;
-    let mut last_label: Option<String> = None;
-    let mut pending: Vec<&LayoutItem> = Vec::new();
 
     let emit_separator =
         |label: &str, group_id: Option<String>, y: &mut f64, rows: &mut Vec<LayoutRow>| {
@@ -431,11 +574,16 @@ pub fn compute_grid_layout(items: &[LayoutItem], params: &LayoutParams) -> Vec<L
             if pending.is_empty() {
                 return;
             }
-            let mut row_items: Vec<LayoutRowItem> = Vec::with_capacity(pending.len());
+            let mut row_items: Vec<SlimRowItem> = Vec::with_capacity(pending.len());
             for (col, item) in pending.iter().enumerate() {
                 let x = (col as f64) * (cell + gap);
-                // 方格：w = h = cell；x/w/h 取整与 justified 同款，避免亚像素缝。
-                row_items.push(make_row_item(item, x.round(), cell.round(), cell.round()));
+                // 方格：w = h = cell；x/w/h 取整与 justified 同款，避免亚像素缝。S3：仅 id + 几何。
+                row_items.push(SlimRowItem {
+                    id: item.id,
+                    x: x.round(),
+                    w: cell.round(),
+                    h: cell.round(),
+                });
             }
             rows.push(LayoutRow::Normal {
                 y: *y,
@@ -446,48 +594,38 @@ pub fn compute_grid_layout(items: &[LayoutItem], params: &LayoutParams) -> Vec<L
             pending.clear();
         };
 
-    for item in items {
-        let (current_label, current_group_id) = group_key(item, &params.group_by);
+    // S3.4 单组打包（同 justified 的组间并行骨架）：组间不共享行、组末冲掉不满行,
+    // 与顺序版逐行相同。
+    let pack_group = |group: &[I]| -> (Vec<LayoutRow>, f64) {
+        let mut rows: Vec<LayoutRow> = Vec::new();
+        let mut y = 0.0f64;
+        let mut pending: Vec<&LayoutItem> = Vec::new();
 
-        let needs_separator = if params.group_by == "none" {
-            false
-        } else {
-            match &last_label {
-                None => true,
-                Some(prev) => *prev != current_label,
+        if params.group_by != "none" {
+            let (label, group_id) = group_label(group[0].borrow(), &params.group_by, dir_labels);
+            emit_separator(&label, group_id, &mut y, &mut rows);
+        }
+        for item in group {
+            pending.push(item.borrow());
+            if pending.len() >= cols {
+                commit_grid_row(&mut pending, &mut y, &mut rows);
             }
-        };
-
-        if needs_separator {
-            // 新组开始：先冲掉上一组的不满行（组间不共享行，与 justified 一致），再发分隔符。
-            commit_grid_row(&mut pending, &mut current_y, &mut rows);
-            emit_separator(
-                &current_label,
-                current_group_id.clone(),
-                &mut current_y,
-                &mut rows,
-            );
-            last_label = Some(current_label);
         }
-
-        pending.push(item);
-        if pending.len() >= cols {
-            commit_grid_row(&mut pending, &mut current_y, &mut rows);
+        // 末尾不满行
+        if !pending.is_empty() {
+            commit_grid_row(&mut pending, &mut y, &mut rows);
         }
-    }
+        (rows, y)
+    };
 
-    // 末尾不满行
-    if !pending.is_empty() {
-        commit_grid_row(&mut pending, &mut current_y, &mut rows);
-    }
-
-    rows
+    layout_groups_parallel(items, &params.group_by, pack_group)
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 // ── 辅助函数 ───────────────────────────────────────────────────────────────────
 
-fn aspect_ratio(item: &LayoutItem, placeholder_aspect: f64) -> f64 {
+// pub(crate) 仅为 horizontal.rs(H-Lab 实验布局)复用纯几何辅助,零行为变更。
+pub(crate) fn aspect_ratio(item: &LayoutItem, placeholder_aspect: f64) -> f64 {
     // Not-yet-measured items (deferred dimensions) carry 0×0 → use the supplied
     // placeholder aspect rather than 1.0 (square).
     // 未测量项（延后取尺寸）为 0×0 → 使用传入的占位宽高比，而非 1.0（正方形）。
@@ -505,9 +643,10 @@ fn aspect_ratio(item: &LayoutItem, placeholder_aspect: f64) -> f64 {
 /// is measured yet. O(n) via `select_nth_unstable` (no full sort).
 /// 集合中已测量项（有真实宽高）的中位宽高比，作为 0×0 项的占位形状。尚无测量时
 /// 回退到 3:2。借 `select_nth_unstable` 实现 O(n)（无需完整排序）。
-fn median_measured_aspect(items: &[LayoutItem]) -> f64 {
+pub(crate) fn median_measured_aspect<I: Borrow<LayoutItem>>(items: &[I]) -> f64 {
     let mut ars: Vec<f64> = items
         .iter()
+        .map(Borrow::borrow)
         .filter(|it| it.width > 0 && it.height > 0)
         .map(|it| (it.width as f64 / it.height as f64).clamp(0.2, 5.0))
         .collect();
@@ -584,15 +723,13 @@ mod tests {
             rating: 0,
             color_label: 0,
             availability: "online".into(),
-            dir_path: None,
-            dir_name: None,
             dir_id: None,
             similarity: None,
         }
     }
 
     /// 取出 Normal 行的 (y, height, items)，分隔符行返回 None——测试断言用。
-    fn as_normal(row: &LayoutRow) -> Option<(f64, f64, &Vec<LayoutRowItem>)> {
+    fn as_normal(row: &LayoutRow) -> Option<(f64, f64, &Vec<SlimRowItem>)> {
         match row {
             LayoutRow::Normal { y, height, items } => Some((*y, *height, items)),
             LayoutRow::Separator { .. } => None,
@@ -614,7 +751,11 @@ mod tests {
     fn grid_none_packs_uniform_square_rows() {
         // 容器 300 / 目标 100 / gap 0 → cols=3, cell=100。7 项 → 行 [3,3,1]，无分隔符。
         let items: Vec<LayoutItem> = (1..=7).map(|i| mk_item(i, 160, 90, i)).collect();
-        let rows = compute_grid_layout(&items, &grid_params(300.0, 100.0, 0.0, "none"));
+        let rows = compute_grid_layout(
+            &items,
+            &grid_params(300.0, 100.0, 0.0, "none"),
+            &HashMap::new(),
+        );
 
         // 全是 Normal 行（none 分组无分隔符）。
         assert!(
@@ -645,7 +786,11 @@ mod tests {
     fn grid_cell_fills_width_with_gap() {
         // 容器 320 / 目标 100 / gap 10 → cols=⌊330/110⌋=3, cell=(320-20)/3=100。
         let items: Vec<LayoutItem> = (1..=3).map(|i| mk_item(i, 100, 100, i)).collect();
-        let rows = compute_grid_layout(&items, &grid_params(320.0, 100.0, 10.0, "none"));
+        let rows = compute_grid_layout(
+            &items,
+            &grid_params(320.0, 100.0, 10.0, "none"),
+            &HashMap::new(),
+        );
         let (_, _, r0) = as_normal(&rows[0]).unwrap();
         assert_eq!(r0.len(), 3);
         // x: 0 / (100+10)=110 / 220；末单元右缘 = 220+100 = 320 = 容器宽。
@@ -664,7 +809,11 @@ mod tests {
             mk_item(3, 100, 100, day2 + 10),
             mk_item(4, 100, 100, day2 + 20),
         ];
-        let rows = compute_grid_layout(&items, &grid_params(400.0, 100.0, 0.0, "date"));
+        let rows = compute_grid_layout(
+            &items,
+            &grid_params(400.0, 100.0, 0.0, "date"),
+            &HashMap::new(),
+        );
 
         // 期望序列：Sep, Normal(2), Sep, Normal(2)。
         let sep_count = rows
@@ -688,20 +837,144 @@ mod tests {
         assert_eq!(normal_lens, vec![2, 2]);
     }
 
+    /// S3.4 并行缝合特征化：多组绝对 y 与顺序累加位级一致（组高前缀和 + 组内局部 y）。
+    #[test]
+    fn parallel_stitch_yields_sequential_y_positions() {
+        let day2 = 2 * 86_400;
+        // grid/date/gap0:Sep(0,36)+Normal(36,100)+Sep(136,36)+Normal(172,100)。
+        let items = vec![
+            mk_item(1, 100, 100, 10),
+            mk_item(2, 100, 100, 20),
+            mk_item(3, 100, 100, day2 + 10),
+            mk_item(4, 100, 100, day2 + 20),
+        ];
+        let rows = compute_grid_layout(
+            &items,
+            &grid_params(400.0, 100.0, 0.0, "date"),
+            &HashMap::new(),
+        );
+        let ys: Vec<f64> = rows.iter().map(|r| r.y()).collect();
+        assert_eq!(ys, vec![0.0, 36.0, 136.0, 172.0]);
+
+        // justified/date/gap4(单张 ar2 不满行 → 行高=目标 100):
+        // Sep(0)→y40 + Row(40,100)→y144 + Sep(144)→y184 + Row(184)。
+        let items = vec![mk_item(1, 200, 100, 10), mk_item(2, 200, 100, day2 + 10)];
+        let rows = compute_justified_layout(
+            &items,
+            &grid_params(400.0, 100.0, 4.0, "date"),
+            &HashMap::new(),
+            None,
+        );
+        let ys: Vec<f64> = rows.iter().map(|r| r.y()).collect();
+        assert_eq!(ys, vec![0.0, 40.0, 144.0, 184.0]);
+    }
+
     /// justified 几何特征化：锁住 make_row_item / group_key 提取后的输出不变（该路径此前无单测）。
     /// 单张 ar=2.0 图、容器 400 / 目标 100 / none：不满末行不拉伸 → 行高=目标，宽=ar·行高。
     #[test]
     fn justified_geometry_unchanged_characterization() {
         let items = vec![mk_item(1, 200, 100, 5)]; // ar = 2.0
-        let rows = compute_justified_layout(&items, &grid_params(400.0, 100.0, 0.0, "none"));
+        let rows = compute_justified_layout(
+            &items,
+            &grid_params(400.0, 100.0, 0.0, "none"),
+            &HashMap::new(),
+            None,
+        );
         assert_eq!(rows.len(), 1);
         let (y, h, its) = as_normal(&rows[0]).unwrap();
         assert_eq!((y, h), (0.0, 100.0));
         assert_eq!(its.len(), 1);
         // is_incomplete（200 < 400·0.6=240）→ row_h=target=100；w=ar·row_h=200；x=0。
         assert_eq!((its[0].x, its[0].w, its[0].h), (0.0, 200.0, 100.0));
-        // 字段透传（make_row_item）：original 尺寸 = 原始宽高、color_label/rating 默认 0。
-        assert_eq!((its[0].original_width, its[0].original_height), (200, 100));
-        assert_eq!((its[0].rating, its[0].color_label), (0, 0));
+        // 字段透传职责已随 S3 移到出口拼装：hydrate_item 保 slot 几何 + item 载荷逐字段还原
+        //（original 尺寸 = 原始宽高、rating/color_label 默认 0）——继续锁同一契约。
+        let wire = hydrate_item(&items[0], &its[0]);
+        assert_eq!((wire.id, wire.x, wire.w, wire.h), (1, 0.0, 200.0, 100.0));
+        assert_eq!((wire.original_width, wire.original_height), (200, 100));
+        assert_eq!((wire.rating, wire.color_label), (0, 0));
+        assert_eq!(wire.file_format, "jpg");
+    }
+
+    /// S3.5 拆帐基准(非门控,--release + --ignored 手动跑):1M 合成项,分相计时定位
+    /// layout 段的 150ms 地板。用法:
+    /// cargo test --release --lib layout::justified::tests::bench_layout_1m -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn bench_layout_1m() {
+        use std::time::Instant;
+        const N: i64 = 1_000_000;
+        // 1000 目录 × 连续块(与真实序一致:folder 轴按目录聚簇);时间戳跨 ~200 天;
+        // 4 种宽高比轮转 + 5% 未测量(0×0)项走占位比。
+        let items: Vec<LayoutItem> = (0..N)
+            .map(|i| {
+                let (w, h) = match i % 20 {
+                    0 => (0, 0),
+                    x if x % 4 == 1 => (1600, 1200),
+                    x if x % 4 == 2 => (1200, 1600),
+                    x if x % 4 == 3 => (1920, 1080),
+                    _ => (1500, 1000),
+                };
+                let mut it = mk_item(i + 1, w, h, (N - i) * 17);
+                it.dir_id = Some(i / 1000);
+                it
+            })
+            .collect();
+        let dir_labels: HashMap<i64, DirLabel> = (0..1000)
+            .map(|d| {
+                (
+                    d,
+                    DirLabel {
+                        rel_path: format!("dir/{d:04}"),
+                        display: format!("D:/photos/dir/{d:04}"),
+                        name: format!("{d:04}"),
+                    },
+                )
+            })
+            .collect();
+
+        let t = Instant::now();
+        let med = median_measured_aspect(&items);
+        println!(
+            "median_measured_aspect: {:.1}ms (med={med:.3})",
+            t.elapsed().as_secs_f64() * 1e3
+        );
+
+        // 复现真机行密度(1.2-2.4 项/行 → 41-83 万行):target 拉大。
+        for (axis, target) in [
+            ("folder", 100.0),
+            ("folder", 240.0),
+            ("folder", 400.0),
+            ("folder", 700.0),
+            ("date", 100.0),
+            ("none", 100.0),
+        ] {
+            let p = grid_params(1200.0, target, 4.0, axis);
+            // 预热一次(rayon 池/页错误),再取三次最小值。
+            let _ = compute_justified_layout(&items, &p, &dir_labels, Some(med));
+            let mut best = f64::MAX;
+            let mut rows_n = 0usize;
+            for _ in 0..3 {
+                let t = Instant::now();
+                let rows = compute_justified_layout(&items, &p, &dir_labels, Some(med));
+                best = best.min(t.elapsed().as_secs_f64() * 1e3);
+                rows_n = rows.len();
+                drop(rows);
+            }
+            println!("justified axis={axis} target={target}: {best:.1}ms ({rows_n} rows)");
+        }
+        for (axis, target) in [("folder", 100.0), ("date", 100.0)] {
+            let p = grid_params(1200.0, target, 4.0, axis);
+            let _ = compute_grid_layout(&items, &p, &dir_labels);
+            let mut best = f64::MAX;
+            let mut rows_n = 0usize;
+            for _ in 0..3 {
+                let t = Instant::now();
+                let rows = compute_grid_layout(&items, &p, &dir_labels);
+                best = best.min(t.elapsed().as_secs_f64() * 1e3);
+                rows_n = rows.len();
+                drop(rows);
+            }
+            println!("grid axis={axis} target={target}: {best:.1}ms ({rows_n} rows)");
+        }
     }
 }

@@ -1,4 +1,4 @@
-// src-tauri/src/ai/engine.rs
+// crates/picasa-next-ai-core/src/engine.rs
 //! AI inference engine pool — wraps ort Sessions for CLIP models.
 //! AI 推理引擎池 — 封装用于 CLIP 模型的 ort Session。
 //!
@@ -81,11 +81,11 @@ use ort::session::builder::GraphOptimizationLevel;
 use ort::session::Session;
 use tracing::{info, warn};
 
-use crate::ai::clip::ClipTokenizer;
-use crate::ai::face_profile::FaceProfile;
-use crate::ai::profile::ModelProfile;
-use crate::ai::provider::AiProvider;
+use crate::clip::ClipTokenizer;
 use crate::error::Result;
+use crate::face_profile::FaceProfile;
+use crate::profile::ModelProfile;
+use crate::provider::AiProvider;
 
 /// A thread-safe pool of ONNX Runtime Sessions.
 /// 用于解决 ort rc.12 中 Session::run 需要 &mut self 导致的串行瓶颈。
@@ -229,7 +229,7 @@ impl AiEnginePool {
         // ── Step 1: provider detection ──────────────────────────────────────
         // ── 步骤 1：提供者探测 ──────────────────────────────────────
         info!("Starting AI provider detection | 开始 AI 提供者探测...");
-        let mut provider_info = crate::ai::provider::detect_best_provider();
+        let mut provider_info = crate::provider::detect_best_provider();
 
         if provider_override == "cpu" {
             info!("User override: Forcing CPU | 用户强制指定：使用 CPU");

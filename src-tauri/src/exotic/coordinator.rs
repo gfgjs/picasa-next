@@ -29,8 +29,72 @@ use crate::state::AppState;
 /// 首发唯一插件 + 能力（Part2）。
 pub const PSD_PLUGIN_ID: &str = "exotic-image-psd";
 const PSD_WORKER_ID: &str = "psd-worker";
+// T13 后调度路径全走注册表(descriptor),此常量仅测试作 shorthand。
+#[cfg(test)]
 const CAPABILITY: Capability = Capability::Thumbnail;
-const CAPABILITY_STR: &str = "thumbnail";
+
+/// per-op 请求超时表(Part4 D3 §5/T13:常量集中一处,Supervisor 请求执行按 op 取值)。
+/// 起步值,实测再调。SESSION_INIT/SESSION_CLOSE/EMBED_BATCH/ENCODE_TEXT 由
+/// `ai::worker_client`(T17 派发)消费。
+pub(crate) mod op_timeouts {
+    use std::time::Duration;
+    /// thumbnail 单请求(原 pipeline::TASK_TIMEOUT 同值收拢至此)。
+    pub const THUMBNAIL: Duration = Duration::from_secs(30);
+    /// SessionInit:冷加载 ViT-L fp32 + DirectML 编译内核的上界(D3 §2;进程握手
+    /// 仍 5s 不动——模型加载不在握手)。
+    pub const SESSION_INIT: Duration = Duration::from_secs(300);
+    /// SessionClose:健康 worker 卸载即 drop(毫秒级);上界只兜「驱动释放 VRAM 慢」,
+    /// 超时即 kill 回收,会话随进程消亡(T17)。
+    pub const SESSION_CLOSE: Duration = Duration::from_secs(30);
+    /// EmbedBatch 一批(D3 §5 起步值)。
+    pub const EMBED_BATCH: Duration = Duration::from_secs(120);
+    /// FaceDetectEmbed 基础超时(2026-07-03 GUI 实测修订:原与 EmbedBatch 同档固定
+    /// 120s,64 张全尺寸原图批在 dev 构建下必然超时 → supervisor 误杀正常 worker,
+    /// 重试同批再超时 → 硬止损终止整轮)。
+    pub const FACE_DETECT_EMBED_BASE: Duration = Duration::from_secs(60);
+    /// FaceDetectEmbed 单项增量:人脸源可为全尺寸原图(解码+letterbox 秒级,慢盘/dev
+    /// 构建更甚),超时按批内项数线性放宽。这是「假死检测器」而非性能指标——用户取消
+    /// 走 cancelled 回调即时生效,不受本值影响,宁可宽松。
+    pub const FACE_DETECT_EMBED_PER_ITEM: Duration = Duration::from_secs(6);
+    /// FaceDetectEmbed 一批的实际超时 = 基础 + 单项增量 × 项数。
+    pub fn face_detect_embed(items: usize) -> Duration {
+        FACE_DETECT_EMBED_BASE + FACE_DETECT_EMBED_PER_ITEM * (items as u32)
+    }
+    /// EncodeText 一批(文本塔恒 CPU、查询通常单条,轻;30s 已是慢盘冷启余量)。
+    pub const ENCODE_TEXT: Duration = Duration::from_secs(30);
+}
+
+/// 单插件运行描述(Part6 §3.3 C1/T13):调度循环按注册表逐项评估与运行,不再写死 PSD。
+pub(crate) struct PluginDescriptor {
+    pub plugin_id: String,
+    /// 握手校验的 ReadyBody.worker_id 期望值。
+    pub worker_id: String,
+    /// 逐能力评估/运行(exotic_tasks 队列按 capability 列分流)。
+    pub capabilities: Vec<Capability>,
+    /// 进程握手超时(per-plugin;模型加载不在握手,ai/face 也保持 5s,D3)。
+    pub handshake_timeout: Duration,
+    /// 是否占 GPU 令牌(AppState.gpu_token):psd=false;ai/face descriptor 随 T15
+    /// 加入时=true(发批前先 CPU permit 后 GPU 令牌,D2 顺序天条)。
+    pub uses_gpu: bool,
+}
+
+/// 运行注册表(Part6 §3.3:Catalog + 运行时支持信息构建)。capabilities 取自
+/// Catalog(权威);worker_id/uses_gpu 是运行时支持信息,Catalog 与插件 manifest
+/// 尚无此数据(Part8 扩展 manifest 字段后改为全数据驱动)。ai/face worker 化
+/// descriptor 随 T15 加入。新插件加入 = 注册表添一项,调度代码零改动。
+fn plugin_descriptors(snap: &crate::exotic::catalog::CatalogSnapshot) -> Vec<PluginDescriptor> {
+    let psd_caps = snap
+        .resolve_format("psd")
+        .map(|o| o.capabilities.clone())
+        .unwrap_or_else(|| vec![Capability::Thumbnail]);
+    vec![PluginDescriptor {
+        plugin_id: PSD_PLUGIN_ID.to_string(),
+        worker_id: PSD_WORKER_ID.to_string(),
+        capabilities: psd_caps,
+        handshake_timeout: HANDSHAKE_TIMEOUT,
+        uses_gpu: false,
+    }]
+}
 
 /// 事件通道容量（可合并；满时置 dirty 不丢 wake）。
 const WAKE_CHANNEL_CAP: usize = 32;
@@ -143,29 +207,58 @@ async fn run_loop(
     info!("exotic Coordinator 退出");
 }
 
-/// 反复运行 Pipeline 直至无就绪任务（解决尾部竞态：运行期间新增任务在本轮被消化）。
+/// 反复运行 Pipeline 直至无就绪任务(解决尾部竞态:运行期间新增任务在本轮被消化)。
+/// T13 通用化:按注册表逐 (插件, 能力) 调度,循环体不再写死 PSD;单调度循环串行,
+/// 插件间天然互不并发。
 async fn maybe_run_until_drained(
     app: &AppHandle,
     state: &Arc<AppState>,
     host: &Arc<ExoticHost>,
     bypass_auto: bool,
 ) {
-    // Worker 定位 + 启动前完整性复核（Part3 §3.6）：dev env 优先（不验签），否则对已装插件
-    // 重新验签 manifest + 全文件 hash，通过才返回路径。信任根解析失败 → 不运行（fail-closed）。
+    for desc in plugin_descriptors(&state.exotic_catalog.snapshot()) {
+        for &capability in &desc.capabilities {
+            run_capability_until_drained(app, state, host, &desc, capability, bypass_auto).await;
+        }
+    }
+}
+
+/// 单 (插件, 能力) 的 drained 循环(原 maybe_run_until_drained 主体参数化,T13)。
+async fn run_capability_until_drained(
+    app: &AppHandle,
+    state: &Arc<AppState>,
+    host: &Arc<ExoticHost>,
+    desc: &PluginDescriptor,
+    capability: Capability,
+    bypass_auto: bool,
+) {
+    // T15 接缝:目前仅 thumbnail 能力有 pipeline 实装;embedding/face_detect_embed 的
+    // 批派发随推理核心迁移(T15)落地——届时在此按能力分派 EmbedWorker 管线,并按
+    // desc.uses_gpu 走「先 CPU permit 后 GPU 令牌」双取(D2)。
+    if capability != Capability::Thumbnail {
+        debug!(
+            "{} 能力 {} 的 pipeline 未实装(T15),跳过",
+            desc.plugin_id,
+            capability.as_str()
+        );
+        return;
+    }
+
+    // Worker 定位 + 启动前完整性复核(Part3 §3.6):dev env 优先(不验签),否则对已装插件
+    // 重新验签 manifest + 全文件 hash + 协议版本前置比对(P0-3,旧协议插件拒绝拉起、
+    // 免付 spawn 代价),通过才返回路径。信任根解析失败 → 不运行(fail-closed)。
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
-    let worker_path = crate::exotic::crypto::VerifyingKeyset::builtin()
-        .ok()
-        .and_then(|ks| {
-            crate::exotic::installer::resolve_worker_path(
-                &state.exotic_install_dir(),
-                PSD_PLUGIN_ID,
-                &ks,
-                now,
-            )
-        });
+    let worker_path = crate::exotic::trusted_keyset().ok().and_then(|ks| {
+        crate::exotic::installer::resolve_worker_path(
+            &state.exotic_install_dir(),
+            &desc.plugin_id,
+            &ks,
+            now,
+        )
+    });
     let worker_available = worker_path.is_some();
 
     loop {
@@ -175,8 +268,8 @@ async fn maybe_run_until_drained(
             evaluate_run(
                 &conn,
                 host,
-                PSD_PLUGIN_ID,
-                CAPABILITY,
+                &desc.plugin_id,
+                capability,
                 worker_available,
                 bypass_auto,
             )
@@ -193,22 +286,31 @@ async fn maybe_run_until_drained(
         };
 
         // 启动唯一 Pipeline（token 入 AppState；stop 命令可取消）。
+        info!(
+            "启动 exotic Pipeline:{} cap={} uses_gpu={}",
+            desc.plugin_id,
+            capability.as_str(),
+            desc.uses_gpu
+        );
         let token = state.new_exotic_analysis_token();
         let app_run = app.clone();
         let state_run = Arc::clone(state);
         let exe_path = exe_path.clone();
         // §5.3 派发前授权复核：把 host 移入阻塞任务，供 Claimer 每批领取前调 is_task_runnable。
         let host_run = Arc::clone(host);
+        let plugin_id = desc.plugin_id.clone();
+        let worker_id = desc.worker_id.clone();
+        let handshake_timeout = desc.handshake_timeout;
 
         let result = tokio::task::spawn_blocking(move || {
             let factory = SupervisorFactory {
                 spec: WorkerSpec {
                     exe_path,
-                    expected_worker_id: PSD_WORKER_ID.to_string(),
-                    required_capabilities: vec![CAPABILITY_STR.to_string()],
+                    expected_worker_id: worker_id,
+                    required_capabilities: vec![capability.as_str().to_string()],
                 },
                 cfg: WorkerConfig {
-                    handshake_timeout: HANDSHAKE_TIMEOUT,
+                    handshake_timeout,
                     host_version: env!("CARGO_PKG_VERSION").to_string(),
                     max_blob_len: exotic_protocol::MAX_BLOB_LEN,
                 },
@@ -223,10 +325,10 @@ async fn maybe_run_until_drained(
                 writer: &state_run.db_writer,
                 limiter: &state_run.background_heavy_limiter,
                 token: &token,
-                layout_cache: &state_run.layout_cache,
+                items_cache: &state_run.layout_items_cache,
                 cache_dir,
                 requested_size,
-                plugin_id: PSD_PLUGIN_ID.to_string(),
+                plugin_id: plugin_id.clone(),
                 on_progress: Arc::new(move || {
                     // 合并发：画廊刷新（复用 enrichment 事件）+ 状态变化。
                     let _ = app_evt.emit(
@@ -240,7 +342,7 @@ async fn maybe_run_until_drained(
                     let _ = app_evt.emit("exotic:status-changed", ());
                 }),
                 should_yield: Arc::new(move || state_yield.should_yield_exotic()),
-                is_runnable: Arc::new(move || host_run.is_task_runnable(PSD_PLUGIN_ID, CAPABILITY)),
+                is_runnable: Arc::new(move || host_run.is_task_runnable(&plugin_id, capability)),
             };
             run_exotic_pipeline_blocking(&deps, &factory)
         })
@@ -344,6 +446,35 @@ mod tests {
     fn unauthorized_host() -> ExoticHost {
         let store = Arc::new(CatalogStore::from_builtin().unwrap());
         ExoticHost::new(store)
+    }
+
+    #[test]
+    fn plugin_registry_from_builtin_catalog() {
+        // 注册表(T13):capabilities 来自内置 Catalog;PSD 不占 GPU、握手 5s。
+        let store = CatalogStore::from_builtin().unwrap();
+        let descs = plugin_descriptors(&store.snapshot());
+        assert_eq!(descs.len(), 1);
+        let d = &descs[0];
+        assert_eq!(d.plugin_id, PSD_PLUGIN_ID);
+        assert_eq!(d.worker_id, "psd-worker");
+        assert_eq!(d.capabilities, vec![Capability::Thumbnail]);
+        assert!(!d.uses_gpu);
+        assert_eq!(d.handshake_timeout, HANDSHAKE_TIMEOUT);
+    }
+
+    #[test]
+    fn op_timeout_table_invariants() {
+        // 表内不变量(D3):进程握手(5s,快失败)≪ thumbnail ≪ 批 ≤ SessionInit(冷加载上界)。
+        assert!(HANDSHAKE_TIMEOUT < op_timeouts::THUMBNAIL);
+        assert!(op_timeouts::THUMBNAIL < op_timeouts::EMBED_BATCH);
+        assert!(op_timeouts::EMBED_BATCH <= op_timeouts::SESSION_INIT);
+        // face 批超时按项数缩放(2026-07-03):单项不低于 thumbnail 档;
+        // 派发上限 16 项(ai::face_pipeline::FACE_DISPATCH_BATCH)时不超 SessionInit。
+        assert!(op_timeouts::face_detect_embed(1) >= op_timeouts::THUMBNAIL);
+        assert!(op_timeouts::face_detect_embed(16) <= op_timeouts::SESSION_INIT);
+        // T17 新档:文本编码(CPU 轻)不重于图像批;SessionClose 远小于 SessionInit。
+        assert!(op_timeouts::ENCODE_TEXT <= op_timeouts::EMBED_BATCH);
+        assert!(op_timeouts::SESSION_CLOSE < op_timeouts::SESSION_INIT);
     }
 
     #[test]

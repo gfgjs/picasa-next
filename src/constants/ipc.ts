@@ -21,6 +21,8 @@ export const IPC = {
   // ── 布局 ────────────────────────────────────────────────────────────
   COMPUTE_LAYOUT: 'compute_layout',
   GET_LAYOUT_ROWS_BY_Y: 'get_layout_rows_by_y',
+  // T16 方案B:按段取行(半开区间 [startY,endY) 精确归属,区别于 by_y 的视口相交语义)
+  GET_BUCKET_ROWS: 'get_bucket_rows',
   GET_SEPARATOR_Y_BY_GROUP_ID: 'get_separator_y_by_group_id',
   GET_ITEM_Y_BY_ID: 'get_item_y_by_id',
   GET_SUBTREE_SCROLL_TARGET: 'get_subtree_scroll_target',
@@ -29,6 +31,11 @@ export const IPC = {
   // 选择描述符解析/计数（Part5 S4，纯新增）：SelectAll 在后端 SQL 解析全集,不经前端整包传 id
   RESOLVE_SELECTION: 'resolve_selection',
   COUNT_SELECTION: 'count_selection',
+
+  // ── H-Lab 横向画廊实验(plan-docs/2026-07-02-horizontal-gallery-lab.md)────────
+  // 独立缓存/版本,与生产布局命令平行互不可见。
+  COMPUTE_H_LAYOUT: 'compute_h_layout',
+  GET_H_BLOCKS_BY_X: 'get_h_blocks_by_x',
 
   // ── Media ─────────────────────────────────────────────────────────────
   // ── 媒体 ─────────────────────────────────────────────────────────────

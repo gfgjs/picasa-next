@@ -143,6 +143,7 @@ export default {
     dateClear: 'Clear',
     undo: 'Undo (Ctrl+Z)',
     redo: 'Redo (Ctrl+Shift+Z)',
+    hgalleryLab: 'Horizontal Gallery Lab',
     searchModeMixed: 'Mixed search (focused)',
     searchModeSemantic: 'AI semantic search only',
     searchModeNormal: 'Standard search only',
@@ -251,6 +252,9 @@ export default {
     hoverAutoplay: 'Hover Auto-play',
     hoverAutoplayDesc:
       'Auto-play a muted, looping preview when hovering a video or live-photo cell. Stops on mouse-out.',
+    bucketScroll: 'Segmented virtual scrolling',
+    bucketScrollDesc:
+      'The gallery uses the bucket segmented engine by default: native in-segment scrolling with no coordinate compression, paired with the logical scrollbar — smoother on large libraries. Takes effect immediately; turn off to fall back to linear translation.',
     video: 'Video',
     enableVideoCover: 'Extract Video Cover',
     enableVideoCoverDesc:
@@ -776,6 +780,29 @@ export default {
     allMedia: 'All Media',
     doc: 'Document',
     audio: 'Audio',
+    hgalleryLab: 'Horizontal Gallery Lab',
+  },
+  // ── H-Lab horizontal gallery lab (plan-docs/2026-07-02-horizontal-gallery-lab.md) ──
+  hlab: {
+    title: 'Horizontal Gallery Lab',
+    back: 'Back to gallery',
+    mode: 'Layout mode',
+    modePaged: 'A · Paged justified',
+    modeLanes: 'B · Fixed lanes',
+    modeColumns: 'C · Justified columns',
+    pageFactor: 'Page factor',
+    targetRowHeight: 'Target row height',
+    laneCount: 'Lanes',
+    balance: 'Drift balancing',
+    targetColWidth: 'Target column width',
+    gap: 'Gap',
+    timeAsc: 'Oldest first',
+    computing: 'Computing…',
+    stats: '{items} items · {blocks} blocks · {width}px total · backend {ms}ms',
+    overCap:
+      'Total width exceeds the 10M px lab scrolling cap; the far end is unreachable — use a smaller library or denser parameters',
+    empty: 'Library is empty — add folders and scan in the main gallery first',
+    hint: 'Wheel scrolls horizontally · PgUp/PgDn page · Home/End jump',
   },
   // 撤销 / 重做 toast（historyStore）
   history: {

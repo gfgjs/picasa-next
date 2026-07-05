@@ -51,6 +51,13 @@ pub enum Capability {
     Thumbnail,
     Metadata,
     Text,
+    /// CLIP 批量嵌入(Part4 T10/G5,协议 v2)。
+    Embedding,
+    /// 人脸检测+嵌入(Part4 T10/G5,协议 v2)。rename 保 snake_case 全名——
+    /// 本枚举的 rename_all="lowercase" 会把驼峰挤成 "facedetectembed",
+    /// 与协议侧 capability::FACE_DETECT_EMBED 不一致。
+    #[serde(rename = "face_detect_embed")]
+    FaceDetectEmbed,
 }
 
 impl Capability {
@@ -60,6 +67,8 @@ impl Capability {
             Capability::Thumbnail => "thumbnail",
             Capability::Metadata => "metadata",
             Capability::Text => "text",
+            Capability::Embedding => "embedding",
+            Capability::FaceDetectEmbed => "face_detect_embed",
         }
     }
 }
@@ -118,6 +127,12 @@ struct RawOffering {
     override_common: bool,
     #[serde(default)]
     store_url: Option<String>,
+    /// 多渠道预留(T13/§3.11):MS Store 商品 ID(Part8 MsStoreProvider 消费)。
+    #[serde(default)]
+    store_product_id: Option<String>,
+    /// 多渠道预留(T13/§3.11):Steam DLC AppID(展示;分发面在 RegistryEntry)。
+    #[serde(default)]
+    steam_dlc_app_id: Option<u32>,
 }
 
 /// 运行时单格式视图（`by_format` 的值）。一个 offering 的多 format 会复制成多条。
@@ -135,6 +150,10 @@ pub struct CatalogOffering {
     /// 授权 SKU（§5.2）；None=无 SKU（不可验签）。
     pub sku: Option<String>,
     pub store_url: Option<String>,
+    /// 多渠道预留(T13/§3.11):MS Store 商品 ID;旧 catalog 无此字段 → None。
+    pub store_product_id: Option<String>,
+    /// 多渠道预留(T13/§3.11):Steam DLC AppID(展示;分发面在 RegistryEntry)。
+    pub steam_dlc_app_id: Option<u32>,
 }
 
 impl CatalogOffering {
@@ -218,6 +237,8 @@ impl CatalogSnapshot {
                 min_host_version: off.min_host_version,
                 sku: off.sku,
                 store_url: off.store_url,
+                store_product_id: off.store_product_id,
+                steam_dlc_app_id: off.steam_dlc_app_id,
             };
 
             for f in norm_formats {
@@ -318,6 +339,24 @@ fn is_valid_plugin_id(id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capability_strings_align_with_protocol() {
+        // 两端能力名单一事实源核对:catalog 枚举 serde/as_str 与协议常量一致(T10)。
+        use exotic_protocol::capability as cap;
+        assert_eq!(Capability::Thumbnail.as_str(), cap::THUMBNAIL);
+        assert_eq!(Capability::Metadata.as_str(), cap::METADATA);
+        assert_eq!(Capability::Embedding.as_str(), cap::EMBEDDING);
+        assert_eq!(Capability::FaceDetectEmbed.as_str(), cap::FACE_DETECT_EMBED);
+        assert_eq!(
+            serde_json::to_string(&Capability::Embedding).unwrap(),
+            r#""embedding""#
+        );
+        assert_eq!(
+            serde_json::to_string(&Capability::FaceDetectEmbed).unwrap(),
+            r#""face_detect_embed""#
+        );
+    }
 
     #[test]
     fn builtin_parses_and_resolves_psd() {

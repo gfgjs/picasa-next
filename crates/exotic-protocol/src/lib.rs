@@ -17,4 +17,9 @@ pub use frame::{
     read_frame, write_frame, Frame, FrameType, ProtocolError, HEADER_LEN, MAGIC, MAX_BLOB_LEN,
     MAX_JSON_LEN, PROTOCOL_VERSION,
 };
-pub use message::{FailureBody, HelloBody, ReadyBody, RequestBody, SuccessBody, WorkerErrorCode};
+pub use message::{
+    capability, EmbedBatchSuccess, EmbedItem, EmbedResult, FaceBatchSuccess, FaceDet, FaceItem,
+    FaceItemResult, FailureBody, HelloBody, ModelDescriptor, ModelHandle, ModelProfileSnapshot,
+    ModelRole, ReadyBody, RequestBody, SessionReadyBody, SuccessBody, TextEmbedSuccess,
+    WorkerErrorCode,
+};

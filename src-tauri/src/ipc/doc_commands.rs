@@ -457,6 +457,8 @@ pub async fn store_doc_thumbnail(
     app: AppHandle,
     item_id: i64,
     png_bytes: Vec<u8>,
+    // T10(§3.8.2):pdf 渲染时前端顺带取 pdf.js numPages 传入;svg 无页概念传 null。
+    page_count: Option<i64>,
     state: State<'_, Arc<AppState>>,
 ) -> std::result::Result<(), String> {
     let state = Arc::clone(&state);
@@ -473,7 +475,7 @@ pub async fn store_doc_thumbnail(
                     None,
                     Some("frontend render failed | 前端渲染失败".to_string()),
                     None,
-                    None, // page_count：pdf/svg 前端路径暂不回填（需前端传 numPages，见 T10 后续）
+                    None, // 元组第 7 项被写入器忽略;页数经 upsert_document_meta 直写(仅成功分支)
                 )],
             )?;
             q::update_thumb_result(&conn, item_id, 2, None, None)?;
@@ -523,9 +525,13 @@ pub async fn store_doc_thumbnail(
                     res.thumb_path.clone(),
                     None,
                     None,
-                    None, // page_count：pdf/svg 前端路径暂不回填（需前端传 numPages，见 T10 后续）
+                    None, // 元组第 7 项被写入器忽略;页数走下方 upsert_document_meta 直写
                 )],
             )?;
+            // T10 页数回填(§3.8.2):pdf 传 pdf.js numPages,svg 传 None(仍写 doc_subtype
+            // 激活该行)。doc_subtype 取 DB file_format 权威值,不信前端回传。
+            let subtype = q::get_item_file_format(&conn, item_id)?;
+            q::upsert_document_meta(&conn, item_id, page_count, subtype.as_deref())?;
             q::update_thumb_result(
                 &conn,
                 item_id,
@@ -535,16 +541,13 @@ pub async fn store_doc_thumbnail(
             )?;
         }
 
-        // ── 同步常驻布局缓存（O(1) 按 id），使封面滚出再滚回无需整表重算 ────────
-        crate::layout::cache::apply_thumb_results(
-            &state.layout_cache,
-            &[ThumbResult {
-                item_id,
-                thumb_status: 1,
-                thumb_path: res.thumb_path.clone(),
-                thumbhash: res.thumbhash.clone(),
-            }],
-        );
+        // ── 同步常驻双缓存（layout + S1 items，O(1) 按 id），使封面滚出再滚回无需整表重算 ──
+        state.apply_thumb_results(&[ThumbResult {
+            item_id,
+            thumb_status: 1,
+            thumb_path: res.thumb_path.clone(),
+            thumbhash: res.thumbhash.clone(),
+        }]);
 
         // 复用 enrichment 事件触发画廊防抖刷新（payload 被忽略）。
         let _ = app.emit(

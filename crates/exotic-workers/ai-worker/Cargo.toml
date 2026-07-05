@@ -1,0 +1,30 @@
+# crates/exotic-workers/ai-worker/Cargo.toml
+# AI 推理 Worker(Part4-T15,合并单 worker:CLIP 嵌入 + 人脸检测/嵌入,T9.5 VRAM 实测支持合并、
+# 正式拍板随 T20)。长驻子进程:stdin 收协议帧、stdout 回协议帧、stderr 写日志。
+# 推理核不在本 crate——共享 picasa-next-ai-core(src-tauri 进程内路径在 T16 前同源消费)。
+
+[package]
+name = "ai-worker"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "ai-worker"
+path = "src/main.rs"
+
+[dependencies]
+# 共享协议(路径依赖;两端同一份帧/消息/错误码定义,v2 会话族 op)。
+exotic-protocol = { path = "../../exotic-protocol" }
+# 共享推理核(engine/clip/face + profile 注册表;SessionInit 的 arch_id 在此解析)。
+picasa-next-ai-core = { path = "../../picasa-next-ai-core" }
+# 解码:ai_cache WebP + source_path 回退的常见图像格式(与 src-tauri image 特性面一致)。
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "bmp", "gif", "tiff"] }
+# 批张量组装([N,3,S,S] 堆叠)。
+ndarray = "0.16"
+# SessionInit 逐模型 sha256 完整性校验(D1 §3)。
+sha2 = "0.10"
+
+[features]
+# 合规隔离(Part4-T1):转发至 ai-core,研究/自用构建才含 SCRFD/ArcFace 轨。
+face-noncommercial = ["picasa-next-ai-core/face-noncommercial"]

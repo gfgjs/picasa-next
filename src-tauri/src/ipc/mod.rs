@@ -9,6 +9,7 @@ pub mod doc_commands;
 pub mod exotic_commands;
 pub mod face_commands;
 pub mod file_ops_commands;
+pub mod hgallery_commands;
 pub mod layout_commands;
 pub mod media_commands;
 pub mod proofread_commands;

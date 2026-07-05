@@ -1,73 +1,49 @@
 // src-tauri/src/ai/face_pipeline.rs
-//! Background face-recognition pipeline (F3).
-//! 后台人脸识别流水线（F3）。
+//! Background face-recognition pipeline (F3) — worker 派发架构(T16 收束)。
+//! 后台人脸识别流水线:推理恒经 ai-worker 子进程派发。
 //!
-//! # 架构：4 线程，不是 5
-//! 早期设计笔记设想 Producer→Preprocessor→Detector→Aligner+Embedder→Writer 五个阶段，但
-//! `ai::face` 的 F2 实现已经把"对齐"内联进 `embed_faces`（无独立 Aligner 线程），且 F2 是逐张
-//! 推理（无跨图批处理，「正确优先，批量优化留后」）。没有批处理时，把检测、嵌入拆成两个线程
-//! 只换来边际的流水线重叠（GPU/DirectML 驱动本就会把两者的提交序列化），代价却是多一条
-//! 跨线程通道搬运体积可观的 `DecodedImage`。于是合并为一个「检测+嵌入」线程，解码图像留在
-//! 本地不跨线程搬运：
+//!   Producer → 攒批 → CPU permit → 三级定源(缩略图档位 → face 缓存 640 → 小原图直派)
+//!   → 缺缓存现场预解码(T16-R2 方案 A,镜像 CLIP T18)→ GPU 令牌(D2 顺序)
+//!   → FaceDetectEmbed → faces_to_records 映射 → Writer
 //!
-//!   Producer → Preprocessor(rayon 解码) → DetectEmbed(检测+嵌入, 单线程) → Writer
+//! 1. Producer:批量查询 face_status=0 的 media_items,标记 Processing,发 FaceTask。
+//! 2. 派发线程:**worker 端只解小图**——缩略图档位(预测短边 ≥ detect_size)或 host 预解码
+//!    的 face 缓存(短边 640 WebP,WIC 优先产出,exotic 原图也在覆盖内);仅短边本就 ≤640
+//!    的小原图直派 worker 解码(白名单格式)。预解码失败(双引擎都解不开)标 Error,与
+//!    CLIP T18 现场派生失败同语义。几何按协议回报的**实际解码尺寸**归一化
+//!    (FaceItemResult::Ok.width/height),不用 host 预测尺寸。
+//! 3. Writer:批量收集 FaceResult,成功项先删后插(batch_replace_faces),小批置
+//!    face_status(问题2 进度平滑)、大批跑增量聚类;零脸图也是成功(Done 非 Error)。
 //!
-//! 1. Producer：批量查询 `face_status=0` 的 media_items，标记 Processing，发送 `FaceTask`。
-//! 2. Preprocessor（rayon 线程池）：解码"短边 ≥ detect_size(640)"的最廉价源（见
-//!    `resolve_face_decode_source`），发送 `DetectEmbedTask{decoded}`；解码失败直接发 `FaceResult{None}`。
-//! 3. DetectEmbed（单线程，串行持有 `detect_pool`+`embed_pool`）：对每张图调用
-//!    `face::detect_faces` → 若有脸再调用 `face::embed_faces`（内含对齐）；bbox/关键点按
-//!    `decoded` 自身宽高归一化为 `[0,1]`；零脸图也是成功（`Ok(vec![])`），不是错误。
-//! 4. Writer：批量收集 `FaceResult`，对每个成功项**先删后插**（`batch_replace_faces`，处理
-//!    "重跑后旧脸残留"），再批量置 `face_status`。
+//! 与 CLIP 分析共用 F5 GPU 分析槽(互斥);让步复用 ai_yield_blockers()。
+//! 进程内推理路径(engine 快照/rayon 预处理/detect+embed 线程)已随 T16 删除,
+//! 历史实现见 git。
 //!
-//! # 与 CLIP 的关系（刻意保持最小改动）
-//! - 让步机制直接复用既有 `AppState::ai_yield_blockers()`，face 生产者照搬其返回值原样让步
-//!   ——这与 CLIP 生产者用的是**同一个**函数，效果上人脸与 CLIP 对 scan/缩略图/派生/**exotic**/
-//!   交互这些更高优先级的让步是一致的。
-//!   注（v3.1 R9）：该统一阻塞源已新增 `exotic` token（冷门格式插件子进程解码优先于 AI/face），
-//!   故此处「复用」≠「ai_yield_blockers 永不改」；新增阻塞源时本函数无需改，自动生效。
-//! - **人脸与 CLIP 互斥**（避免两边同时占用 GPU/显存竞争）有意**不在本阶段实现**：
-//!   ① 目前没有入口能并发启动两条流水线（人脸的 Tauri 命令是 F5 才接线）；
-//!   ② 简单的"双向互相让步"在这里会死锁——双方各自的令牌在「正在 sleep 等待对方让出」期间
-//!   仍然是 `Some`，于是 A 见 B 的令牌存在而让步、B 见 A 的令牌存在也让步，永远互等，
-//!   谁都不会清空令牌、谁都跑不完。真正的互斥需要 F5 设计一个非对称的"单一持有者"门闩
-//!   （谁先启动谁占着，后来者等待或拒绝），而不是对称让步。
-//! - 同理，完成时**不**像 `pipeline.rs` 那样把 `state.ai_engine` 置 `None` 来卸载显存——
-//!   `AiEnginePool` 是 CLIP 与人脸**共用的同一个**池（同时持有两者的 session），在此置空会
-//!   连带卸载 CLIP（如果它已加载）。显存生命周期的协调留给 F5（那时才有真正需要协调的并发场景）。
-//!
-//! # 解码源：不能复用 CLIP 的 `resolve_decode_source`
-//! 该函数的优先级 1 会短路到 AI 分析缓存文件（固定短边 336px）。CLIP 的模型只需 224–336px，
-//! 这个捷径在那边永远安全；但 YuNet 需要 **640px**（`FaceProfile::detect_size`），照搬会悄悄
-//! 喂给检测器一张过小的图、损害小脸召回率。本文件的 `resolve_face_decode_source` 因此独立
-//! 实现，仅在「常规分档缩略图」与「原图」间选择，不引用 AI 缓存。
-//!
-//! # 验证范围（如实说明）
-//! 本阶段仅做到 `cargo build` 编译通过 + 人工代码审查——没有可运行的触发入口（F5 的 Tauri
-//! 命令尚不存在），故**未做端到端运行验证**。真正"跑一遍真实图库"的验证留到 F5 接好命令、
-//! 应用可以从界面触发分析时再做。
+//! # 解码源:不能复用 CLIP 的 ai_cache
+//! CLIP 的 ai_cache 固定短边 336px,对 YuNet 的 640px 输入太小,会悄悄损害小脸召回率;
+//! face 自持一份 `face_thumbs/`(短边 640,FACE_CACHE_SHORT_EDGE)。
+//! resolve_face_decode_source 先在「常规分档缩略图」与「原图」间选择,原图回退项再由
+//! 派发批升级为 face 缓存(决策核见 face_cache_applies,装配见 dispatch_face_batch)。
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use crossbeam_channel::{bounded, Receiver, Sender};
+use rayon::prelude::*;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::ai::clip::embedding_to_bytes;
-use crate::ai::engine::SessionPool;
-use crate::ai::face::{detect_faces, embed_faces};
+use crate::ai::face::DetectedFace;
 use crate::ai::face_profile::FaceProfile;
 use crate::db::models::FaceStatus;
 use crate::db::queries::{
     batch_replace_faces, batch_update_face_status, count_pending_face_items,
     get_pending_face_items, reset_processing_face_items, NewFace,
 };
-use crate::engine::gpu::get_gpu_engine;
-use crate::engine::traits::{DecodedImage, ResizeHint};
 use crate::error::AppError;
 use crate::state::AppState;
+use crate::thumbnail::cache::{face_cache_path, FACE_CACHE_SHORT_EDGE};
 
 /// Batch size for reading from DB and for the writer's clustering flush.
 /// 从数据库读取、及写入器聚类刷新的批次大小。
@@ -93,13 +69,8 @@ struct FaceTask {
     thumb_path: Option<String>,
     width: i64,
     height: i64,
-}
-
-/// Decoded image handed from preprocessor to the detect+embed stage.
-/// 从预处理器交给检测+嵌入阶段的解码图像。
-struct DetectEmbedTask {
-    item_id: i64,
-    decoded: DecodedImage,
+    /// 缩略图/派生缓存键(xxh3(路径+mtime),兼陈旧防护)——face 缓存(方案 A)按此寻址。
+    cache_key: i64,
 }
 
 /// Outcome sent from detect+embed (or an early preprocess failure) to the writer.
@@ -153,124 +124,32 @@ pub fn start_face_pipeline(state: Arc<AppState>, token: CancellationToken) {
     });
 }
 
-/// Blocking pipeline runner — runs inside spawn_blocking + rayon.
-/// 阻塞式流水线运行器 — 在 spawn_blocking + rayon 中运行。
+/// Blocking pipeline runner:T16 起恒走 worker 派发(进程内 ort 路径已删)。
 fn run_face_pipeline_blocking(
     state: &Arc<AppState>,
     token: &CancellationToken,
 ) -> crate::error::Result<()> {
-    // Snapshot both face sessions + the active face profile once; share read-only across stages.
-    // 一次性快照人脸双 session + 当前激活的人脸契约，只读共享给各阶段。
-    let (detect_session, embed_session, profile) = {
-        let engine = state.ai_engine.read().unwrap();
-        let pool = engine
-            .as_ref()
-            .ok_or_else(|| AppError::Internal("face engine not initialized".into()))?;
-        if !pool.face_ready() {
-            return Err(AppError::Internal("face models not loaded".into()));
-        }
-        let detect_session = pool
-            .face_detect_session
-            .clone()
-            .ok_or_else(|| AppError::Internal("face detect session missing".into()))?;
-        let embed_session = pool
-            .face_embed_session
-            .clone()
-            .ok_or_else(|| AppError::Internal("face embed session missing".into()))?;
-        let profile = pool
-            .face_profile
-            .clone()
-            .ok_or_else(|| AppError::Internal("face profile missing".into()))?;
-        (detect_session, embed_session, profile)
-    };
-    let profile = Arc::new(profile);
+    crate::ipc::ai_commands::warn_legacy_ai_backend(state);
+    run_face_pipeline_worker_blocking(state, token)
+}
 
-    // Resume support (问题7): release any items a previous run claimed but never finished
-    // (face_status=Processing) back to Pending — mirrors `reset_processing_ai_items`.
-    // 续传支持（问题7）：把上次运行已领取但未完成的项（face_status=Processing）放回 Pending——
-    // 镜像 `reset_processing_ai_items`。
-    {
-        let conn = state.db_writer.lock().unwrap_or_else(|e| e.into_inner());
-        match reset_processing_face_items(&conn) {
-            Ok(n) if n > 0 => info!(
-                "Recovered {} orphaned face items (processing → pending) | 恢复 {} 个孤儿人脸项（处理中 → 待处理）",
-                n, n
-            ),
-            Ok(_) => {}
-            Err(e) => warn!("Failed to recover orphaned face items | 恢复孤儿人脸项失败: {}", e),
-        }
+/// Resume support (问题7): release any items a previous run claimed but never finished
+/// (face_status=Processing) back to Pending — mirrors `reset_processing_ai_items`.
+/// 续传支持(问题7):把上次运行已领取但未完成的项(face_status=Processing)放回 Pending——
+/// 镜像 `reset_processing_ai_items`;进程内与 worker 派发两路径共用。
+fn recover_orphaned_face_items(state: &Arc<AppState>) {
+    let conn = state.db_writer.lock().unwrap_or_else(|e| e.into_inner());
+    match reset_processing_face_items(&conn) {
+        Ok(n) if n > 0 => info!(
+            "Recovered {} orphaned face items (processing → pending) | 恢复 {} 个孤儿人脸项（处理中 → 待处理）",
+            n, n
+        ),
+        Ok(_) => {}
+        Err(e) => warn!(
+            "Failed to recover orphaned face items | 恢复孤儿人脸项失败: {}",
+            e
+        ),
     }
-
-    let read_conn = state.db_read_pool.get()?;
-    let total = count_pending_face_items(&read_conn)?;
-    info!(
-        "Face pipeline starting: {} images to analyse | 人脸流水线启动：待分析 {} 张图像",
-        total, total
-    );
-    drop(read_conn);
-
-    // ── Channel setup ─────────────────────────────────────────────────────────
-    // ── 通道设置 ─────────────────────────────────────────────────────────────
-    let (task_tx, task_rx) = bounded::<FaceTask>(CHANNEL_CAPACITY);
-    let (decoded_tx, decoded_rx) = bounded::<DetectEmbedTask>(CHANNEL_CAPACITY);
-    let (result_tx, result_rx) = bounded::<FaceResult>(CHANNEL_CAPACITY);
-
-    let token_prod = token.clone();
-    let token_writer = token.clone();
-    let state_prod = Arc::clone(state);
-    let state_writer = Arc::clone(state);
-
-    rayon::scope(|s| {
-        // ── Producer thread ───────────────────────────────────────────────────
-        // ── 生产者线程 ───────────────────────────────────────────────────────
-        s.spawn(|_| {
-            produce_face_tasks(&state_prod, task_tx, &token_prod);
-        });
-
-        // ── Preprocessor threads (rayon thread pool) ──────────────────────────
-        // ── 预处理线程（rayon 线程池）────────────────────────────────────────
-        let state_consumer = Arc::clone(state);
-        let token_consumer = token.clone();
-        let result_tx_preprocess = result_tx.clone();
-        let profile_pp = Arc::clone(&profile);
-        s.spawn(move |_| {
-            preprocess_face_tasks(
-                task_rx,
-                decoded_tx,
-                result_tx_preprocess,
-                &state_consumer,
-                &token_consumer,
-                &profile_pp,
-            );
-        });
-
-        // ── DetectEmbed thread (GPU-bound, single dedicated thread) ───────────
-        // ── 检测+嵌入线程（GPU 密集，单一专用线程）────────────────────────────
-        let token_de = token.clone();
-        let result_tx_de = result_tx.clone();
-        let profile_de = Arc::clone(&profile);
-        s.spawn(move |_| {
-            detect_embed_faces(
-                decoded_rx,
-                result_tx_de,
-                detect_session,
-                embed_session,
-                &token_de,
-                &profile_de,
-            );
-        });
-
-        // ── Writer thread ─────────────────────────────────────────────────────
-        // ── 写入器线程 ────────────────────────────────────────────────────────
-        let profile_writer = Arc::clone(&profile);
-        s.spawn(move |_| {
-            write_face_results(&state_writer, result_rx, &token_writer, &profile_writer);
-        });
-
-        drop(result_tx); // Close so writer can detect completion | 关闭以便写入器可以检测完成
-    });
-
-    Ok(())
 }
 
 /// Producer: batch-query pending items, push tasks to channel.
@@ -349,6 +228,7 @@ fn produce_face_tasks(state: &Arc<AppState>, task_tx: Sender<FaceTask>, token: &
                     thumb_path: item.thumb_path,
                     width: item.width,
                     height: item.height,
+                    cache_key: item.cache_key,
                 })
                 .is_err()
             {
@@ -360,63 +240,24 @@ fn produce_face_tasks(state: &Arc<AppState>, task_tx: Sender<FaceTask>, token: &
     info!("Face producer finished | 人脸生产者已完成");
 }
 
-/// Preprocessor: receive tasks, decode the cheapest sufficient source, send to detect+embed.
-/// 预处理器：接收任务，解码最廉价且足够的源，发送到检测+嵌入阶段。
-fn preprocess_face_tasks(
-    task_rx: Receiver<FaceTask>,
-    decoded_tx: Sender<DetectEmbedTask>,
-    result_tx: Sender<FaceResult>,
-    state: &Arc<AppState>,
-    token: &CancellationToken,
-    profile: &Arc<FaceProfile>,
-) {
-    rayon::scope(|s| {
-        for task in task_rx {
-            if token.is_cancelled() {
-                break;
-            }
-
-            let decoded_tx = decoded_tx.clone();
-            let result_tx = result_tx.clone();
-            let state = Arc::clone(state);
-            let token_clone = token.clone();
-            let profile = Arc::clone(profile);
-
-            s.spawn(move |_| {
-                if token_clone.is_cancelled() {
-                    return;
-                }
-
-                match process_face_preprocess_task(&task, &state, &profile) {
-                    Ok(decoded) => {
-                        let _ = decoded_tx.send(DetectEmbedTask {
-                            item_id: task.item_id,
-                            decoded,
-                        });
-                    }
-                    Err(e) => {
-                        debug!(
-                            "Face preprocess failed for item {} | 项 {} 人脸预处理失败: {}",
-                            task.item_id, task.item_id, e
-                        );
-                        let _ = result_tx.send(FaceResult {
-                            item_id: task.item_id,
-                            records: None,
-                        });
-                    }
-                }
-            });
-        }
-    });
-
-    info!("Face preprocessors finished | 人脸预处理器已完成");
-}
-
 /// A resolved decode source: which file to decode and as what format.
 /// 已解析的解码源：解码哪个文件、按什么格式。
 struct FaceDecodeSource {
     path: PathBuf,
     format: String,
+    kind: FaceSourceKind,
+}
+
+/// 解码源三级构成(T16-R2 方案 A):诊断计数随批输出;原图直派常态应只剩短边 ≤640 的小图,
+/// 若原图源占比高且单项耗时大,优先怀疑防呆回退或预解码异常。
+#[derive(Clone, Copy, PartialEq)]
+enum FaceSourceKind {
+    /// 常规分档缩略图(预测短边 ≥ detect_size)。
+    Thumb,
+    /// host 预解码的 face 缓存(短边 640 WebP)。
+    FaceCache,
+    /// 原图直派 worker 解码(短边本就 ≤640 的小图,或 detect_size 超缓存尺寸的防呆回退)。
+    Original,
 }
 
 /// Pick the cheapest decode source whose short edge still satisfies `detect_size` (640).
@@ -439,6 +280,7 @@ fn resolve_face_decode_source(
     let original = FaceDecodeSource {
         path: task.source_path.clone(),
         format: task.file_format.clone(),
+        kind: FaceSourceKind::Original,
     };
 
     if task.thumb_status != 1 || task.width <= 0 || task.height <= 0 {
@@ -478,163 +320,29 @@ fn resolve_face_decode_source(
         FaceDecodeSource {
             path: thumb_full,
             format: "webp".to_string(),
+            kind: FaceSourceKind::Thumb,
         }
     } else {
         original
     }
 }
 
-/// Decode the cheapest sufficient source for one face task via ImageEngine (GPU-accelerated WIC
-/// with CPU fallback) — same fallback shape as CLIP's `process_preprocess_task`.
-/// 通过 ImageEngine（GPU 加速 WIC，带 CPU 回退）为单个人脸任务解码最廉价且足够的源——
-/// 回退结构与 CLIP 的 `process_preprocess_task` 相同。
-fn process_face_preprocess_task(
-    task: &FaceTask,
-    state: &AppState,
-    profile: &FaceProfile,
-) -> crate::error::Result<DecodedImage> {
-    let gpu_engine_name = state.thumb_config.read().unwrap().gpu_engine.clone();
-    let resize_hint = Some(ResizeHint::ShortEdge(profile.detect_size));
-    let src = resolve_face_decode_source(task, state, profile.detect_size);
-
-    match get_gpu_engine(&gpu_engine_name) {
-        Some(gpu) if gpu.can_handle(&src.format) => match gpu.decode(&src.path, resize_hint) {
-            Ok(d) => Ok(d),
-            Err(e) => {
-                debug!(
-                    "GPU decode failed for face item {}, falling back to CPU | 人脸项 {} GPU 解码失败，回退 CPU: {}",
-                    task.item_id, task.item_id, e
-                );
-                state
-                    .engine_arena
-                    .engine_for(&src.format)
-                    .ok_or_else(|| AppError::UnsupportedFormat(src.format.clone()))?
-                    .decode(&src.path, resize_hint)
-            }
-        },
-        _ => state
-            .engine_arena
-            .engine_for(&src.format)
-            .ok_or_else(|| AppError::UnsupportedFormat(src.format.clone()))?
-            .decode(&src.path, resize_hint),
-    }
-}
-
-/// DetectEmbed: receive decoded images, run YuNet detect then SFace/ArcFace embed, send results.
-/// 检测+嵌入：接收解码图，先跑 YuNet 检测再跑 SFace/ArcFace 嵌入，发送结果。
-///
-/// 问题6c：并发 worker 数 = 两池**可用 session** 的较小值（流水线启动瞬间无人借出 → 等于池
-/// 实际容量，部分加载失败时自动取较小值）。GPU 下 `face_pool_size=2` → 2 个 worker 各持一组
-/// detect+embed session 并发吃 GPU。⚠️ 见 `engine.rs::face_pool_size`：GPU 多 session 有 DX12
-/// 锁争用风险，待用户实测；若变慢把 `face_pool_size` 改回 1，worker 自动退回单线程（行为同旧）。
-fn detect_embed_faces(
-    decoded_rx: Receiver<DetectEmbedTask>,
-    result_tx: Sender<FaceResult>,
-    detect_pool: SessionPool,
-    embed_pool: SessionPool,
-    token: &CancellationToken,
-    profile: &Arc<FaceProfile>,
-) {
-    let workers = detect_pool.available().min(embed_pool.available()).max(1);
-
-    if workers <= 1 {
-        // 单 worker：最简路径（CPU 单推理线程 / GPU 回退 1）。
-        run_detect_embed_worker(
-            &decoded_rx,
-            &result_tx,
-            &detect_pool,
-            &embed_pool,
-            token,
-            profile,
-        );
-        info!("Face detect+embed finished (1 worker) | 人脸检测+嵌入已完成（1 worker）");
-        return;
-    }
-
-    // 多 worker：crossbeam Receiver 为 MPMC，各 worker 持一份 clone 共拉同一队列、自动负载均衡。
-    // std::thread::scope 使 worker 可安全借用栈上的 token/profile（无需 'static）。
-    std::thread::scope(|s| {
-        for _ in 0..workers {
-            let rx = decoded_rx.clone();
-            let tx = result_tx.clone();
-            let dp = detect_pool.clone();
-            let ep = embed_pool.clone();
-            let prof = Arc::clone(profile);
-            s.spawn(move || {
-                run_detect_embed_worker(&rx, &tx, &dp, &ep, token, &prof);
-            });
-        }
-    });
-    info!(
-        "Face detect+embed finished ({} workers) | 人脸检测+嵌入已完成（{} workers）",
-        workers, workers
-    );
-}
-
-/// 单个检测+嵌入 worker：从 `decoded_rx` 取图，检测→嵌入，结果发 `result_tx`，直到通道关闭。
-fn run_detect_embed_worker(
-    decoded_rx: &Receiver<DetectEmbedTask>,
-    result_tx: &Sender<FaceResult>,
-    detect_pool: &SessionPool,
-    embed_pool: &SessionPool,
-    token: &CancellationToken,
-    profile: &FaceProfile,
-) {
-    for task in decoded_rx.iter() {
-        if token.is_cancelled() {
-            break;
-        }
-
-        let records = match detect_and_embed_one(
-            task.item_id,
-            &task.decoded,
-            detect_pool,
-            embed_pool,
-            profile,
-        ) {
-            Ok(recs) => Some(recs),
-            Err(e) => {
-                debug!(
-                    "Face detect/embed failed for item {} | 项 {} 人脸检测/嵌入失败: {}",
-                    task.item_id, task.item_id, e
-                );
-                None
-            }
-        };
-
-        let _ = result_tx.send(FaceResult {
-            item_id: task.item_id,
-            records,
-        });
-    }
-}
-
-/// Detect + embed all faces in one decoded image, returning DB-ready rows with bbox/landmarks
-/// normalized against `decoded`'s own width/height (NOT the original file's DB-stored
-/// dimensions — the decode source may be a smaller thumbnail). `Ok(vec![])` = zero faces, which
-/// is still success (caller marks the item Done, not Error).
-/// 检测+嵌入一张解码图中的所有人脸，返回 bbox/关键点已按 `decoded` 自身宽高（非数据库存的原图
-/// 尺寸——解码源可能是更小的缩略图）归一化的、DB 就绪的行。`Ok(vec![])` = 零脸，仍算成功
-/// （调用方标记该项为 Done，非 Error）。
-fn detect_and_embed_one(
+/// 把「检测几何 + 逐脸嵌入」映射为 DB 就绪行:bbox/关键点按解码图 `(img_w, img_h)` 归一化
+/// 为 `[0,1]`,quality 同源派生。进程内(detect_and_embed_one)与 worker 派发(几何经协议
+/// FaceDet 原样搬回 DetectedFace + 协议回报的实际解码尺寸)两路径共用,保证落库语义逐位一致。
+fn faces_to_records(
     item_id: i64,
-    decoded: &DecodedImage,
-    detect_pool: &SessionPool,
-    embed_pool: &SessionPool,
-    profile: &FaceProfile,
-) -> crate::error::Result<Vec<NewFace>> {
-    let faces = detect_faces(detect_pool, decoded, profile)?;
-    if faces.is_empty() {
-        return Ok(Vec::new());
-    }
-    let embeddings = embed_faces(embed_pool, decoded, &faces, profile)?;
-    let (w, h) = (decoded.width.max(1) as f32, decoded.height.max(1) as f32);
-
-    Ok(faces
+    faces: &[DetectedFace],
+    embeddings: &[Vec<f32>],
+    img_w: u32,
+    img_h: u32,
+) -> Vec<NewFace> {
+    let (w, h) = (img_w.max(1) as f32, img_h.max(1) as f32);
+    faces
         .iter()
         .zip(embeddings)
         .map(|(face, emb)| {
-            let quality = face.quality(decoded.width, decoded.height);
+            let quality = face.quality(img_w, img_h);
             let mut lm_flat = [0f32; 10];
             for i in 0..5 {
                 lm_flat[i * 2] = (face.landmarks[i][0] / w).clamp(0.0, 1.0);
@@ -649,10 +357,10 @@ fn detect_and_embed_one(
                 landmarks: embedding_to_bytes(&lm_flat),
                 det_score: face.score,
                 quality,
-                embedding: embedding_to_bytes(&emb),
+                embedding: embedding_to_bytes(emb),
             }
         })
-        .collect())
+        .collect()
 }
 
 /// Writer: batch-collect results, delete+insert `faces` rows, update `face_status`.
@@ -801,4 +509,463 @@ fn flush_face_failed(state: &Arc<AppState>, failed_ids: &mut Vec<i64>) {
         );
     }
     failed_ids.clear();
+}
+
+// ── worker 派发路径(face 接线波;`ai_backend=worker` 时启用)────────────────────
+
+/// worker 端可解码的源格式白名单(ai-worker 用纯 `image` crate 解码,无 WIC/exotic 引擎;
+/// 与 ai-worker Cargo.toml 的 image features 对齐)。缩略图档位与 face 缓存源恒为 webp(可解);
+/// 白名单外(heic/raw/psd 等)的原图回退项恒走 host 预解码的 face 缓存(方案 A,WIC 引擎可解
+/// heic 等)——原「exotic 原图跳过」的过渡缺口就此收敛;仅 detect_size 超缓存尺寸的未来模型
+/// 防呆分支仍会跳过(见 dispatch_face_batch 阶段1)。
+const WORKER_DECODABLE_FORMATS: &[&str] =
+    &["jpg", "jpeg", "png", "webp", "bmp", "gif", "tif", "tiff"];
+
+/// 攒批的空闲刷新周期(与 CLIP worker 派发同值)。
+const WORKER_FLUSH_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// face 单批派发上限(2026-07-03 GUI 实测拍板):worker 人脸推理逐图进行(YuNet 固定
+/// 640 输入),协议批只摊薄毫秒级的 IPC 往返,吞吐与批大小无关;批越大,单请求超时
+/// 敞口与取消/落库粒度越差。CLIP 的 VRAM 自适应 batch(可达 64)对 face 无意义,
+/// 派发时收窄到本值(方案 A 后源恒为 640 级小图,16 已兼顾 IPC 摊薄与取消/落库粒度)。
+const FACE_DISPATCH_BATCH: usize = 16;
+
+/// face 有效派发批 = min(会话声明 batch, FACE_DISPATCH_BATCH),至少 1。
+fn face_dispatch_cap(session_batch: u32) -> usize {
+    (session_batch as usize).clamp(1, FACE_DISPATCH_BATCH)
+}
+
+/// worker 派发路径主入口(由 run_face_pipeline_blocking 按 `ai_backend` 分流)。
+/// Producer/Writer 与进程内共用;中段 = 单派发线程攒批 → FaceDetectEmbed(解码在 worker)。
+fn run_face_pipeline_worker_blocking(
+    state: &Arc<AppState>,
+    token: &CancellationToken,
+) -> crate::error::Result<()> {
+    // profile 纯由配置解析(零进程内引擎):enabled 门与激活轨语义与引擎加载完全同源。
+    let Some(face_profile) = crate::ipc::ai_commands::active_face_profile(state) else {
+        return Err(AppError::Internal(
+            "人脸功能未启用(face_enabled=0)或无激活轨".into(),
+        ));
+    };
+    let clip_profile = crate::ipc::ai_commands::active_profile(state);
+    let spec = crate::ai::worker_client::build_session_spec(
+        state,
+        clip_profile,
+        Some(face_profile.clone()),
+    );
+    let profile = Arc::new(face_profile);
+
+    recover_orphaned_face_items(state);
+
+    let read_conn = state.db_read_pool.get()?;
+    let total = count_pending_face_items(&read_conn)?;
+    drop(read_conn);
+    info!(
+        "Face worker 流水线启动:待分析 {total} 张(backend=worker, face={}, batch={})",
+        profile.id,
+        face_dispatch_cap(spec.batch_size)
+    );
+
+    let (task_tx, task_rx) = bounded::<FaceTask>(CHANNEL_CAPACITY);
+    let (result_tx, result_rx) = bounded::<FaceResult>(CHANNEL_CAPACITY);
+
+    // 派发线程的批级致命错误经此带出 scope(同 CLIP worker 派发的手法)。
+    let fatal: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+    let token_prod = token.clone();
+    let state_prod = Arc::clone(state);
+    let token_writer = token.clone();
+    let state_writer = Arc::clone(state);
+    let profile_writer = Arc::clone(&profile);
+
+    rayon::scope(|s| {
+        s.spawn(|_| {
+            produce_face_tasks(&state_prod, task_tx, &token_prod);
+        });
+
+        let state_disp = Arc::clone(state);
+        let token_disp = token.clone();
+        let fatal_ref = &fatal;
+        let spec_ref = &spec;
+        let profile_disp = Arc::clone(&profile);
+        s.spawn(move |_| {
+            if let Err(e) = face_dispatch_loop(
+                &state_disp,
+                spec_ref,
+                &profile_disp,
+                task_rx,
+                result_tx,
+                &token_disp,
+            ) {
+                *fatal_ref.lock().unwrap_or_else(|p| p.into_inner()) = Some(e);
+            }
+        });
+
+        s.spawn(move |_| {
+            write_face_results(&state_writer, result_rx, &token_writer, &profile_writer);
+        });
+    });
+
+    // provider 回声落库(T16)须在 close_session 之前——快照随 close 清空。
+    crate::ipc::ai_commands::persist_provider_echo(state);
+    // 结束即卸会话(自然完成/取消皆是;对齐 CLIP worker 派发「运行结束即 close_session」)。
+    state
+        .ai_worker
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .close_session();
+
+    match fatal.into_inner().unwrap_or_else(|p| p.into_inner()) {
+        Some(e) => Err(AppError::System(format!("Face worker 派发终止:{e}"))),
+        None => Ok(()),
+    }
+}
+
+/// 派发批次累计诊断(2026-07-03 性能取证):随批输出墙钟与解码源构成,回答「慢在哪」。
+/// 原图源占比高且单项耗时大 ⇒ worker 端全尺寸解码主导;worker 侧分段耗时(解码/检测/
+/// 嵌入)见其 stderr 的「FaceDetectEmbed 批诊断」行,两侧日志对照即可定位瓶颈段。
+#[derive(Default)]
+struct FaceDispatchStats {
+    /// 已派发并返回的项数(不含格式跳过项)。
+    items: u64,
+    /// face_detect_embed 往返墙钟累计(ms,含 IPC 与重试)。
+    wall_ms: u128,
+    /// 解码源构成:分档缩略图 / face 缓存(方案 A) / 原图直派。
+    thumb: u64,
+    cache: u64,
+    orig: u64,
+    /// 瞬态失败/防呆回退不可派项的跳过数(保持 Processing,下次运行恢复)。
+    skipped: u64,
+}
+
+/// 单项派发计划(方案 A 三级定源的产物,与批内 tasks 同序)。
+enum FacePlan {
+    /// 源已可派(缩略图档位,或小原图直派)。
+    Ready(FaceDecodeSource),
+    /// 走 face 缓存;`predecode`=缓存缺失,须本批现场预解码。
+    UseCache { predecode: bool },
+    /// 不可派(detect_size 超缓存尺寸的防呆 + worker 不可解格式),保持 Processing。
+    Skip,
+}
+
+/// 原图回退项是否应升级走 face 缓存(方案 A 决策核,纯函数可单测)。
+/// - 防呆:未来 detect_size > 缓存短边(640)的模型不得吃偏小缓存(镜像 ai_cache 的
+///   「336 绑定模型集」警示,但这里是运行期防护而非注释约定);
+/// - 走缓存的条件:降采样有收益(原图短边 > 缓存短边,worker 解码量级级下降),或 worker
+///   压根不可解(exotic 原图,host WIC 预解码是唯一通路);短边本就 ≤640 的小图直派更省
+///   (预解码不缩尺寸,徒增一次编解码与盘占)。
+fn face_cache_applies(width: i64, height: i64, decodable: bool, detect_size: u32) -> bool {
+    if detect_size > FACE_CACHE_SHORT_EDGE {
+        return false;
+    }
+    let downscale_wins =
+        width > 0 && height > 0 && (width.min(height) as u32) > FACE_CACHE_SHORT_EDGE;
+    downscale_wins || !decodable
+}
+
+/// face 派发线程主循环:攒批 → 派发;通道关闭(生产者收尾)时刷余批后退出。
+fn face_dispatch_loop(
+    state: &Arc<AppState>,
+    spec: &crate::ai::worker_client::SessionSpec,
+    profile: &FaceProfile,
+    task_rx: Receiver<FaceTask>,
+    result_tx: Sender<FaceResult>,
+    token: &CancellationToken,
+) -> std::result::Result<(), String> {
+    let batch_cap = face_dispatch_cap(spec.batch_size);
+    let mut buf: Vec<FaceTask> = Vec::with_capacity(batch_cap);
+    // 性能取证(2026-07-03):批墙钟/解码源构成/跳过数累计,循环尾输出总结。
+    let mut stats = FaceDispatchStats::default();
+
+    loop {
+        if token.is_cancelled() {
+            info!("Face worker 派发已取消 | face dispatcher cancelled");
+            break;
+        }
+        match task_rx.recv_timeout(WORKER_FLUSH_TIMEOUT) {
+            Ok(task) => {
+                buf.push(task);
+                if buf.len() >= batch_cap {
+                    dispatch_face_batch(
+                        state, spec, profile, &mut buf, &result_tx, token, &mut stats,
+                    )?;
+                }
+            }
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                if !buf.is_empty() {
+                    dispatch_face_batch(
+                        state, spec, profile, &mut buf, &result_tx, token, &mut stats,
+                    )?;
+                }
+            }
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                if !buf.is_empty() {
+                    dispatch_face_batch(
+                        state, spec, profile, &mut buf, &result_tx, token, &mut stats,
+                    )?;
+                }
+                break;
+            }
+        }
+    }
+
+    if stats.skipped > 0 {
+        // 不静默截断(工作约定):跳过项保持 Processing,下次运行回 Pending。
+        warn!(
+            "Face worker 派发跳过 {} 项(瞬态失败,或 detect_size 超 face 缓存尺寸的防呆 \
+             回退且源格式 worker 不可解;保持 Processing,下次运行恢复)",
+            stats.skipped
+        );
+    }
+    if stats.items > 0 {
+        info!(
+            "Face 派发总结:{} 项,批往返累计 {}ms,均 {}ms/项;解码源 缩略图 {} / face缓存 {} / 原图 {}",
+            stats.items,
+            stats.wall_ms,
+            stats.wall_ms / stats.items as u128,
+            stats.thumb,
+            stats.cache,
+            stats.orig
+        );
+    }
+    info!("Face worker 派发完成 | face dispatcher finished");
+    Ok(())
+}
+
+/// 派发一批:CPU permit → 三级定源(缩略图 → face 缓存 → 小原图)→ 缺缓存现场预解码
+/// (方案 A,rayon 并行,镜像 CLIP 的 T18/T18.5)→ GPU 令牌 → FaceDetectEmbed →
+/// 逐项映射落结果。返回 Err = 批级致命(终止本轮);取消返回 Ok 且清空 buf(在途项
+/// 保持 Processing)。
+fn dispatch_face_batch(
+    state: &Arc<AppState>,
+    spec: &crate::ai::worker_client::SessionSpec,
+    profile: &FaceProfile,
+    buf: &mut Vec<FaceTask>,
+    result_tx: &Sender<FaceResult>,
+    token: &CancellationToken,
+    stats: &mut FaceDispatchStats,
+) -> std::result::Result<(), String> {
+    let tasks: Vec<FaceTask> = std::mem::take(buf);
+    let thresh = profile.det_score_thresh;
+
+    // D2 顺序天条:先 CPU permit(公平后台池)后 GPU 令牌;None = 已取消,直接收手
+    // (本批项保持 Processing,下次运行恢复)。两者随作用域 Drop 释放。
+    // permit 提前到定源/预解码之前(镜像 CLIP dispatch_batch):现场预解码是重 CPU 解码,
+    // 必须在后台池配额内。
+    let Some(_cpu_permit) = state.background_heavy_limiter.acquire(token) else {
+        return Ok(());
+    };
+
+    let cache_dir = state.thumb_config.read().unwrap().cache_dir.clone();
+
+    // 阶段1:三级定源(纯内存决策 + face 缓存存在性 stat),与 tasks 同序。
+    let plans: Vec<FacePlan> = tasks
+        .iter()
+        .map(|t| {
+            // 与进程内同一决策:thumbnails 档位预测短边 ≥ detect_size 才用缩略图。
+            let src = resolve_face_decode_source(t, state, profile.detect_size);
+            if src.kind == FaceSourceKind::Thumb {
+                return FacePlan::Ready(src);
+            }
+            let decodable =
+                WORKER_DECODABLE_FORMATS.contains(&src.format.to_ascii_lowercase().as_str());
+            if face_cache_applies(t.width, t.height, decodable, profile.detect_size) {
+                FacePlan::UseCache {
+                    predecode: !face_cache_path(&cache_dir, t.cache_key).exists(),
+                }
+            } else if decodable {
+                // 小原图直派(短边 ≤ 缓存尺寸,预解码无收益),或未来 detect_size 超
+                // 缓存尺寸的防呆回退(全尺寸解码,慢但正确)。
+                FacePlan::Ready(src)
+            } else {
+                // 仅防呆分支会走到:detect_size 超缓存尺寸 + worker 不可解格式。
+                stats.skipped += 1;
+                FacePlan::Skip
+            }
+        })
+        .collect();
+
+    // 阶段2:缺缓存现场预解码(方案 A,镜像 CLIP 的 T18.5):rayon 全局池并行,WIC 优先/
+    // image crate 回退,tmp→rename 原子落盘;CPU permit 保持「1 批=1 槽」记账。取消检查
+    // 在每项开工前:已落盘项幂等可复用,未开工项随本批放弃(保持 Processing)。
+    let predecode_failed: std::collections::HashSet<i64> = tasks
+        .par_iter()
+        .zip(plans.par_iter())
+        .filter(|(_, p)| matches!(p, FacePlan::UseCache { predecode: true }))
+        .filter_map(|(t, _)| {
+            if token.is_cancelled() {
+                return None;
+            }
+            crate::derive::image::generate_face_cache(
+                &cache_dir,
+                t.cache_key,
+                &t.file_format,
+                &t.source_path,
+            )
+            .err()
+            .map(|e| {
+                // 双引擎(WIC+image crate)都解不开 → 标 Error(镜像 CLIP T18 派生失败
+                // 语义;worker 端同为 image crate,回退直派几无胜算),不连坐整批。
+                warn!("item {} face 缓存现场预解码失败:{e}(标 Error)", t.item_id);
+                t.item_id
+            })
+        })
+        .collect();
+    if token.is_cancelled() {
+        return Ok(()); // 预解码中途取消:本批项保持 Processing,下次运行恢复。
+    }
+
+    // 阶段3:装配协议项。
+    let mut items: Vec<exotic_protocol::FaceItem> = Vec::with_capacity(tasks.len());
+    let mut item_ids: Vec<i64> = Vec::with_capacity(tasks.len());
+    // 本批解码源构成(缩略图 / face 缓存 / 原图):慢批定位的第一信号,与 worker 侧分段耗时对照。
+    let (mut n_thumb, mut n_cache, mut n_orig) = (0u64, 0u64, 0u64);
+    for (t, plan) in tasks.iter().zip(plans) {
+        let src = match plan {
+            FacePlan::Skip => continue,
+            FacePlan::UseCache { .. } => {
+                if predecode_failed.contains(&t.item_id) {
+                    let _ = result_tx.send(FaceResult {
+                        item_id: t.item_id,
+                        records: None,
+                    });
+                    continue;
+                }
+                FaceDecodeSource {
+                    path: face_cache_path(&cache_dir, t.cache_key),
+                    format: "webp".to_string(),
+                    kind: FaceSourceKind::FaceCache,
+                }
+            }
+            FacePlan::Ready(src) => src,
+        };
+        match src.kind {
+            FaceSourceKind::Thumb => n_thumb += 1,
+            FaceSourceKind::FaceCache => n_cache += 1,
+            FaceSourceKind::Original => n_orig += 1,
+        }
+        items.push(exotic_protocol::FaceItem {
+            item_id: t.item_id,
+            cache_key: None,
+            // 信任语义同 Thumbnail.source_path:host 给绝对路径(缩略图档位/face 缓存/原图)。
+            source_path: Some(src.path.to_string_lossy().into_owned()),
+            // 回声核对指纹:检测阈值是行为参数(同图不同阈值不同结果),纳入其中。
+            fingerprint: format!("{}:{:.4}", t.item_id, thresh),
+        });
+        item_ids.push(t.item_id);
+    }
+    if items.is_empty() {
+        return Ok(());
+    }
+
+    let Some(_gpu_permit) = state.gpu_token.acquire(token) else {
+        return Ok(());
+    };
+
+    let t0 = std::time::Instant::now();
+    let outcomes = {
+        let mut client = state.ai_worker.lock().unwrap_or_else(|p| p.into_inner());
+        client.face_detect_embed(spec, &items, thresh, &|| token.is_cancelled())
+    };
+    let outcomes = match outcomes {
+        Ok(o) => o,
+        Err(e) => {
+            // client 已做硬止损(重建重发一次);到这里即系统性失败,终止本轮。
+            return Err(e.to_string());
+        }
+    };
+    // 性能取证(2026-07-03):批墙钟含 IPC 往返与 worker 全链(解码/检测/嵌入);
+    // 原图源=worker 端全尺寸解码,分段耗时见 worker stderr 的「FaceDetectEmbed 批诊断」。
+    let wall_ms = t0.elapsed().as_millis();
+    stats.items += items.len() as u64;
+    stats.wall_ms += wall_ms;
+    stats.thumb += n_thumb;
+    stats.cache += n_cache;
+    stats.orig += n_orig;
+    info!(
+        "Face 批:{} 项(缩略图源 {} / face缓存 {} / 原图源 {}) {}ms,均 {}ms/项;累计 {} 项,{:.2} 项/s",
+        items.len(),
+        n_thumb,
+        n_cache,
+        n_orig,
+        wall_ms,
+        wall_ms / items.len() as u128,
+        stats.items,
+        stats.items as f64 / (stats.wall_ms.max(1) as f64 / 1000.0)
+    );
+
+    for (item_id, outcome) in item_ids.into_iter().zip(outcomes) {
+        match outcome {
+            crate::exotic::worker::FaceItemOutcome::Ok {
+                faces,
+                embeddings,
+                width,
+                height,
+            } => {
+                // 协议 FaceDet 与 DetectedFace 字段同构,搬回后与进程内共用同一映射
+                // (归一化按协议回报的实际解码尺寸,零脸也是 Ok → Done)。
+                let det: Vec<DetectedFace> = faces
+                    .iter()
+                    .map(|f| DetectedFace {
+                        bbox: f.bbox,
+                        landmarks: f.landmarks,
+                        score: f.score,
+                    })
+                    .collect();
+                let records = faces_to_records(item_id, &det, &embeddings, width, height);
+                let _ = result_tx.send(FaceResult {
+                    item_id,
+                    records: Some(records),
+                });
+            }
+            crate::exotic::worker::FaceItemOutcome::Err(code) if code.default_retryable() => {
+                // 瞬态(IoError 等):跳过,保持 Processing。
+                stats.skipped += 1;
+            }
+            crate::exotic::worker::FaceItemOutcome::Err(code) => {
+                // terminal(MalformedInput 等):标 Error,不再无限重查。
+                warn!(
+                    "item {item_id} 人脸检测/嵌入失败[{}](terminal)",
+                    code.as_str()
+                );
+                let _ = result_tx.send(FaceResult {
+                    item_id,
+                    records: None,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 方案 A 决策核矩阵:防呆(detect_size 超缓存短边)恒 false;大图/不可解格式走缓存;
+    /// 小图或尺寸未知的可解格式直派。
+    #[test]
+    fn face_cache_applies_matrix() {
+        // 大图(短边 > 640):无论 worker 是否可解,都走缓存(降采样收益量级级)。
+        assert!(face_cache_applies(4000, 3000, true, 640));
+        assert!(face_cache_applies(4000, 3000, false, 640));
+        // 小图(短边 ≤ 640):可解格式直派;不可解格式仍须缓存(host 预解码是唯一通路)。
+        assert!(!face_cache_applies(800, 600, true, 640));
+        assert!(face_cache_applies(800, 600, false, 640));
+        // 宽幅全景:短边 600 ≤ 640 → 可解直派(长边虽大,沿用既有直派语义)。
+        assert!(!face_cache_applies(6000, 600, true, 640));
+        // 尺寸未知(0):可解直派(维持既有语义),不可解走缓存兜底。
+        assert!(!face_cache_applies(0, 0, true, 640));
+        assert!(face_cache_applies(0, 0, false, 640));
+        // 防呆:detect_size 超缓存短边 → 一律不吃偏小缓存(可解回退全尺寸,不可解跳过)。
+        assert!(!face_cache_applies(4000, 3000, true, 1024));
+        assert!(!face_cache_applies(4000, 3000, false, 1024));
+    }
+
+    /// 边界:短边恰等于 640 → 缓存无降采样收益,可解格式直派;641 起走缓存。
+    #[test]
+    fn face_cache_applies_boundary_equal() {
+        assert!(!face_cache_applies(640, 960, true, 640));
+        assert!(face_cache_applies(641, 960, true, 640));
+    }
 }

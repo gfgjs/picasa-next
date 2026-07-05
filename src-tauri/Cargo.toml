@@ -1,6 +1,6 @@
 [package]
 name = "picasa-next"
-version = "0.1.0"
+version.workspace = true # Part7-T5:版本锚在根 [workspace.package],升版只改根一处
 description = "Picasa Next — High-performance cross-platform media asset manager"
 authors = ["Picasa Next Contributors"]
 edition = "2021"
@@ -20,6 +20,9 @@ tauri-plugin-dialog       = "2"
 tauri-plugin-fs           = "2"
 tauri-plugin-shell        = "2"
 tauri-plugin-window-state = "2"
+# updater 仅 direct 渠道(经 [features] channel-direct 绑定;Store 渠道政策禁自更新,
+# msstore/steam 构建不链接本 crate,Part7 §3.5/§8.4)。
+tauri-plugin-updater      = { version = "2", optional = true }
 
 # ── Async runtime ────────────────────────────────────────────────────────────
 tokio      = { version = "1", features = ["full"] }
@@ -37,6 +40,11 @@ serde_json = "1"
 # ── Error handling ────────────────────────────────────────────────────────────
 thiserror  = "1"
 
+# ── 高吞吐哈希（S3.2）────────────────────────────────────────────────────────────
+# 布局/取数缓存的 id → 下标索引是 1M 级整数键 map，SipHash 构建占布局换代耗时大头；
+# FxHash（rustc 同款）对整数键提速数倍。仅用于**内部索引**（键为自产媒体 id，无 HashDoS 面）。
+rustc-hash = "2"
+
 # ── 冷门格式插件 IPC 协议（Part2）─────────────────────────────────────────────────
 # 与各 Worker 二进制共享同一份帧编解码/消息/错误码定义（路径依赖，随主程序构建）。
 exotic-protocol = { path = "../crates/exotic-protocol" }
@@ -52,6 +60,12 @@ picasa-next-free-stub = { path = "../crates/picasa-next-free-stub" }
 # 不依赖 src-tauri（破环）。`crate::exotic::crypto`/`::license` 退化为再导出薄壳，引用路径不变。
 # test_support（测试构造工具）经其 `test-support` feature 暴露 → 见下方 [dev-dependencies]。
 picasa-next-exotic-trust = { path = "../crates/picasa-next-exotic-trust" }
+
+# ── AI 推理核心(Part4-T15 迁出)────────────────────────────────────────────────────
+# 纯契约面消费(T16 收口):profile/face_profile 注册表、embedding 字节序、face_types
+# 几何、DecodedImage 类型。默认特性关闭 = 不带 inference 面(ort/tokenizers/ndarray
+# 整树不进 host 单包依赖图);推理恒在 ai-worker 子进程(彼处开 inference)。
+picasa-next-ai-core = { path = "../crates/picasa-next-ai-core", default-features = false }
 
 # ── Hashing ───────────────────────────────────────────────────────────────────
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
@@ -98,22 +112,16 @@ chrono   = { version = "0.4", features = ["serde"] }
 anyhow   = "1"
 crossbeam-channel = "0.5.15"
 
-# ── AI inference ───────────────────────────────────────────────────────────────
-# [当前方案] ONNX Runtime（使用 download-binaries 自动下载官方 DLL，打包体积增加 20MB）
-ort       = { version = "2.0.0-rc.12", features = ["load-dynamic", "directml", "download-binaries", "copy-dylibs"] }
-
-# [方案 5 准备] 使用 Windows 系统自带库：完全不捆绑 DLL，打包体积重回 5MB。
-# 若要测试，请注释掉上方当前的 ort，解除下面这行的注释，并在 ai_commands.rs 中取消设置 ORT_DYLIB_PATH 的注释。
-# ort       = { version = "2.0.0-rc.12", features = ["load-dynamic", "directml"] }
-
-ndarray   = "0.16"
+# ── AI ────────────────────────────────────────────────────────────────────────
+# T16 收口:host 零 ort/tokenizers/ndarray——推理恒在 ai-worker 子进程(ai-core 是
+# 唯一 ort 载体)。单包构建(tauri build / cargo build -p picasa-next)依赖图不含
+# 推理面;workspace 全量构建因 feature 并集会替 ai-worker 编译 inference 面,但
+# host 代码零引用。
+#
 # Half-precision storage for the in-memory embedding cache (C1) — halves resident
 # RAM vs f32 (1M×512 ≈ 1GB instead of 2GB). Already in the dependency tree.
-# 嵌入向量内存缓存的半精度存储（C1）—— 相比 f32 内存减半（百万×512 ≈ 1GB 而非 2GB）。
+# 嵌入向量内存缓存的半精度存储(C1)——相比 f32 内存减半(百万×512 ≈ 1GB 而非 2GB)。
 half      = "2"
-# HuggingFace tokenizers — BERT WordPiece for Chinese-CLIP text encoder
-# HuggingFace tokenizers — 用于 Chinese-CLIP 文本编码器的 BERT WordPiece
-tokenizers = { version = "0.21", default-features = false, features = ["fancy-regex"] }
 # sha2：模型下载完整性校验（Layer B，对照注册表中各资产的 sha256）。纯 Rust、小。
 sha2 = "0.10"
 
@@ -152,7 +160,7 @@ picasa-next-exotic-trust = { path = "../crates/picasa-next-exotic-trust", featur
 [features]
 # Lite 为默认变体（极致轻量，零大体积 native 捆绑）。custom-protocol 为 Tauri 生产构建所需。
 # 见 plan-docs/feature_expansion_plan_v1.md §1.4：包体积由编译期决定 → 主开关必须是 Cargo feature。
-default = ["custom-protocol", "lite"]
+default = ["custom-protocol", "lite", "channel-direct"]
 custom-protocol = ["tauri/custom-protocol"]
 devtools = []
 
@@ -172,6 +180,27 @@ ffmpeg = []
 # netfs：网络盘原生 VFS（P5 8B，§3.8）。启用 reqwest_dav 的 WebDAV 后端 + StorageBackend::WebDav。
 # Lite 不编入（依赖 OS 挂载/UNC，即 8A）；Perf 编入以支持「无需 OS 挂载」的原生连接。
 netfs = ["dep:reqwest_dav"]
+
+# ── 合规隔离(Part4-T1 / Part4 §3.10.1)─────────────────────────────────────────
+# face-noncommercial:SCRFD/ArcFace 非商用轨(InsightFace 权重仅限非商业研究)。
+# 默认与商业 build 不含 → 该轨代码/onnx 文件名常量/serde 变体字面量**物理不编译**
+# (不能只靠运行时不可达);仅研究/自用构建显式 --features face-noncommercial 开启。
+# 商业流水线(Part7 T16/17)另有符号扫描断言兜底(二进制不得含 scrfd/arcface/w600k)。
+# T15 起转发至 ai-core(SCRFD/ArcFace 代码已随推理核迁出,cfg 门控单一事实源在彼处)。
+face-noncommercial = ["picasa-next-ai-core/face-noncommercial"]
+
+# ── 分发渠道维度(Part7-T10 / Part7 §3.6.1;与 lite/perf、开源边界(pro/free-stub)正交)──
+# 渠道 = 谁授权 + 如何分发;default 走 channel-direct(直销)。三渠道互斥由 lib.rs 顶部
+# compile_error! 编译期强制(Cargo feature 是叠加语义,仅文档约定「互斥」不够)。
+# 🔴 构建命令铁律:msstore/steam 构建必须 --no-default-features 并显式带全所需 feature:
+#    cargo build --no-default-features --features "custom-protocol,lite,channel-msstore"
+# channel-direct = ["dep:tauri-plugin-updater"](§3.5.1 定稿形态,T7 已落 2026-07-04):
+# 经 optional dep 绑定,非 direct 渠道二进制不链接 updater(crate 已 2026-07-02 预取,2.10.1)。
+# msstore:授权走 StoreContext,DRM/updater 物理排除(MS Store Policy 10.2.2,§3.6.2);
+# steam:授权查 DLC ownership,同样物理排除。真实 Provider 归 Part8(Part7-T12 先接 stub)。
+channel-direct = ["dep:tauri-plugin-updater"]
+channel-msstore = []
+channel-steam = []
 
 # ── 构建 profile 已迁至 workspace 根 Cargo.toml ────────────────────────────────
 # cargo 只认 workspace 根的 [profile.*]，member 内声明会被忽略并告警。

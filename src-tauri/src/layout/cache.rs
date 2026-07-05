@@ -7,13 +7,13 @@
 //! A `layout_version` counter prevents stale reads.
 //! `layout_version` 计数器用于防止读取过期数据。
 
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::RwLock;
 
+use rustc_hash::FxHashMap;
+
 use serde::{Deserialize, Serialize};
 
-use crate::db::models::ThumbResult;
 use crate::layout::justified::LayoutRow;
 
 static LAYOUT_VERSION_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -55,16 +55,66 @@ pub struct LayoutSummary {
     pub month_buckets: Vec<MonthBucket>,
 }
 
+/// id → 扁平下标索引（S3.3）。自增主键下 id 域紧凑（max_id ≈ N），用 `Vec<u32>` 直址
+/// （`u32::MAX` = 空位）：构建为顺序读 + L2/L3 级随机写，较 1M 次哈希插入快一个量级
+/// （哈希表随机访存是 store 段剩余大头，实测 ~112ms 中占多半）；id 域稀疏
+/// （max_id > 4N + 1024，如大量删除后的老库）退回 FxHashMap，查询行为等价。
+/// flat 下标恒 < u32::MAX（百万级 << 40 亿），u32 存储安全。
+pub enum IdToFlat {
+    Dense(Vec<u32>),
+    Sparse(FxHashMap<i64, u32>),
+}
+
+impl IdToFlat {
+    /// 从布局序 id 全集构建（flat 下标 = 数组位置）。
+    fn build(flat_ids: &[i64]) -> Self {
+        if flat_ids.is_empty() {
+            return IdToFlat::Dense(Vec::new());
+        }
+        let (min_id, max_id) = flat_ids.iter().fold((i64::MAX, i64::MIN), |(lo, hi), &id| {
+            (lo.min(id), hi.max(id))
+        });
+        // 密集判据带常数余量：小库即便 id 有空洞也直址（内存上限不触发）；
+        // 防御:负 id（正常库不存在）一律退稀疏形态。
+        if min_id >= 0 && (max_id as usize) < flat_ids.len() * 4 + 1024 {
+            let mut v = vec![u32::MAX; max_id as usize + 1];
+            for (flat, &id) in flat_ids.iter().enumerate() {
+                v[id as usize] = flat as u32;
+            }
+            IdToFlat::Dense(v)
+        } else {
+            let mut m: FxHashMap<i64, u32> =
+                FxHashMap::with_capacity_and_hasher(flat_ids.len(), Default::default());
+            for (flat, &id) in flat_ids.iter().enumerate() {
+                m.insert(id, flat as u32);
+            }
+            IdToFlat::Sparse(m)
+        }
+    }
+
+    /// O(1) 查询：id → flat 下标。未知 id / 负 id → None。
+    pub fn get(&self, id: i64) -> Option<usize> {
+        match self {
+            IdToFlat::Dense(v) => match v.get(usize::try_from(id).ok()?) {
+                Some(&f) if f != u32::MAX => Some(f as usize),
+                _ => None,
+            },
+            IdToFlat::Sparse(m) => m.get(&id).map(|&f| f as usize),
+        }
+    }
+}
+
 /// Data stored in the in-memory layout cache.
 /// 存储在内存布局缓存中的数据。
 ///
-/// The flat indices below turn two hot operations from O(N) into O(1):
-///   - thumbnail result write-back (was a full rows×items scan under the write lock)
-///   - adjacent-item lookup for detail navigation (was a full flatten per arrow key)
+/// The flat indices below keep hot navigation lookups O(1) (adjacent item /
+/// re-anchor by id). S3 note: thumbnail/favorite/rating patches no longer touch
+/// this cache — rows carry geometry only; payload freshness comes from the
+/// items cache at hydration time.
 ///
-/// 下面的扁平索引把两个热点操作从 O(N) 降到 O(1)：
-///   - 缩略图结果回写（原先在写锁下全表 rows×items 扫描）
-///   - 详情页相邻项查找（原先每按一次方向键都展平全表）
+/// 下面的扁平索引让热点导航查找保持 O(1)（相邻项 / 按 id 重锚定）。S3 注：缩略图/
+/// 收藏/评分等 patch 不再触达本缓存——行仅存几何，载荷新鲜度由出口拼装时的 items
+/// 取数缓存保证。
 pub struct LayoutCacheData {
     pub rows: Vec<LayoutRow>,
     pub total_height: f64,
@@ -78,8 +128,18 @@ pub struct LayoutCacheData {
     /// 与 `flat_ids` 并行：扁平下标 → (行下标, 行内项下标)。
     pub flat_rowcol: Vec<(u32, u32)>,
     /// item id → flat index. The single source of truth for both hot paths.
-    /// 项 id → 扁平下标。两个热点路径的唯一索引来源。
-    pub id_to_flat: HashMap<i64, usize>,
+    /// 项 id → 扁平下标。两个热点路径的唯一索引来源。S3.3：密集直址/稀疏哈希双形态，
+    /// 见 [`IdToFlat`]。
+    pub id_to_flat: IdToFlat,
+
+    /// S3.1 幂等去重键：本代布局的构建输入指纹（布局参数 + 过滤器键 + 数据代）。
+    /// compute_layout 据此短路「同参数同数据代」的重复触发（见 dedup_summary）。
+    pub gen_key: String,
+
+    /// S3.5：分隔符/月桶随 store_layout 同遍物化（原 get_summary 每次全行扫描重建，
+    /// 行数级成本挪到换代一次性支付；摘要退化为 O(分隔符数) 克隆）。
+    pub separators: Vec<SeparatorInfo>,
+    pub month_buckets: Vec<MonthBucket>,
 }
 
 /// The layout cache — stored behind an `RwLock` in `AppState`.
@@ -93,68 +153,108 @@ pub fn new_layout_cache() -> LayoutCache {
 }
 
 /// Store a new layout, atomically incrementing the version.
-/// 存储新的布局，自动递增版本号。
-pub fn store_layout(cache: &LayoutCache, rows: Vec<LayoutRow>, total_height: f64) -> u64 {
+/// 存储新的布局，自动递增版本号。`gen_key` 为本代布局的构建输入指纹（见
+/// LayoutCacheData::gen_key）；不关心去重的调用方（测试等）传 String::new()，空键永不命中。
+pub fn store_layout(
+    cache: &LayoutCache,
+    rows: Vec<LayoutRow>,
+    total_height: f64,
+    gen_key: String,
+) -> u64 {
     // Build the flat indices in a single pass while we still own `rows`.
-    // 在仍持有 `rows` 时一次遍历构建扁平索引。
-    let mut flat_ids: Vec<i64> = Vec::new();
-    let mut flat_rowcol: Vec<(u32, u32)> = Vec::new();
-    let mut id_to_flat: HashMap<i64, usize> = HashMap::new();
+    // 在仍持有 `rows` 时一次遍历构建扁平索引。S3.2：预扫总项数（10^5 行级轻扫）
+    // 换三容器零重分配/零重哈希——1M 项下多轮扩容重哈希此前占换代耗时大头。
+    let total: usize = rows
+        .iter()
+        .map(|r| match r {
+            LayoutRow::Normal { items, .. } => items.len(),
+            _ => 0,
+        })
+        .sum();
+    let mut flat_ids: Vec<i64> = Vec::with_capacity(total);
+    let mut flat_rowcol: Vec<(u32, u32)> = Vec::with_capacity(total);
+    // 月桶（§3.8.3）：与扁平索引同一次遍历构建。date 分组分隔符 group_id="YYYY-MM"（§3.8.2）→
+    // 解析为 (year, month)；同月相邻分隔符并入同桶，Normal 行项数累加进**当前**桶。folder/none
+    // 分组的 group_id（dir_id / None）解析失败 → 不建桶 → month_buckets 为空。
+    let mut separators: Vec<SeparatorInfo> = Vec::new();
+    let mut month_buckets: Vec<MonthBucket> = Vec::new();
     for (ri, row) in rows.iter().enumerate() {
-        if let LayoutRow::Normal { items, .. } = row {
-            for (ii, item) in items.iter().enumerate() {
-                id_to_flat.insert(item.id, flat_ids.len());
-                flat_ids.push(item.id);
-                flat_rowcol.push((ri as u32, ii as u32));
+        match row {
+            LayoutRow::Normal { items, .. } => {
+                for (ii, item) in items.iter().enumerate() {
+                    flat_ids.push(item.id);
+                    flat_rowcol.push((ri as u32, ii as u32));
+                }
+                // Normal 行紧跟其所属分隔符之后 → 累加进当前（最后一个）月桶；none 分组无桶则跳过。
+                if let Some(bucket) = month_buckets.last_mut() {
+                    bucket.count += items.len();
+                }
+            }
+            LayoutRow::Separator {
+                y,
+                separator_label,
+                group_id,
+                ..
+            } => {
+                separators.push(SeparatorInfo {
+                    label: separator_label.clone(),
+                    y: *y,
+                    group_id: group_id.clone(),
+                });
+                if let Some((year, month)) = group_id.as_deref().and_then(parse_year_month) {
+                    // 仅当「月」变化时开新桶；同月的后续日分隔符沿用当前桶（y 已为该月首个=最新一天）。
+                    let same_month = month_buckets
+                        .last()
+                        .is_some_and(|b| b.year == year && b.month == month);
+                    if !same_month {
+                        month_buckets.push(MonthBucket {
+                            year,
+                            month,
+                            count: 0,
+                            y: *y,
+                            group_id: format!("{year}-{month:02}"),
+                        });
+                    }
+                }
             }
         }
     }
+    // S3.3：id 索引从 flat_ids 二次构建（顺序读 + 密集时 L2/L3 级随机写直址表），
+    // 替代循环内 1M 次哈希插入——后者的随机访存是 store 段的剩余大头。
+    let id_to_flat = IdToFlat::build(&flat_ids);
     let total_items = flat_ids.len();
 
-    let mut guard = cache.write().unwrap();
-    // 版本号必须在**写锁内**递增(审查 R0-3):若在锁外先取号,两个并发 store_layout 可发生
-    // 「后取号者先写入」的写序倒置——缓存最终存着旧行集配小版本号,而前端已握有大版本号,
-    // 后续 get_layout_rows(expected_version) 恒不匹配 → 假性 LayoutNotReady 重取风暴。
-    // 锁内取号保证:版本单调序 == 实际写入序。扁平索引构建(CPU 大头)仍留锁外不受影响。
-    let version = LAYOUT_VERSION_COUNTER.fetch_add(1, Ordering::SeqCst) + 1;
-    *guard = Some(LayoutCacheData {
-        rows,
-        total_height,
-        layout_version: version,
-        total_items,
-        flat_ids,
-        flat_rowcol,
-        id_to_flat,
-    });
+    let old_gen;
+    let version;
+    {
+        let mut guard = cache.write().unwrap();
+        // 版本号必须在**写锁内**递增(审查 R0-3):若在锁外先取号,两个并发 store_layout 可发生
+        // 「后取号者先写入」的写序倒置——缓存最终存着旧行集配小版本号,而前端已握有大版本号,
+        // 后续 get_layout_rows(expected_version) 恒不匹配 → 假性 LayoutNotReady 重取风暴。
+        // 锁内取号保证:版本单调序 == 实际写入序。扁平索引构建(CPU 大头)仍留锁外不受影响。
+        version = LAYOUT_VERSION_COUNTER.fetch_add(1, Ordering::SeqCst) + 1;
+        // S3.2:旧代先取出、锁外处置——写锁窗口只剩取号+指针交换,数十万行旧代的堆释放
+        // 不再阻塞滚动中并发的取行读锁。
+        old_gen = guard.take();
+        *guard = Some(LayoutCacheData {
+            rows,
+            total_height,
+            layout_version: version,
+            total_items,
+            flat_ids,
+            flat_rowcol,
+            id_to_flat,
+            gen_key,
+            separators,
+            month_buckets,
+        });
+    }
+    // 旧代堆释放(数十万 Vec + 1M 索引)卸到后台线程:数据已离开缓存,无锁无共享,纯释放
+    // 工作,不必占用重排关键路径(实测 1M 库该段数十 ms)。
+    if old_gen.is_some() {
+        std::thread::spawn(move || drop(old_gen));
+    }
     version
-}
-
-/// Apply a batch of thumbnail results to the cached layout in O(batch) using the
-/// id index — replaces the previous O(rows × items × results) write-lock scan.
-///
-/// 使用 id 索引以 O(batch) 复杂度将一批缩略图结果写回缓存布局 —
-/// 取代原先 O(行数 × 项数 × 结果数) 的写锁全表扫描。
-pub fn apply_thumb_results(cache: &LayoutCache, results: &[ThumbResult]) {
-    if results.is_empty() {
-        return;
-    }
-    let mut guard = cache.write().unwrap();
-    let Some(data) = guard.as_mut() else { return };
-    for r in results {
-        let Some(&flat) = data.id_to_flat.get(&r.item_id) else {
-            continue;
-        };
-        let Some(&(ri, ii)) = data.flat_rowcol.get(flat) else {
-            continue;
-        };
-        if let Some(LayoutRow::Normal { items, .. }) = data.rows.get_mut(ri as usize) {
-            if let Some(item) = items.get_mut(ii as usize) {
-                item.thumb_status = r.thumb_status;
-                item.thumb_path = r.thumb_path.clone();
-                item.thumbhash = r.thumbhash.clone();
-            }
-        }
-    }
 }
 
 // ── 失效契约（R1-5 裁决，2026-07-02）───────────────────────────────────────────
@@ -169,33 +269,11 @@ pub fn apply_thumb_results(cache: &LayoutCache, results: &[ThumbResult]) {
 //   ② 批量写 UPDATE 恒带 `AND is_deleted = 0`，对已删 id 是 no-op。
 // 故缓存残留已删项的 flat_ids/rows 只影响展示（前端自知并自行重排），不影响数据正确性。
 // 扫描插入/回收站恢复后的缓存刷新由前端既有重算触发器承担（scan 完成事件 / 视图切换 watcher /
-// 撤销路径的显式 compute）。可就地 patch 的字段（收藏等已入行字段）沿用下方 D3 模式。
-
-/// O(1)-per-id update of `is_favorited` in the cached layout, mirroring a DB write so
-/// `get_rows_by_y` returns fresh state after the row scrolls out and back in (D3).
-///
-/// 以每 id O(1) 更新缓存布局中的 is_favorited，与数据库写入保持一致，
-/// 使行滚出再滚回时 `get_rows_by_y` 仍返回最新状态（D3）。
-pub fn set_favorite_in_cache(cache: &LayoutCache, ids: &[i64], value: bool) {
-    if ids.is_empty() {
-        return;
-    }
-    let mut guard = cache.write().unwrap();
-    let Some(data) = guard.as_mut() else { return };
-    for &id in ids {
-        let Some(&flat) = data.id_to_flat.get(&id) else {
-            continue;
-        };
-        let Some(&(ri, ii)) = data.flat_rowcol.get(flat) else {
-            continue;
-        };
-        if let Some(LayoutRow::Normal { items, .. }) = data.rows.get_mut(ri as usize) {
-            if let Some(item) = items.get_mut(ii as usize) {
-                item.is_favorited = value;
-            }
-        }
-    }
-}
+// 撤销路径的显式 compute）。
+//
+// **D3 布局侧 patch 已随 S3 退役**（thumb/favorite/rating/color 四组）：行内不再驻留载荷
+// 字段，滚出滚回的新鲜度由出口拼装（items_cache::hydrate_rows）自 items 取数缓存天然获得，
+// patch 单点化到 items_cache（见 AppState 组合函数）。
 
 /// Retrieve a slice of rows from the cache.
 /// 从缓存中检索行切片。
@@ -277,63 +355,68 @@ pub fn get_rows_by_y(
     Some(data.rows[start_idx..end_idx].to_vec())
 }
 
+/// Retrieve the rows whose y lies in [start_y, end_y) — exact bucket membership
+/// for segmented virtual scrolling (T16 方案 B / B0).
+/// 检索 y 落在 [start_y, end_y) 内的行——bucket 分段虚拟滚动的精确段归属(T16 方案 B / B0)。
+///
+/// 与 [`get_rows_by_y`] 的「视口相交」语义不同:那里为覆盖跨顶行会向前多取一行、尾部用 `<=`,
+/// 拿来取整段会把邻桶的行掺进来。bucket 边界恰是分隔符行的 y、行与行不重叠,故按行首 y 的
+/// 半开区间判归属即精确。边界由调用方供给(month_buckets / separators 的相邻 y,末段用
+/// total_height),本函数不限定「月」——folder 分组(B3)可原样复用。两端均 partition_point
+/// 二分,超大桶亦 O(log n) 定位。
+pub fn get_bucket_rows(
+    cache: &LayoutCache,
+    start_y: f64,
+    end_y: f64,
+    expected_version: Option<u64>,
+) -> Option<Vec<LayoutRow>> {
+    let guard = cache.read().unwrap();
+    let data = guard.as_ref()?;
+
+    if let Some(ver) = expected_version {
+        if data.layout_version != ver {
+            return None;
+        }
+    }
+
+    let start_idx = data.rows.partition_point(|r| r.y() < start_y);
+    let end_idx = start_idx + data.rows[start_idx..].partition_point(|r| r.y() < end_y);
+    Some(data.rows[start_idx..end_idx].to_vec())
+}
+
 /// Get the layout summary (row count + total height + version).
 /// 获取布局摘要（行数 + 总高度 + 版本）。
 pub fn get_summary(cache: &LayoutCache) -> Option<LayoutSummary> {
     let guard = cache.read().unwrap();
-    let data = guard.as_ref()?;
+    guard.as_ref().map(summary_of)
+}
 
-    let mut separators = Vec::new();
-    // 月桶（§3.8.3）：与 separators 同一次遍历构建。date 分组分隔符 group_id="YYYY-MM"（§3.8.2）→
-    // 解析为 (year, month)；同月相邻分隔符并入同桶，Normal 行项数累加进**当前**桶。folder/none
-    // 分组的 group_id（dir_id / None）解析失败 → 不建桶 → month_buckets 为空。
-    let mut month_buckets: Vec<MonthBucket> = Vec::new();
-    for row in &data.rows {
-        match row {
-            LayoutRow::Separator {
-                y,
-                separator_label,
-                group_id,
-                ..
-            } => {
-                separators.push(SeparatorInfo {
-                    label: separator_label.clone(),
-                    y: *y,
-                    group_id: group_id.clone(),
-                });
-                if let Some((year, month)) = group_id.as_deref().and_then(parse_year_month) {
-                    // 仅当「月」变化时开新桶；同月的后续日分隔符沿用当前桶（y 已为该月首个=最新一天）。
-                    let same_month = month_buckets
-                        .last()
-                        .is_some_and(|b| b.year == year && b.month == month);
-                    if !same_month {
-                        month_buckets.push(MonthBucket {
-                            year,
-                            month,
-                            count: 0,
-                            y: *y,
-                            group_id: format!("{year}-{month:02}"),
-                        });
-                    }
-                }
-            }
-            LayoutRow::Normal { items, .. } => {
-                // Normal 行紧跟其所属分隔符之后 → 累加进当前（最后一个）月桶；none 分组无桶则跳过。
-                if let Some(bucket) = month_buckets.last_mut() {
-                    bucket.count += items.len();
-                }
-            }
-        }
+/// S3.1 幂等去重探针：现行布局代若由**完全相同的输入**构建（gen_key 相等），返回其摘要，
+/// 供 compute_layout 直接复用——免一次全量重排与版本换代。版本不变意味着前端 bucket
+/// 引擎的 layoutVersion watcher 不会被虚假换代惊动（段表零重建）。空键永不命中。
+pub fn dedup_summary(cache: &LayoutCache, gen_key: &str) -> Option<LayoutSummary> {
+    if gen_key.is_empty() {
+        return None;
     }
+    let guard = cache.read().unwrap();
+    let data = guard.as_ref()?;
+    if data.gen_key != gen_key {
+        return None;
+    }
+    Some(summary_of(data))
+}
 
-    Some(LayoutSummary {
+/// 摘要构建（get_summary / dedup_summary 共用）：单次遍历行集收集分隔符与月桶。
+fn summary_of(data: &LayoutCacheData) -> LayoutSummary {
+    // S3.5：分隔符/月桶已随 store_layout 物化——摘要为 O(分隔符数) 克隆（原每次全行扫描）。
+    LayoutSummary {
         total_rows: data.rows.len(),
         total_height: data.total_height,
         layout_version: data.layout_version,
         total_items: data.total_items,
-        separators,
-        month_buckets,
-    })
+        separators: data.separators.clone(),
+        month_buckets: data.month_buckets.clone(),
+    }
 }
 
 /// 解析 `"YYYY-MM"` → `(year, month)`。非此形（folder dir_id 如 `"42"`、或其它）返回 `None`。
@@ -357,7 +440,7 @@ pub fn get_adjacent_item(cache: &LayoutCache, current_id: i64, offset: isize) ->
 
     // O(1) via the id index — no full flatten per navigation step.
     // 通过 id 索引 O(1) 完成 — 不再每步导航都展平全表。
-    let current_idx = *data.id_to_flat.get(&current_id)?;
+    let current_idx = data.id_to_flat.get(current_id)?;
     let target_idx = current_idx as isize + offset;
     if target_idx < 0 {
         return None;
@@ -398,7 +481,7 @@ pub fn get_separator_y_by_group_id(cache: &LayoutCache, group_id: &str) -> Optio
 pub fn get_item_y_by_id(cache: &LayoutCache, item_id: i64) -> Option<f64> {
     let guard = cache.read().unwrap();
     let data = guard.as_ref()?;
-    let &flat = data.id_to_flat.get(&item_id)?;
+    let flat = data.id_to_flat.get(item_id)?;
     let &(ri, _ii) = data.flat_rowcol.get(flat)?;
     data.rows.get(ri as usize).map(|r| r.y())
 }
@@ -433,30 +516,14 @@ pub fn get_first_separator_y_in_set(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::layout::justified::{LayoutRow, LayoutRowItem};
+    use crate::layout::justified::{LayoutRow, SlimRowItem};
 
-    fn mk_item(id: i64) -> LayoutRowItem {
-        LayoutRowItem {
+    fn mk_item(id: i64) -> SlimRowItem {
+        SlimRowItem {
             id,
             x: 0.0,
             w: 100.0,
             h: 100.0,
-            file_size: 0,
-            file_format: String::new(),
-            media_type: "image".into(),
-            is_live_photo: false,
-            duration_ms: None,
-            thumb_status: 0,
-            thumb_path: None,
-            thumbhash: None,
-            is_favorited: false,
-            rating: 0,
-            color_label: 0,
-            availability: "online".into(),
-            similarity: None,
-            original_width: 100,
-            original_height: 100,
-            sort_datetime: 0,
         }
     }
 
@@ -528,7 +595,7 @@ mod tests {
     fn get_view_ids_returns_flat_order_and_guards_version() {
         // T18 S2：flat_ids 即按布局序的视图全集 id（分隔符不计）。
         let cache = new_layout_cache();
-        let version = store_layout(&cache, sample_layout(), 240.0);
+        let version = store_layout(&cache, sample_layout(), 240.0, String::new());
 
         // 无版本约束 → 直接拿 flat 序 [10, 11, 12]。
         assert_eq!(get_view_ids(&cache, None), Some(vec![10, 11, 12]));
@@ -551,7 +618,7 @@ mod tests {
     #[test]
     fn month_buckets_merge_same_month_and_sum_counts() {
         let cache = new_layout_cache();
-        store_layout(&cache, date_layout(), 540.0);
+        store_layout(&cache, date_layout(), 540.0, String::new());
         let s = get_summary(&cache).unwrap();
 
         assert_eq!(s.month_buckets.len(), 2, "March 两个日分隔符应并为一个月桶");
@@ -582,48 +649,75 @@ mod tests {
                 items: vec![mk_item(10)],
             },
         ];
-        store_layout(&cache, rows, 136.0);
+        store_layout(&cache, rows, 136.0, String::new());
         let s = get_summary(&cache).unwrap();
         assert!(s.month_buckets.is_empty(), "folder 分组不应产出月桶");
         assert_eq!(s.separators.len(), 1, "但分隔符仍照常产出");
     }
 
+    /// T16 方案B B0:半开区间 [start_y, end_y) 的精确段归属——起点边界行含入、
+    /// 终点边界行不含入;并与 get_rows_by_y 的相交语义对照(后者会掺邻桶行)。
     #[test]
-    fn test_apply_thumb_results_updates_correct_item() {
+    fn get_bucket_rows_half_open_exact_membership() {
         let cache = new_layout_cache();
-        store_layout(&cache, sample_layout(), 240.0);
+        let version = store_layout(&cache, date_layout(), 540.0, String::new());
 
-        apply_thumb_results(
-            &cache,
-            &[ThumbResult {
-                item_id: 11,
-                thumb_status: 1,
-                thumb_path: Some("a/b.webp".into()),
-                thumbhash: Some(vec![1, 2, 3]),
-            }],
+        // 3 月桶 = [0, 400):两日共 4 行全含,不含 2 月首行(y=400 恰为 end_y → 排除)。
+        let mar = get_bucket_rows(&cache, 0.0, 400.0, Some(version)).unwrap();
+        assert_eq!(mar.len(), 4, "3 月桶应恰为 4 行");
+        assert_eq!(mar[0].y(), 0.0, "起点边界行(分隔符)应含入");
+        assert_eq!(mar[3].y(), 236.0);
+
+        // 对照:相交语义对同区间会把 y=400 的邻桶分隔符也带上(尾部 <=)——
+        // 这正是需要独立 bucket 查询而非复用 get_rows_by_y 的原因。
+        let by_y = get_rows_by_y(&cache, 0.0, 400.0, Some(version)).unwrap();
+        assert_eq!(by_y.len(), 5, "相交语义应多含邻桶首行");
+
+        // 2 月桶 = [400, 540)(末桶 end 用 total_height):恰 2 行。
+        let feb = get_bucket_rows(&cache, 400.0, 540.0, Some(version)).unwrap();
+        assert_eq!(feb.len(), 2);
+        assert_eq!(feb[0].y(), 400.0);
+    }
+
+    /// T16 方案B B0:版本守卫/空缓存 → None;有布局但区间外 → 空集(语义区分)。
+    #[test]
+    fn get_bucket_rows_guards_version_and_out_of_range() {
+        let cache = new_layout_cache();
+        assert!(
+            get_bucket_rows(&cache, 0.0, 100.0, None).is_none(),
+            "无布局 → None(命令层抛 LayoutNotReady)"
         );
 
+        let version = store_layout(&cache, date_layout(), 540.0, String::new());
+        assert!(
+            get_bucket_rows(&cache, 0.0, 100.0, Some(version + 1)).is_none(),
+            "版本不符 → None"
+        );
+        assert!(
+            get_bucket_rows(&cache, 1000.0, 2000.0, Some(version))
+                .unwrap()
+                .is_empty(),
+            "区间在所有行之后 → 空集而非 None"
+        );
+    }
+
+    /// S3：store_layout 的扁平索引物化不受瘦行影响（flat 序、总数、id 索引仍正确）。
+    #[test]
+    fn store_layout_materializes_flat_indices_for_slim_rows() {
+        let cache = new_layout_cache();
+        store_layout(&cache, sample_layout(), 240.0, String::new());
         let guard = cache.read().unwrap();
         let data = guard.as_ref().unwrap();
         assert_eq!(data.flat_ids, vec![10, 11, 12]);
         assert_eq!(data.total_items, 3);
-        match &data.rows[1] {
-            LayoutRow::Normal { items, .. } => {
-                assert_eq!(items[1].id, 11);
-                assert_eq!(items[1].thumb_status, 1);
-                assert_eq!(items[1].thumb_path.as_deref(), Some("a/b.webp"));
-                assert_eq!(items[1].thumbhash, Some(vec![1, 2, 3]));
-                // Sibling untouched.
-                assert_eq!(items[0].thumb_status, 0);
-            }
-            _ => panic!("expected normal row"),
-        }
+        assert_eq!(data.id_to_flat.get(11), Some(1));
+        assert_eq!(data.flat_rowcol[1], (1, 1), "id 11 应在第 1 行第 1 列");
     }
 
     #[test]
     fn test_get_adjacent_item_is_correct_at_boundaries() {
         let cache = new_layout_cache();
-        store_layout(&cache, sample_layout(), 240.0);
+        store_layout(&cache, sample_layout(), 240.0, String::new());
 
         assert_eq!(get_adjacent_item(&cache, 10, 1), Some(11));
         assert_eq!(get_adjacent_item(&cache, 11, 1), Some(12));
@@ -633,28 +727,60 @@ mod tests {
         assert_eq!(get_adjacent_item(&cache, 999, 1), None); // unknown id
     }
 
+    /// S3.3：id 直址索引——密集走 Dense、稀疏退 Sparse，两形态查询行为等价。
     #[test]
-    fn test_set_favorite_in_cache_targets_correct_items() {
+    fn id_to_flat_dense_and_sparse_equivalent() {
+        // 密集:ids 10..=12(max 12 < 3·4+1024)→ Dense;未知/负 id → None。
         let cache = new_layout_cache();
-        store_layout(&cache, sample_layout(), 240.0);
-
-        set_favorite_in_cache(&cache, &[11, 12], true);
-
+        store_layout(&cache, sample_layout(), 240.0, String::new());
+        {
+            let guard = cache.read().unwrap();
+            let data = guard.as_ref().unwrap();
+            assert!(
+                matches!(data.id_to_flat, IdToFlat::Dense(_)),
+                "紧凑 id 域应走直址"
+            );
+            assert_eq!(data.id_to_flat.get(10), Some(0));
+            assert_eq!(data.id_to_flat.get(999), None);
+            assert_eq!(data.id_to_flat.get(-1), None);
+        }
+        // 稀疏:单项 id=1_000_000 ≫ 4N+1024 → Sparse,行为等价。
+        let rows = vec![LayoutRow::Normal {
+            y: 0.0,
+            height: 100.0,
+            items: vec![mk_item(1_000_000)],
+        }];
+        store_layout(&cache, rows, 100.0, String::new());
         let guard = cache.read().unwrap();
         let data = guard.as_ref().unwrap();
-        match &data.rows[1] {
-            LayoutRow::Normal { items, .. } => {
-                assert!(!items[0].is_favorited, "id 10 should be untouched");
-                assert!(items[1].is_favorited, "id 11 should be favorited");
-            }
-            _ => panic!("expected normal row"),
-        }
-        match &data.rows[2] {
-            LayoutRow::Normal { items, .. } => {
-                assert!(items[0].is_favorited, "id 12 should be favorited")
-            }
-            _ => panic!("expected normal row"),
-        }
+        assert!(
+            matches!(data.id_to_flat, IdToFlat::Sparse(_)),
+            "稀疏 id 域应退哈希表"
+        );
+        assert_eq!(data.id_to_flat.get(1_000_000), Some(0));
+        assert_eq!(data.id_to_flat.get(10), None);
+    }
+
+    /// S3.1：幂等去重探针——键相等才复用摘要；空键/键不等/空缓存皆不命中。
+    #[test]
+    fn dedup_summary_requires_exact_gen_key_match() {
+        let cache = new_layout_cache();
+        assert!(dedup_summary(&cache, "k1").is_none(), "空缓存不命中");
+
+        let version = store_layout(&cache, date_layout(), 540.0, "k1".to_string());
+        let s = dedup_summary(&cache, "k1").expect("同键应命中");
+        assert_eq!(s.layout_version, version, "复用现行代——版本不换");
+        assert_eq!(s.total_rows, 6);
+        assert_eq!(
+            s.month_buckets.len(),
+            2,
+            "摘要与 get_summary 同构（月桶照常）"
+        );
+        assert!(dedup_summary(&cache, "k2").is_none(), "键不等不命中");
+
+        // 空键存入（测试便利路径）→ 探针即便也传空键，仍不命中（未知输入不参与去重）。
+        store_layout(&cache, sample_layout(), 240.0, String::new());
+        assert!(dedup_summary(&cache, "").is_none(), "空键永不命中");
     }
 
     /// 并发回归(审查 R0-3):版本号在写锁内递增后,「版本单调序 == 写入序」——
@@ -670,7 +796,9 @@ mod tests {
         let handles: Vec<_> = (0..8)
             .map(|_| {
                 let cache = Arc::clone(&cache);
-                std::thread::spawn(move || store_layout(&cache, sample_layout(), 240.0))
+                std::thread::spawn(move || {
+                    store_layout(&cache, sample_layout(), 240.0, String::new())
+                })
             })
             .collect();
         let returned: Vec<u64> = handles.into_iter().map(|h| h.join().unwrap()).collect();

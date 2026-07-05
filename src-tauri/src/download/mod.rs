@@ -63,6 +63,29 @@ pub enum TimeoutPolicy {
 /// runtime 上的 Tauri 命令里 spawn（编译错误）。
 pub type OnBytes<'a> = dyn Fn(u64) + Send + Sync + 'a;
 
+/// 🔒 dev-only file:// 传输旁路总开关(插件商店本地 registry 测试;SEC-02 姿态,同
+/// `EXOTIC_PSD_WORKER_PATH`):仅 debug 构建编入 + 环境变量 `PICASA_EXOTIC_DEV_FILE_URLS=1`
+/// 显式开启,双重门控。**只**替换「传输」一步——验签/sha256/size 等完整性校验全部原样
+/// 保留(生产等价);Release 构建该分支整体不存在,file:// 一律走 NotHttps 拒绝。
+#[cfg(debug_assertions)]
+pub(crate) fn dev_file_urls_enabled() -> bool {
+    std::env::var("PICASA_EXOTIC_DEV_FILE_URLS").is_ok_and(|v| v == "1")
+}
+#[cfg(not(debug_assertions))]
+pub(crate) fn dev_file_urls_enabled() -> bool {
+    false
+}
+
+/// `file:///D:/x/y.zip` → 本地路径(仅开关开启时 Some)。不做百分号解码——dev registry
+/// 工具(scripts/exotic-dev-registry.mjs)生成的路径不含空格/转义字符,从紧即可。
+#[cfg(debug_assertions)]
+fn dev_file_url_path(url: &str) -> Option<std::path::PathBuf> {
+    if !dev_file_urls_enabled() {
+        return None;
+    }
+    url.strip_prefix("file:///").map(std::path::PathBuf::from)
+}
+
 /// 不发请求即拒非 HTTPS（首跳；后续跳由 client 的重定向策略把关）。
 fn require_https(url: &str) -> Result<(), DownloadError> {
     if url.starts_with("https://") {
@@ -102,6 +125,15 @@ pub async fn download_to_vec(
     url: &str,
     max_len: u64,
 ) -> Result<Vec<u8>, DownloadError> {
+    // dev-only file:// 旁路:只换传输,大小封顶保留(内容完整性由调用方验签把关)。
+    #[cfg(debug_assertions)]
+    if let Some(p) = dev_file_url_path(url) {
+        let meta = std::fs::metadata(&p).map_err(|e| DownloadError::Io(e.to_string()))?;
+        if meta.len() > max_len {
+            return Err(DownloadError::TooLarge);
+        }
+        return std::fs::read(&p).map_err(|e| DownloadError::Io(e.to_string()));
+    }
     require_https(url)?;
     let mut resp = client
         .get(url)
@@ -137,6 +169,22 @@ pub async fn download_file(
     resume_from: u64,
     on_bytes: &OnBytes<'_>,
 ) -> Result<(), DownloadError> {
+    // dev-only file:// 旁路:整文件复制到 part(忽略续传——本地复制幂等,MB 级包无续传
+    // 需求);size/sha256 校验仍由调用方(fetch_package/fetch_model_blob)对 part 执行。
+    #[cfg(debug_assertions)]
+    if let Some(src) = dev_file_url_path(url) {
+        if let Some(parent) = part_path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| DownloadError::Io(e.to_string()))?;
+        }
+        let bytes = std::fs::read(&src).map_err(|e| DownloadError::Io(e.to_string()))?;
+        tokio::fs::write(part_path, &bytes)
+            .await
+            .map_err(|e| DownloadError::Io(e.to_string()))?;
+        on_bytes(bytes.len() as u64);
+        return Ok(());
+    }
     require_https(url)?;
     if let Some(parent) = part_path.parent() {
         tokio::fs::create_dir_all(parent)

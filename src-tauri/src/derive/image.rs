@@ -11,6 +11,10 @@
 //!
 //! 短边取 336 而非 224：分析只会把短边**下采样**到 image_size、绝不上采样，故 336 同时覆盖
 //! B/16·L/14（224）与 L/14@336（336）；做 224 则无法服务 336 模型且白占空间（用户要求不做 224）。
+//!
+//! T16-R2 方案 A:人脸管线同法炮制——`generate_face_cache` 产出短边 640(YuNet detect_size)
+//! 的 `face_thumbs/` WebP,face 派发缺缓存时现场预解码(镜像 CLIP 的 T18 现场派生),worker
+//! 端不再解全尺寸原图;顺带覆盖 exotic 原图(WIC 可解 heic 等,worker 的 image crate 不可)。
 
 use crate::derive::kind::{DerivationContext, DerivationOutput};
 use crate::engine::gpu::get_gpu_engine;
@@ -18,7 +22,8 @@ use crate::engine::image_rs::ImageRsEngine;
 use crate::engine::traits::{DecodedImage, ImageEngine, ResizeHint};
 use crate::error::{AppError, Result};
 use crate::thumbnail::cache::{
-    ai_cache_db_path, ai_cache_path, ensure_ai_cache_dir, AI_CACHE_SHORT_EDGE,
+    ai_cache_db_path, ai_cache_path, ensure_ai_cache_dir, face_cache_path, AI_CACHE_SHORT_EDGE,
+    FACE_CACHE_SHORT_EDGE,
 };
 
 /// Decode the source at short-edge 336 (WIC GPU path, CPU `image` crate fallback), encode a
@@ -29,17 +34,70 @@ use crate::thumbnail::cache::{
 /// 若缓存文件已存在则跳过（免去重复解码）—— 例如缩略图流水线已在自己的解码里顺带产出（见 generator.rs），
 /// 本派生只为「已生成缩略图、缺 AI 缓存」的存量图补齐。
 pub fn run_ai_thumb(ctx: &DerivationContext) -> Result<DerivationOutput> {
-    // Already on disk (thumbnail pipeline or a previous run) → just record the path, don't re-decode.
-    // 已在磁盘（缩略图流水线或上次运行所产）→ 仅记录路径，不重复解码。
-    if ai_cache_path(&ctx.cache_dir, ctx.cache_key).exists() {
-        return Ok(DerivationOutput {
-            payload_path: Some(ai_cache_db_path(ctx.cache_key)),
-            thumbhash: None,
-            page_count: None,
-        });
-    }
+    generate_ai_cache(
+        &ctx.cache_dir,
+        ctx.cache_key,
+        &ctx.file_format,
+        &ctx.abs_path,
+    )?;
+    Ok(DerivationOutput {
+        payload_path: Some(ai_cache_db_path(ctx.cache_key)),
+        thumbhash: None,
+        page_count: None,
+    })
+}
 
-    let decoded = decode_short_edge(&ctx.file_format, &ctx.abs_path, AI_CACHE_SHORT_EDGE)?;
+/// 为一张图产出 ai_cache(短边 336 WebP);已在磁盘即幂等返回(缩略图流水线顺带产出或
+/// 上次运行所产,免重复解码)。派生管线(`run_ai_thumb`)与 **worker 派发路径的 T18 降级**
+/// (缺缓存回退解原图现场生成,Part4 §3.8)共用同一实现。
+/// 写盘走 tmp→rename 原子替换(红线):缓存命中判定普遍只查存在性(派生跳过/AI 解码源
+/// 发现/worker 派发预检),直写崩溃会把半截文件永久当作有效缓存。
+pub(crate) fn generate_ai_cache(
+    cache_dir: &std::path::Path,
+    cache_key: i64,
+    file_format: &str,
+    abs_path: &std::path::Path,
+) -> Result<()> {
+    if ai_cache_path(cache_dir, cache_key).exists() {
+        return Ok(());
+    }
+    ensure_ai_cache_dir(cache_dir, cache_key).map_err(AppError::Io)?;
+    write_short_edge_webp(
+        &ai_cache_path(cache_dir, cache_key),
+        file_format,
+        abs_path,
+        AI_CACHE_SHORT_EDGE,
+    )
+}
+
+/// 为一张图产出 face 缓存(短边 640 WebP,T16-R2 方案 A);已在磁盘即幂等返回。
+/// face worker 派发的「缺缓存现场预解码」调用(镜像 CLIP 的 T18 降级);解码引擎与
+/// ai_cache 同源(WIC 优先/CPU 回退),故 exotic 原图(heic 等)也在覆盖内。
+/// 原子写契约同 `generate_ai_cache`(命中判定只查存在性,半截文件=永久坏缓存)。
+pub(crate) fn generate_face_cache(
+    cache_dir: &std::path::Path,
+    cache_key: i64,
+    file_format: &str,
+    abs_path: &std::path::Path,
+) -> Result<()> {
+    let disk = face_cache_path(cache_dir, cache_key);
+    if disk.exists() {
+        return Ok(());
+    }
+    if let Some(parent) = disk.parent() {
+        std::fs::create_dir_all(parent).map_err(AppError::Io)?;
+    }
+    write_short_edge_webp(&disk, file_format, abs_path, FACE_CACHE_SHORT_EDGE)
+}
+
+/// 共用落盘核心:解码(短边 `short_edge`)→ WebP 编码 → tmp→rename 原子写到 `disk`。
+fn write_short_edge_webp(
+    disk: &std::path::Path,
+    file_format: &str,
+    abs_path: &std::path::Path,
+    short_edge: u32,
+) -> Result<()> {
+    let decoded = decode_short_edge(file_format, abs_path, short_edge)?;
 
     let (w, h) = (decoded.width, decoded.height);
     let rgba = image::RgbaImage::from_raw(w, h, decoded.pixels).ok_or_else(|| {
@@ -54,15 +112,7 @@ pub fn run_ai_thumb(ctx: &DerivationContext) -> Result<DerivationOutput> {
             AppError::Internal("AI cache WebP encode failed | AI 缓存 WebP 编码失败".into())
         })?;
 
-    ensure_ai_cache_dir(&ctx.cache_dir, ctx.cache_key).map_err(AppError::Io)?;
-    let disk = ai_cache_path(&ctx.cache_dir, ctx.cache_key);
-    std::fs::write(&disk, &bytes).map_err(AppError::from)?;
-
-    Ok(DerivationOutput {
-        payload_path: Some(ai_cache_db_path(ctx.cache_key)),
-        thumbhash: None,
-        page_count: None,
-    })
+    crate::thumbnail::generator::write_atomic(disk, &bytes).map_err(AppError::from)
 }
 
 /// Decode an image to a `DecodedImage` with short edge resized to `target`, preferring the
@@ -93,4 +143,87 @@ fn decode_short_edge(
         return Err(AppError::UnsupportedFormat(file_format.to_string()));
     }
     ImageRsEngine.decode(path, hint)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_dir(name: &str) -> std::path::PathBuf {
+        let d =
+            std::env::temp_dir().join(format!("picasa_aicache_{}_{}", name, std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// 现场派生落盘 + 无 tmp 残留(原子写)+ 幂等(已存在不重解码、内容不变)。
+    #[test]
+    fn generate_ai_cache_atomic_and_idempotent() {
+        let dir = temp_dir("gen");
+        let src = dir.join("src.png");
+        image::RgbaImage::from_pixel(64, 48, image::Rgba([200, 120, 40, 255]))
+            .save(&src)
+            .unwrap();
+
+        let key: i64 = 0x1234_5678_9abc_def0u64 as i64;
+        generate_ai_cache(&dir, key, "png", &src).unwrap();
+
+        let out = ai_cache_path(&dir, key);
+        assert!(out.exists(), "缓存文件应已落盘");
+        // 原子写契约:正式目录不得残留 *.tmp(预检只查存在性,半截文件=永久坏缓存)。
+        let leftover_tmp = std::fs::read_dir(out.parent().unwrap())
+            .unwrap()
+            .flatten()
+            .any(|e| e.path().extension().is_some_and(|x| x == "tmp"));
+        assert!(!leftover_tmp, "不得残留 tmp 文件");
+        // 产物必须可按 WebP 解码(worker 端 load_cache_image 按 WebP 显式解码)。
+        let bytes = std::fs::read(&out).unwrap();
+        image::load_from_memory_with_format(&bytes, image::ImageFormat::WebP)
+            .expect("产物应为可解码 WebP");
+
+        // 幂等:再次调用不重写(内容逐字节不变)。
+        generate_ai_cache(&dir, key, "png", &src).unwrap();
+        assert_eq!(std::fs::read(&out).unwrap(), bytes);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 源文件缺失/不可解码 → Err(worker 派发路径据此标 Error,同进程内解码失败语义)。
+    #[test]
+    fn generate_ai_cache_missing_source_errors() {
+        let dir = temp_dir("miss");
+        let e = generate_ai_cache(&dir, 42, "png", &dir.join("nonexistent.png"));
+        assert!(e.is_err());
+        assert!(!ai_cache_path(&dir, 42).exists(), "失败不得留下缓存文件");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// face 缓存(方案 A):落盘 + 无 tmp 残留(原子写)+ 幂等,产物为可解码 WebP。
+    #[test]
+    fn generate_face_cache_atomic_and_idempotent() {
+        let dir = temp_dir("face");
+        let src = dir.join("src.png");
+        image::RgbaImage::from_pixel(64, 48, image::Rgba([10, 200, 90, 255]))
+            .save(&src)
+            .unwrap();
+
+        let key: i64 = 0x0fed_cba9_8765_4321u64 as i64;
+        generate_face_cache(&dir, key, "png", &src).unwrap();
+
+        let out = face_cache_path(&dir, key);
+        assert!(out.exists(), "face 缓存应已落盘");
+        let leftover_tmp = std::fs::read_dir(out.parent().unwrap())
+            .unwrap()
+            .flatten()
+            .any(|e| e.path().extension().is_some_and(|x| x == "tmp"));
+        assert!(!leftover_tmp, "不得残留 tmp 文件");
+        let bytes = std::fs::read(&out).unwrap();
+        image::load_from_memory_with_format(&bytes, image::ImageFormat::WebP)
+            .expect("产物应为可解码 WebP");
+
+        generate_face_cache(&dir, key, "png", &src).unwrap();
+        assert_eq!(std::fs::read(&out).unwrap(), bytes);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

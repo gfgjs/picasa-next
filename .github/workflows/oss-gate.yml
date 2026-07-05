@@ -42,7 +42,11 @@ jobs:
           if [ -d crates/picasa-next-pro ]; then
             echo "::error::crates/picasa-next-pro/ 出现在公开树 —— Copybara glob 排除失效"; exit 1
           fi
-          if git ls-files | grep -q "exotic-keyset-prod.json"; then
+          # 🔴 herestring 而非管道:shell:bash 注入 pipefail,grep -q 命中早退给上游发
+          #    SIGPIPE(141)→ 管道非零 → if 为假 → **真泄漏被静默放行**(私有仓 ci.yml
+          #    渠道断言 2026-07-04 首跑实证同型竞态,正向断言侧误报;此处是更危险的反向)。
+          tracked=$(git ls-files)
+          if grep -q "exotic-keyset-prod.json" <<< "$tracked"; then
             echo "::error::生产 keyset 文件出现在公开树"; exit 1
           fi
           echo "✓ pro 目录 / 生产 keyset 均不在公开树"
@@ -92,16 +96,9 @@ jobs:
       - name: 占位 dist(generate_context 需 frontendDist 存在)
         run: mkdir -p dist
 
-      # Windows 侧资源校验:tauri.windows.conf.json 的 bundle.resources 指向 node_modules 内的
-      # ONNX/DirectML 二进制,build script 校验其存在(五跑实证)。npm ci = 贡献者标准流程的环境复原
-      # (npm install → tauri dev),**不是前端质量门**——不跑 build/vue-tsc/vitest(属 ci.yml / 审查 R0-1)。
-      - name: Node 环境(npm 缓存)
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - name: npm ci(材料化 onnxruntime 资源)
-        run: npm ci
+      # 原「npm ci 材料化 ONNX 资源」步骤已随 Part7-T6 撤销(2026-07-04):bundle 不再声明
+      # ONNX/DirectML 资源,build script 无资源校验面;dev 推理 DLL 由 .cargo/config.toml
+      # [env] ORT_DYLIB_PATH 直指 npm 包(devDependencies)。
 
       # ③ 动态 gate:剥离后的树必须真能**解析+编译**——比静态 grep 更权威的泄漏兜底:任何**活跃**的 pro 符号/
       #    清单引用若漏剥,workspace 根本过不了 cargo check。check 为强制门;test 为附加断言(项目测试多为
@@ -116,7 +113,9 @@ jobs:
       - name: 断言 workspace members 无 pro
         run: |
           set -e
-          if cargo metadata --no-deps --format-version 1 | grep -q '"name":"picasa-next-pro"'; then
+          # herestring 防 SIGPIPE 竞态(同上方 keyset 断言注,2026-07-04 实录)。
+          meta=$(cargo metadata --no-deps --format-version 1)
+          if grep -q '"name":"picasa-next-pro"' <<< "$meta"; then
             echo "::error::workspace members 含 picasa-next-pro"; exit 1
           fi
           echo "✓ members 无 pro"

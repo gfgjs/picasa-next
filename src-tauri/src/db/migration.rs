@@ -13,14 +13,14 @@ use rusqlite::Connection;
 use tracing::{info, warn};
 
 use crate::db::schema::{
-    SCHEMA_V1, SCHEMA_V10, SCHEMA_V11, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6,
-    SCHEMA_V7, SCHEMA_V8, SCHEMA_V9,
+    SCHEMA_V1, SCHEMA_V10, SCHEMA_V11, SCHEMA_V12, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5,
+    SCHEMA_V6, SCHEMA_V7, SCHEMA_V8, SCHEMA_V9,
 };
 use crate::error::Result;
 
 /// Latest schema version supported by this binary.
 /// 此二进制文件支持的最新模式版本。
-const CURRENT_VERSION: u32 = 11;
+const CURRENT_VERSION: u32 = 12;
 
 /// Read the current schema version from the database.
 /// 从数据库读取当前的模式版本。
@@ -114,6 +114,11 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
             SCHEMA_V11,
             "v11 (keyset pagination: composite idx_media_sort + idx_media_trash) | v11（keyset 分页：复合排序索引 + 回收站 seek 索引）",
         ),
+        (
+            12,
+            SCHEMA_V12,
+            "v12 (multi-channel: exotic_plugins.entitlement_source) | v12（多渠道预留：安装来源渠道列）",
+        ),
     ];
     for &(v, sql, desc) in STEPS {
         if version < v {
@@ -126,7 +131,7 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
         }
     }
 
-    // 未来迁移：在 STEPS 末尾追加 `(12, SCHEMA_V12, "...")` 即可，事务化由 migrate_step 统一保证。
+    // 未来迁移：在 STEPS 末尾追加 `(13, SCHEMA_V13, "...")` 即可，事务化由 migrate_step 统一保证。
 
     let final_version = read_version(conn);
     if final_version == CURRENT_VERSION {
@@ -152,7 +157,7 @@ mod tests {
         run_migrations(&conn).expect("run_migrations");
 
         assert_eq!(read_version(&conn), CURRENT_VERSION);
-        assert_eq!(CURRENT_VERSION, 11);
+        assert_eq!(CURRENT_VERSION, 12);
 
         // 三表存在。
         for table in ["exotic_catalog_formats", "exotic_plugins", "exotic_tasks"] {
@@ -240,6 +245,33 @@ mod tests {
             .map(|r| r.unwrap())
             .collect();
         cols
+    }
+
+    /// v12(T13 多渠道):exotic_plugins.entitlement_source 列存在,旧式 INSERT 取默认 'direct'。
+    #[test]
+    fn v12_entitlement_source_present() {
+        let conn = Connection::open_in_memory().expect("open in-memory");
+        run_migrations(&conn).expect("run_migrations");
+        assert!(
+            table_columns(&conn, "exotic_plugins").contains(&"entitlement_source".to_string()),
+            "缺列 entitlement_source"
+        );
+        // DEFAULT 'direct':不带该列的旧式 INSERT(v12 前的代码路径)取默认值。
+        conn.execute(
+            "INSERT INTO exotic_plugins
+                (plugin_id, version, manifest_hash, package_sequence, install_state, installed_at, updated_at)
+             VALUES ('p', '1', 'h', 1, 'installed', 0, 0)",
+            [],
+        )
+        .unwrap();
+        let src: String = conn
+            .query_row(
+                "SELECT entitlement_source FROM exotic_plugins WHERE plugin_id='p'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(src, "direct");
     }
 
     /// 全新库到 V10：卷可用性模型的表 / 列 / 索引齐备（结构层端到端）。
@@ -376,7 +408,8 @@ mod tests {
     fn v11_keyset_indexes_present() {
         let conn = Connection::open_in_memory().expect("open in-memory");
         run_migrations(&conn).expect("run_migrations");
-        assert_eq!(read_version(&conn), 11);
+        // 断言迁移跑到底(对齐 v10 测试写法;具体版本随 CURRENT_VERSION 前进,勿硬编码)。
+        assert_eq!(read_version(&conn), CURRENT_VERSION);
 
         // idx_media_sort 现为复合键：pragma_index_info 应有 2 列（sort_datetime + id）。
         let sort_cols: i64 = conn

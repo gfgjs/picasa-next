@@ -17,12 +17,14 @@
 //! 已知 v1 局限：早期样本不足导致的碎片化（同一人被分成几个未命名人物）在 F6（人物墙）里要靠
 //! 用户手动合并；不是 bug，是这一刀切掉的复杂度的直接后果。
 //!
-//! # `persons` 尚未按模型隔离
-//! 不像 `faces.model_name`（向量空间身份），`persons` 表没有 model_name 列——聚类结果是单一
-//! 全局名册，隐含假设"只有一个人脸模型曾经跑过"。今天成立（F7 的 SCRFD/ArcFace 可选轨还没接），
-//! 一旦 F7 落地、用户真的切换模型，旧质心（128 维）与新嵌入（512 维）维度不匹配——
-//! `cosine_similarity` 的 debug_assert 会在 debug 构建炸掉。这是 F1 schema 就带着的假设，不是
-//! 本文件引入的；修它需要决定"切模型后 persons 怎么办"，留给 F7。
+//! # `persons` 已按模型隔离(Part4-T6,2026-07-02)
+//! `persons.model_name`(V11)与 `faces.model_name` 同为向量空间键:名册读取
+//! (`get_all_persons_for_clustering`)、新人物落库(`apply_face_clusters`)、全量重建
+//! (`rebuild_person_clusters`)与按模型 reset 全部按当前模型过滤——不同模型的名册互不
+//! 可见、互不销毁(旧轨标注是用户资产)。切换轨经 gated `set_active_face_model`
+//! (face_commands):写 `face_model_active` + `sync_face_status_for_model` 把 face_status
+//! 指向新轨覆盖。维度混算的最后防线在 `cosine_similarity`:长度不匹配 → 0.0(永不判同)
+//! 而非 panic。
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -214,7 +216,7 @@ pub fn cluster_new_faces(
                 return;
             }
         };
-        let roster = match get_all_persons_for_clustering(&conn) {
+        let roster = match get_all_persons_for_clustering(&conn, model_name) {
             Ok(r) => r.into_iter().map(RosterEntry::from).collect::<Vec<_>>(),
             Err(e) => {
                 warn!("Failed to load person roster | 加载人物名册失败: {}", e);
@@ -273,7 +275,7 @@ pub fn cluster_new_faces(
         .collect();
 
     let conn = state.db_writer.lock().unwrap_or_else(|e| e.into_inner());
-    if let Err(e) = apply_face_clusters(&conn, &updates) {
+    if let Err(e) = apply_face_clusters(&conn, model_name, &updates) {
         warn!(
             "Failed to apply face cluster assignments | 应用人脸聚类分配失败: {}",
             e
@@ -526,7 +528,7 @@ pub fn recluster_all(state: &Arc<AppState>, model_name: &str, threshold: f32, mi
                 return;
             }
         };
-        let persons = match get_persons_for_recluster(&conn) {
+        let persons = match get_persons_for_recluster(&conn, model_name) {
             Ok(rows) => rows
                 .into_iter()
                 .map(|p| ReclusterPerson {
@@ -601,6 +603,24 @@ mod tests {
             embedding,
             quality,
         }
+    }
+
+    /// T_t3(Part4-T6):跨向量空间兜底——名册质心 2 维、新脸 3 维(模拟切换后残留),
+    /// assign_face 不 panic、不判同,新脸另立占位新簇。
+    #[test]
+    fn assign_face_dim_mismatch_no_panic_no_match() {
+        let mut roster = vec![RosterEntry {
+            id: 1,
+            centroid: vec![1.0, 0.0],
+            face_count: 3,
+            cover_face_id: 10,
+            cover_quality: 0.9,
+        }];
+        let f = face(99, vec![1.0, 0.0, 0.0], 0.9);
+        let mut next_id = -1i64;
+        let pid = assign_face(&mut roster, &f, 0.363, &mut next_id, &HashSet::new());
+        assert_eq!(pid, -1, "维度不符 → 相似度 0.0 → 不并入旧簇,另立占位新簇");
+        assert_eq!(roster.len(), 2);
     }
 
     #[test]

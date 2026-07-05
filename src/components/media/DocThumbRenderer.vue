@@ -37,11 +37,13 @@ function canvasToPng(canvas: HTMLCanvasElement): Promise<Blob> {
   })
 }
 
-// 渲染 PDF 首页 → PNG。PDF 透明 → 先铺白底，避免黑/透明缩略图。
-async function renderPdf(url: string): Promise<Blob> {
+// 渲染 PDF 首页 → PNG + 总页数（T10:文档已打开,顺带取 numPages 回填 document_meta,
+// 免为页数二次解析文档）。PDF 透明 → 先铺白底，避免黑/透明缩略图。
+async function renderPdf(url: string): Promise<{ blob: Blob; pages: number | null }> {
   const lib = await getPdfjs()
   const doc = await lib.getDocument({ url }).promise
   try {
+    const pages = doc.numPages ?? null
     const page = await doc.getPage(1)
     const base = page.getViewport({ scale: 1 })
     const scale = TARGET / Math.max(base.width, base.height)
@@ -53,14 +55,14 @@ async function renderPdf(url: string): Promise<Blob> {
     ctx.fillStyle = '#fff'
     ctx.fillRect(0, 0, canvas.width, canvas.height)
     await page.render({ canvasContext: ctx, viewport }).promise
-    return await canvasToPng(canvas)
+    return { blob: await canvasToPng(canvas), pages }
   } finally {
     doc.destroy().catch(() => {})
   }
 }
 
-// 渲染 SVG → PNG（Webview 原生解析 <img>，再绘到离屏 canvas）。
-function renderSvg(url: string): Promise<Blob> {
+// 渲染 SVG → PNG（Webview 原生解析 <img>，再绘到离屏 canvas）。SVG 无页概念 → pages: null。
+function renderSvg(url: string): Promise<{ blob: Blob; pages: number | null }> {
   return new Promise((resolve, reject) => {
     const img = new Image()
     img.onload = () => {
@@ -78,7 +80,7 @@ function renderSvg(url: string): Promise<Blob> {
       ctx.fillRect(0, 0, w, h)
       try {
         ctx.drawImage(img, 0, 0, w, h)
-        resolve(canvasToPng(canvas))
+        resolve(canvasToPng(canvas).then((blob) => ({ blob, pages: null })))
       } catch (e) {
         reject(e) // 跨源污染等 → toBlob 会抛，标记失败
       }
@@ -88,7 +90,7 @@ function renderSvg(url: string): Promise<Blob> {
   })
 }
 
-async function renderOne(doc: PendingDocThumb): Promise<Blob> {
+async function renderOne(doc: PendingDocThumb): Promise<{ blob: Blob; pages: number | null }> {
   const url = convertFileSrc(doc.absPath)
   return doc.fileFormat === 'pdf' ? renderPdf(url) : renderSvg(url)
 }
@@ -107,9 +109,13 @@ async function pump() {
       for (const doc of pending) {
         if (document.visibilityState !== 'visible') break
         try {
-          const blob = await renderOne(doc)
+          const { blob, pages } = await renderOne(doc)
           const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()))
-          await invoke(IPC.STORE_DOC_THUMBNAIL, { itemId: doc.itemId, pngBytes: bytes })
+          await invoke(IPC.STORE_DOC_THUMBNAIL, {
+            itemId: doc.itemId,
+            pngBytes: bytes,
+            pageCount: pages,
+          })
         } catch {
           // 渲染失败 → 回传空字节，后端标错，停止无限重试。
           await invoke(IPC.STORE_DOC_THUMBNAIL, { itemId: doc.itemId, pngBytes: [] }).catch(

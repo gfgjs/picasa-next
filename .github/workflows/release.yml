@@ -1,0 +1,123 @@
+# oss-release —— 公开仓免费版发布流水线(Part7-T17,§3.7.1)。
+#
+# 触发:公开仓 push tag `v*`(正式发布)/ workflow_dispatch(dry-run:全链构建+校验+
+# 工件上传,不创建 release——兼作 C 节「完整安装器打包(WiX MSI/NSIS)验证」的实跑面)。
+# 🔴 本文件经 Copybara 随投影同步进公开仓;`if: github.repository` 守门使其**只在公开仓
+#    执行**(私有仓 tag v* 归 ci.yml 冒烟 + 未来 T16 商业流水线;双轨物理隔离,凭据红线
+#    §3.7.3——本工作流仅用 github.token,无任何签名凭据)。
+#
+# 免费版形态(2026-07-04 T17 施工裁决):
+#   - 构建 = 默认 `tauri build`:default features(custom-protocol+lite+channel-direct)。
+#     §3.7.1 草稿的 `--profile lite` 无对应 cargo profile(未落地项),lite feature 已在
+#     default 集内,不另建 profile。
+#   - 基座 conf 无 updater 配置块 → 运行时不注册 updater、不产 .sig 更新包(§3.6.5①
+#     条件注册;与 §3.7.1「免费版不含 updater 更新包」一致)。
+#   - 无平台签名(SmartScreen 首启提示为已知代价;EV 签免费版提信誉的成本权衡归 Part8)。
+#   - 发布说明 = CHANGELOG.md 对应版本小节(extract-changelog.mjs 提取,缺小节硬失败):
+#     公开仓历史是 squash 同步提交,conventional-commits 自动生成不可用——§3.7.1 的
+#     「自动生成」由「私有侧维护 CHANGELOG → 同步公开 → 提取」替代;git-cliff 类自动化
+#     留 T16 私有流水线(它有完整提交史)。
+name: OSS Release
+
+on:
+  push:
+    tags: [ "v*" ]
+  workflow_dispatch: # dry-run:构建与校验全跑,产物上传 artifact,不发布
+
+# 同一 ref 的发布不并发、不互踢(发布这种事宁排队不竞态)。
+concurrency:
+  group: oss-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write # gh release create 需要;dry-run 路径不消费
+
+jobs:
+  release:
+    name: 免费版构建与发布
+    if: github.repository == 'gfgjs/picasa-next'
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash # 与 oss-gate 对齐;注意 GitHub 对显式 bash 注入 -eo pipefail,
+                    # grep 断言须 herestring(见 ci.yml 渠道断言注,2026-07-04 实录)
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust 编译缓存
+        uses: Swatinem/rust-cache@v2
+
+      - name: npm ci
+        run: npm ci
+
+      # ── 发布硬门三连(任一红即不发布)─────────────────────────────────────────
+      - name: tag 与版本锚一致性
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: node scripts/sync-version.mjs --check-tag "$GITHUB_REF_NAME"
+
+      - name: 提取发布说明(CHANGELOG 硬门)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          node scripts/extract-changelog.mjs "$ver" > release-notes.md
+          echo "--- 发布说明预览 ---"
+          cat release-notes.md
+
+      - name: vite build + 渠道合规扫描
+        run: |
+          npm run build
+          node scripts/verify-channel-bundle.mjs
+
+      # 发布 SHA 上复跑测试门控(oss-gate 在 sync-staging 验过,此处对 tag SHA 再取证)。
+      - name: cargo test --workspace
+        run: cargo test --workspace --locked
+
+      # ── 构建(tauri CLI 在 windows runner 自动拉取 NSIS/WiX 工具链)────────────
+      - name: tauri build(免费版,含 MSI + NSIS 安装包)
+        run: npx tauri build
+
+      - name: 产物清单 + SHA-256
+        run: |
+          mkdir -p release-assets
+          # bundle 布局:target/release/bundle/msi/*.msi + bundle/nsis/*-setup.exe
+          find target/release/bundle -type f \( -name "*.msi" -o -name "*-setup.exe" \) -exec cp {} release-assets/ \;
+          count=$(ls release-assets | wc -l)
+          if [ "$count" -eq 0 ]; then
+            echo "::error::bundle 未产出任何安装包(MSI/NSIS 均缺失)"; exit 1
+          fi
+          (cd release-assets && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt)
+
+      # ── 出口二选一:dispatch=dry-run 传工件;tag=正式发布 ─────────────────────
+      - name: dry-run 工件上传(仅 workflow_dispatch)
+        if: "!startsWith(github.ref, 'refs/tags/v')"
+        uses: actions/upload-artifact@v4
+        with:
+          name: oss-release-dryrun
+          path: release-assets/
+          retention-days: 7
+
+      - name: gh release 发布(仅 tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            cat release-notes.md
+            echo ""
+            echo "## SHA-256"
+            echo '```'
+            cat release-assets/SHA256SUMS.txt
+            echo '```'
+          } > release-body.md
+          gh release create "$GITHUB_REF_NAME" release-assets/* \
+            --title "Picasa Next $GITHUB_REF_NAME(免费版)" \
+            --notes-file release-body.md

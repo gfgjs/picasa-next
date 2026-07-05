@@ -1,0 +1,4 @@
+# Tauri CLI 在 `tauri dev` 时会同步 features 并以 LF 重写 src-tauri/Cargo.toml;
+# 在 autocrlf=true 环境下(期望工作区 CRLF)每次 dev 后都产生「幻影脏」(内容零变更、仅行尾状态位翻转)。
+# 钉死该文件 eol=lf,使 git 的期望与工具的实际写出一致,状态位不再翻脏。
+src-tauri/Cargo.toml text eol=lf

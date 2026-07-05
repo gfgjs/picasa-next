@@ -130,8 +130,13 @@ use std::time::Duration;
 use crate::exotic::catalog::Capability;
 use crate::exotic::coordinator::{WakeReason, PSD_PLUGIN_ID};
 use crate::exotic::crypto::VerifyingKeyset;
-use crate::exotic::install::{plugin_install_dir, rollback_to_backup, RegistryExpect};
-use crate::exotic::installer::{self, InstallContext};
+use crate::exotic::install::{plugin_install_dir, rollback_to_backup};
+use crate::exotic::installer;
+// install 命令体专用(Part7-T11:随 install_exotic_plugin 门 channel-direct)。
+#[cfg(feature = "channel-direct")]
+use crate::exotic::install::RegistryExpect;
+#[cfg(feature = "channel-direct")]
+use crate::exotic::installer::InstallContext;
 use crate::exotic::registry::RegistryCache;
 
 const CAPABILITY_STR: &str = "thumbnail";
@@ -322,10 +327,13 @@ pub async fn deactivate_exotic_plugin(
 // 命令参数**只**接受 plugin_id（已验证字符集），绝不接受 URL/路径/hash/可执行路径（§6.6）。
 // 安装目录/下载坐标均由已验签 Registry 与 AppState 派生路径决定。替换/删除目录前先 quiesce。
 
+// install 专用(Part7-T11 随之门控):宿主版本随包给 InstallContext 做兼容性判定。
+#[cfg(feature = "channel-direct")]
 const HOST_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn builtin_keyset() -> Result<VerifyingKeyset> {
-    VerifyingKeyset::builtin().map_err(|e| AppError::Exotic {
+    // dev keyset 旁路统一收敛在 exotic::trusted_keyset(debug-only,详见彼处)。
+    crate::exotic::trusted_keyset().map_err(|e| AppError::Exotic {
         code: e.code(),
         message: format!("信任根不可用：{}", e.code()),
     })
@@ -440,7 +448,25 @@ pub async fn list_exotic_registry(
         .collect())
 }
 
+/// 安装插件——**非 direct 渠道桩**(Part7-T11/§3.6.2 物理排除):Store 政策禁「下载-执行」,
+/// msstore/steam 构建的下载-安装路径(fetch_package/fetch_model_blob 与下方 direct 命令体)
+/// 编译期不存在;保留同名命令返回稳定错误码,前端 IPC 面不随渠道漂移。卸载/修复/回滚等
+/// 本地生命周期操作不涉下载,全渠道保留;渠道内插件获取(Store IAP/MSIX 内置)归 Part8 D5-D8。
+#[cfg(not(feature = "channel-direct"))]
+#[tauri::command]
+#[allow(unused_variables)]
+pub async fn install_exotic_plugin(
+    plugin_id: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<()> {
+    Err(AppError::Exotic {
+        code: "channel_unsupported",
+        message: "本渠道不支持应用内下载安装插件".into(),
+    })
+}
+
 /// 安装插件（§6.4）：从已验签 Registry 选条目 →（下载 zip 到 staging，**待 P6.2**）→ 安全安装。
+#[cfg(feature = "channel-direct")]
 #[tauri::command]
 pub async fn install_exotic_plugin(
     plugin_id: String,
@@ -480,6 +506,24 @@ pub async fn install_exotic_plugin(
             code: "plugin_not_in_registry",
             message: format!("Registry 无 {plugin_id} @ {target}"),
         })?;
+
+    // 1.5 模型权重 blob 分步下载(Part4 §3.7.1/T12):独立于 zip、GB 级、幂等跳过+断点续传。
+    // 排在 zip 之前:失败时无 staging 残留需清理;已就位的权重是内容寻址的无害产物,
+    // 重试安装天然复用(fetch 幂等跳过),不做回滚。直接落 models 目录(D1 Level A:
+    // SessionInit 传路径即可用,不再过安装器)。
+    if !entry.model_blobs.is_empty() {
+        let models = crate::ipc::ai_commands::models_dir(&state);
+        std::fs::create_dir_all(&models).ok();
+        for blob in &entry.model_blobs {
+            let dest = models.join(&blob.file_name);
+            crate::exotic::fetch::fetch_model_blob(&blob.url, &dest, blob.size, &blob.sha256)
+                .await
+                .map_err(|e| AppError::Exotic {
+                    code: e.code(),
+                    message: format!("模型权重下载失败({}):{}", blob.file_name, e.code()),
+                })?;
+        }
+    }
 
     // 2. 下载包到 staging 并对照条目 size/sha256 严格校验（exotic 专用 fetch；R10 统一后置）。
     let staging = state.exotic_staging_dir();
@@ -530,7 +574,15 @@ pub async fn install_exotic_plugin(
                 package_sequence: entry.package_sequence,
             };
             // install_staged_zip 仅在 upsert 时短锁 db_writer（不在解包/hash/rename 期间持锁）。
-            installer::install_staged_zip(&ctx, &zip_c, &expect, now, &state_arc.db_writer)
+            // T13:本命令 = 直销 Registry 渠道(经交付源取渠道判别,落 entitlement_source 列)。
+            installer::install_staged_zip(
+                &ctx,
+                &zip_c,
+                &expect,
+                installer::PluginDeliverySource::channel(&installer::DirectRegistryDelivery),
+                now,
+                &state_arc.db_writer,
+            )
         })
         .await
     };

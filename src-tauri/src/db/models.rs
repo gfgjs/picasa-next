@@ -142,13 +142,25 @@ pub struct LayoutItem {
     /// 系统可用态：'online' | 'offline' | 'missing'（卷/扫描驱动，与 is_deleted 正交）。
     /// 前端据此置灰 + 角标（缺失检测 Part2 §3.2）。与 media_type 同为逐项小串。
     pub availability: String,
-    // Grouping fields — used by the layout algorithm (folder separators), not
-    // copied into the resident per-item row data.
-    // 分组字段 — 供布局算法使用（文件夹分隔符），不复制进常驻的逐项行数据。
-    pub dir_path: Option<String>,
-    pub dir_name: Option<String>,
+    // 分组字段 — 供布局算法使用（folder 分隔符）。S2 消脂：目录路径/名称不再逐行携带
+    // （百万行 × 双 JOIN + 字符串拼接实测占查询成本 2/3），只存 dir_id，标签经 DirLabel
+    // 映射（query_dir_labels，量级 10^3）在分组边界处还原。
     pub dir_id: Option<i64>,
     pub similarity: Option<f64>,
+}
+
+/// 目录标签映射值（S2 布局查询消脂）：布局查询不再逐行 JOIN directories/scan_roots 拼接
+/// 路径，folder 分组标签与 folder 轴排序改经 `dir_id → DirLabel` 映射还原（全库目录量级
+/// 10^3，一次小查询，见 `query_dir_labels`）。
+#[derive(Debug, Clone)]
+pub struct DirLabel {
+    /// 目录相对路径 —— folder 轴 SQL `ORDER BY d.rel_path ASC` 的内存等价排序键（S1）。
+    pub rel_path: String,
+    /// 展示路径，folder 分隔符标签。语义 = 原 SQL
+    /// `CASE WHEN d.rel_path='' THEN r.path ELSE r.path||'/'||d.rel_path END`。
+    pub display: String,
+    /// 目录名（display 为空时的回退标签，沿旧 group_key 语义）。
+    pub name: String,
 }
 
 /// Heavy per-item metadata fetched lazily for the visible viewport only.
@@ -789,6 +801,11 @@ pub struct FaceModelInfo {
     /// SCRFD/ArcFace track: no verified checksums + non-commercial).
     /// 有已校验下载清单（可一键下载）。false=仅手动导入（SCRFD/ArcFace 轨：无校验值 + 非商用）。
     pub downloadable: bool,
+    /// Inference output cross-checked against the upstream reference. False = UNVERIFIED —
+    /// `set_active_face_model` refuses activation (anti silent-garbage gate, Part4 §3.5.2).
+    /// 推理输出已与上游参考实现对拍。false = 未对拍——`set_active_face_model` 拒绝激活
+    /// (防静默算错门,Part4 §3.5.2)。
+    pub verified: bool,
 }
 
 /// One detected face overlaid on the image detail viewer (F6): box + which person it belongs to.

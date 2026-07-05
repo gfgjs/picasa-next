@@ -1,0 +1,20 @@
+# Part7-T6(2026-07-04):dev 推理运行时的 ORT DLL 指路。
+#
+# 背景:ort 走 load-dynamic(见 picasa-next-ai-core/Cargo.toml 与 engine.rs 坑1),
+# 运行期按 ORT_DYLIB_PATH 加载 onnxruntime.dll(DirectML.dll/dxcompiler/dxil 由
+# onnxruntime 从自身所在目录连带加载,故指向一个文件即覆盖四件套)。
+# T6 之前 dev 靠「bundle.resources → tauri-build 复制进 target 目录 + lib.rs exe 旁探测」;
+# 该资源声明已随 T6 删除(bundle 不再携带 ONNX DLL,AI 运行时随插件分发,Part8),
+# dev 改由本文件把路径直指 npm 包内的 DLL(devDependencies onnxruntime-node,
+# `npm install` 即就位)——cargo run / cargo test / tauri dev 启动的进程及其
+# ai-worker 子进程都会继承本变量;lib.rs 的解析优先级 1(已设则保留)与之衔接。
+#
+# 注:
+# - force 缺省为 false:外部显式设置的 ORT_DYLIB_PATH 优先,本文件不覆盖。
+# - 值为 win32 路径(napi-v6/win32/x64);mac/Linux dev 推理本就未落地(T19 defer),
+#   届时按平台产物另行接线(cargo [env] 不支持按平台分节,须换机制或容忍无效路径——
+#   路径无效仅在真正发起推理时报 ModelLoadFailed,不影响构建与测试)。
+# - 打包产物不受影响:安装版无此变量,走 lib.rs 优先级 2(exe 旁 onnxruntime.dll,
+#   由未来的 AI 插件包/worker 分发落位,Part8)。
+[env]
+ORT_DYLIB_PATH = { value = "node_modules/onnxruntime-node/bin/napi-v6/win32/x64/onnxruntime.dll", relative = true }

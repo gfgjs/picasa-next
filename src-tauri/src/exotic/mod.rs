@@ -9,6 +9,7 @@
 //! 本卷（Part1）**不**启动 Worker、不下载、不验签。
 
 pub mod catalog;
+pub mod channel_stubs;
 pub mod coordinator;
 pub mod crypto;
 pub mod fetch;
@@ -102,6 +103,9 @@ pub struct InstalledPluginRecord {
     pub install_state: String,
     pub installed_at: i64,
     pub updated_at: i64,
+    /// 安装来源渠道(T13 多渠道预留):direct / steam_depot / store_bundled(现恒 direct;
+    /// 与 DB `entitlement_source` 列同值域,见 installer::InstallSource)。
+    pub entitlement_source: String,
 }
 
 /// 安装状态常量（与 DB `exotic_plugins.install_state` 列一致）。
@@ -218,8 +222,38 @@ pub struct PluginEntitlement {
 /// 开源实现（§3.9.2）。
 ///
 /// 当前开源默认仍为 KeyringLicenseStore（保持既有行为）；③b 变现启动时再定「开源是否切 FreeStub」。
+///
+/// **Part7-T12 渠道工厂化(2026-07-02)**:分发渠道 feature(互斥,lib.rs compile_error! 守卫)
+/// 在编译期决定授权 provider 家族——msstore/steam 现为 fail-closed 骨架桩(恒 Unlicensed,
+/// 见 [`channel_stubs`]),真实 StoreContext/DLC ownership 归 Part8 D5-D8;direct 维持原装配。
+/// 这使「四种渠道组合都能编译」成立,且 §3.6.2 的 DRM 物理排除有了工厂侧的选择点。
+/// 运行期信任根(exotic 验签统一入口):内置生产公钥集。
+/// 🔒 dev/test 旁路(仅 debug 构建编入,SEC-02 姿态,同 `EXOTIC_PSD_WORKER_PATH`):
+/// `PICASA_EXOTIC_DEV_KEYSET=<path>` 指向本地 keyset JSON 时**整组替换**——配合
+/// `scripts/exotic-dev-registry.mjs` 生成的 dev 签名链,开发期端到端测试插件商店
+/// (拉取/验签/安装/启动前完整性复核)。Release 构建该分支不存在,恒为内置集。
+pub(crate) fn trusted_keyset() -> Result<VerifyingKeyset, crypto::CryptoError> {
+    #[cfg(debug_assertions)]
+    if let Ok(p) = std::env::var("PICASA_EXOTIC_DEV_KEYSET") {
+        if !p.is_empty() {
+            // 路径已给但不可读 → fail-fast 报错(可诊断),不静默回退内置集。
+            let json = std::fs::read_to_string(&p)
+                .map_err(|e| crypto::CryptoError::Parse(format!("dev keyset 不可读({p}):{e}")))?;
+            return VerifyingKeyset::parse(&json);
+        }
+    }
+    VerifyingKeyset::builtin()
+}
+
 pub fn default_entitlement_provider() -> Arc<dyn EntitlementProvider> {
-    match VerifyingKeyset::builtin() {
+    #[cfg(feature = "channel-msstore")]
+    return Arc::new(channel_stubs::MsStoreEntitlementStub);
+
+    #[cfg(feature = "channel-steam")]
+    return Arc::new(channel_stubs::SteamEntitlementStub);
+
+    #[cfg(feature = "channel-direct")]
+    match trusted_keyset() {
         Ok(ks) => Arc::new(license::KeyringLicenseStore::new(Arc::new(ks))),
         Err(e) => {
             tracing::error!("内置信任根公钥集解析失败，exotic 授权一律拒绝 | {e}");
@@ -505,6 +539,7 @@ mod tests {
             install_state: state.into(),
             installed_at: 1,
             updated_at: 1,
+            entitlement_source: "direct".into(),
         }
     }
 

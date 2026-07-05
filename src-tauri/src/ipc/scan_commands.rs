@@ -98,6 +98,8 @@ pub async fn add_scan_root(
 
         let root = q::get_scan_root(&conn, id)?;
         info!("Scan root added: id={id} path={norm} | 已添加扫描根目录: id={id} path={norm}");
+        // S1：新根/顶级目录已入库（目录映射与成员变化）→ bump。
+        state_arc.bump_data_version();
         Ok(root)
     })
     .await
@@ -115,6 +117,8 @@ pub async fn remove_scan_root(id: i64, state: State<'_, Arc<AppState>>) -> Resul
     state.cancel_scan(id);
     // R1-3：级联删除（可涉及大量行）走 write_blocking。
     super::blocking::write_blocking(&state, move |conn| q::delete_scan_root(conn, id)).await?;
+    // S1：整根级联删除（成员变化）→ bump。
+    state.bump_data_version();
     info!("Scan root removed: id={id} | 已移除扫描根目录: id={id}");
     Ok(())
 }
@@ -166,6 +170,8 @@ pub async fn remove_scan_root_with_options(
     // 3. CASCADE delete DB records
     //    级联删除数据库记录（R1-3：走 write_blocking）
     super::blocking::write_blocking(&state, move |conn| q::delete_scan_root(conn, id)).await?;
+    // S1：整根级联删除（成员变化）→ bump。
+    state.bump_data_version();
 
     // 4. Async background delete thumbnail files
     //    异步后台删除缩略图文件
@@ -352,6 +358,8 @@ pub async fn start_scan(
             &catalog_snap,
             &on_progress,
             &cancel_fast,
+            // S1：每批入库提交后 bump——扫描进行中前端逐批重排，items 取数缓存须逐批失效。
+            &|| state_arc.bump_data_version(),
             quick,
         )
     })
@@ -364,6 +372,9 @@ pub async fn start_scan(
         state.cancel_scan(root_id);
         return Err(e);
     }
+
+    // S1：快扫收尾（含缺失标记 mark_missing）已提交 → 再 bump 一次兜底。
+    state.bump_data_version();
 
     // 扫描事务已提交并 seed 了 exotic 任务（Part1 §1.5）→ 唤醒 Coordinator（幂等，每次扫描一次，
     // 非逐文件）。让步机制保证 exotic 在扫描/缩略图期间不抢占（Part2 §4.1）。
@@ -501,9 +512,11 @@ pub async fn clear_database(state: State<'_, Arc<AppState>>, app: AppHandle) -> 
             std::fs::remove_dir_all(&cache_dir).map_err(AppError::Io)?;
         }
 
-        // Reset the layout cache in memory
-        // 重置内存中的布局缓存
+        // Reset the in-memory layout cache + S1 items cache, and bump the data version.
+        // 重置内存布局缓存与 S1 items 取数缓存，并 bump 数据版本。
         *state_arc.layout_cache.write().unwrap() = None;
+        crate::layout::items_cache::invalidate(&state_arc.layout_items_cache);
+        state_arc.bump_data_version();
         Ok(())
     })
     .await

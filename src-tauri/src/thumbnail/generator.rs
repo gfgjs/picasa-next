@@ -68,7 +68,8 @@ fn panic_guard<T>(label: &str, f: impl FnOnce() -> Result<T>) -> Result<T> {
 /// 路径上只可能出现完整文件。tmp 名带进程级序号:两个批次并发生成同一 cache_key 时各写各的
 /// tmp、rename 后到者胜,不会交错写同一文件。rename 失败即清 tmp;进程中途崩溃遗留的孤儿
 /// tmp 不影响正确性(命中判定不认 .tmp),随缓存清理/GC(Part3 缓存治理)一并回收。
-fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+/// (T18 起 pub(crate):derive::image 的 ai_cache 生成共用,消除其直写红线违例。)
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::sync::atomic::{AtomicU64, Ordering};
     static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
 

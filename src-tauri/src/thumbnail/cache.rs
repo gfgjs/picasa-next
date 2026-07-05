@@ -98,6 +98,23 @@ pub fn ensure_ai_cache_dir(cache_dir: &Path, cache_key: i64) -> std::io::Result<
     Ok(())
 }
 
+/// 人脸分析缓存短边(像素)= YuNet detect_size(640)。T16-R2 方案 A:缩略图档位短边不足时,
+/// host 预解码(WIC 优先)一份短边 640 的 WebP,worker 只解这份小图——镜像 ai_cache 之于 CLIP。
+/// 注:绑定当前 face 模型集(yunet-sface);派发侧有防呆(detect_size 超此值即不吃缓存,
+/// 见 face_pipeline::face_cache_applies),但升值会使全库 face_thumbs 作废,须一并清理。
+pub const FACE_CACHE_SHORT_EDGE: u32 = 640;
+
+/// 人脸分析缓存的绝对路径:`cache/face_thumbs/{prefix}/{hex}.webp`(键与前缀方案同缩略图)。
+/// 与 ai_thumbs(336,CLIP)分目录:两者输入尺寸不同不能互用,独立目录也便于按类清理。
+pub fn face_cache_path(cache_dir: &Path, cache_key: i64) -> PathBuf {
+    let hex = cache_key_to_hex(cache_key);
+    let prefix = &hex[..2];
+    cache_dir
+        .join("face_thumbs")
+        .join(prefix)
+        .join(format!("{hex}.webp"))
+}
+
 /// Build the absolute path of the motion video cache directory.
 /// 构建动态视频缓存目录的绝对路径。
 pub fn motion_video_cache_path(cache_dir: &Path, cache_key: i64) -> PathBuf {
@@ -164,9 +181,13 @@ pub fn enforce_cache_limit(cache_dir: &std::path::Path, max_size_mb: u64) {
     // Both the display thumbnails AND the AI-analysis caches share one cache budget and one LRU
     // eviction pass. (Sprites / motion videos are deliberately excluded — they're tied to their
     // source media's lifetime, not browse-recency.)
-    // 显示缩略图与 AI 分析缓存共用同一缓存预算和同一次 LRU 淘汰。（雪碧图/动态视频有意排除 ——
-    // 它们绑定源媒体生命周期，而非浏览近期性。）
-    let scan_dirs = [cache_dir.join("thumbnails"), cache_dir.join("ai_thumbs")];
+    // 显示缩略图与 AI 分析缓存（ai_thumbs + face_thumbs）共用同一缓存预算和同一次 LRU 淘汰。
+    // （雪碧图/动态视频有意排除 —— 它们绑定源媒体生命周期，而非浏览近期性。）
+    let scan_dirs = [
+        cache_dir.join("thumbnails"),
+        cache_dir.join("ai_thumbs"),
+        cache_dir.join("face_thumbs"),
+    ];
     if scan_dirs.iter().all(|d| !d.exists()) {
         return;
     }
@@ -244,7 +265,8 @@ pub fn enforce_cache_limit(cache_dir: &std::path::Path, max_size_mb: u64) {
 pub struct CacheStats {
     /// 显示缩略图（`thumbnails/`，受 LRU 上限约束）。
     pub thumbnails: u64,
-    /// AI 分析缓存（`ai_thumbs/`，与缩略图共用 LRU 预算）。
+    /// AI 分析缓存(`ai_thumbs/` + `face_thumbs/` 合并计;与缩略图共用 LRU 预算)。
+    /// face_thumbs(T16-R2)并入本类目:同属 AI 分析缓存,免动 CacheStats 的 IPC/前端面。
     pub ai_thumbs: u64,
     /// 视频关键帧雪碧图（`sprites/`，绑定源媒体生命周期、不受 LRU 淘汰）。
     pub sprites: u64,
@@ -274,7 +296,8 @@ fn dir_size_bytes(dir: &Path) -> u64 {
 /// 调用方应在 `spawn_blocking` 内执行（遍历目录是阻塞 IO）。
 pub fn compute_cache_stats(cache_dir: &Path, limit_mb: u64) -> CacheStats {
     let thumbnails = dir_size_bytes(&cache_dir.join("thumbnails"));
-    let ai_thumbs = dir_size_bytes(&cache_dir.join("ai_thumbs"));
+    let ai_thumbs = dir_size_bytes(&cache_dir.join("ai_thumbs"))
+        + dir_size_bytes(&cache_dir.join("face_thumbs"));
     let sprites = dir_size_bytes(&cache_dir.join("sprites"));
     let motion_videos = dir_size_bytes(&cache_dir.join("motion_videos"));
     CacheStats {
@@ -291,10 +314,16 @@ pub fn compute_cache_stats(cache_dir: &Path, limit_mb: u64) -> CacheStats {
 pub fn cache_subdirs_for_kind(kind: &str) -> &'static [&'static str] {
     match kind {
         "thumbnails" => &["thumbnails"],
-        "ai" => &["ai_thumbs"],
+        "ai" => &["ai_thumbs", "face_thumbs"],
         "sprites" => &["sprites"],
         "motion" => &["motion_videos"],
-        _ => &["thumbnails", "ai_thumbs", "sprites", "motion_videos"],
+        _ => &[
+            "thumbnails",
+            "ai_thumbs",
+            "face_thumbs",
+            "sprites",
+            "motion_videos",
+        ],
     }
 }
 
@@ -321,15 +350,16 @@ pub fn clear_cache_kind(cache_dir: &Path, kind: &str) -> u64 {
     freed
 }
 
-/// 某 `cache_key` 对应的全部缓存产物绝对路径（4 档缩略图 + AI 缓存 + 雪碧图 + 动态视频）。
+/// 某 `cache_key` 对应的全部缓存产物绝对路径(4 档缩略图 + AI 缓存 + face 缓存 + 雪碧图 + 动态视频)。
 /// 单一事实源：硬删媒体即时清理孤儿（§3.3.2）按此枚举。纯函数——路径由 cache_key 确定，不查 DB
 /// （`media_derivations.payload_path` 会被 FK CASCADE 一并删除，故不可依赖；而路径方案是确定的）。
 pub fn cache_files_for_key(cache_dir: &Path, cache_key: i64) -> Vec<PathBuf> {
-    let mut paths = Vec::with_capacity(7);
+    let mut paths = Vec::with_capacity(8);
     for tier in [120u32, 240, 480, 960] {
         paths.push(thumb_path(cache_dir, tier, cache_key));
     }
     paths.push(ai_cache_path(cache_dir, cache_key));
+    paths.push(face_cache_path(cache_dir, cache_key));
     paths.push(keyframe_sprite_path(cache_dir, cache_key));
     paths.push(motion_video_cache_path(cache_dir, cache_key));
     paths
@@ -353,6 +383,99 @@ pub fn remove_cache_files_for_key(cache_dir: &Path, cache_key: i64) -> usize {
     removed
 }
 
+/// 文件名主干恰为 16 位小写 hex → 解析回 cache_key(i64);否则 None。
+/// 对账 GC 的识别护栏:原子写残留的临时文件(`xxx.webp.tmp` 的 stem 是 "xxx.webp")、
+/// 任何外来文件都解析失败 → 永不触碰。
+fn parse_cache_key_stem(path: &Path) -> Option<i64> {
+    let stem = path.file_stem()?.to_str()?;
+    if stem.len() != 16 {
+        return None;
+    }
+    // cache_key_to_hex 只产小写;大写一律视为外来文件,不冒险。
+    if !stem
+        .bytes()
+        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return None;
+    }
+    u64::from_str_radix(stem, 16).ok().map(|v| v as i64)
+}
+
+/// 后台对账 GC(Part3 §3.3.2 兜底路径):删除五个产物子目录中 DB 已无对应 cache_key 的
+/// 孤儿文件。与「硬删即时清理」(`remove_cache_files_for_key`)互补——即时清理漏掉的
+/// (崩溃/删除失败/历史遗留)由本函数周期收敛。
+///
+/// 安全护栏(复审 §467 校准):
+/// ① 只删 mtime 早于 `epoch`(进程启动时刻)的文件——本会话新写的产物可能尚未落 DB 行
+///    (写文件与写 DB 行之间有窗口),一律不动,留到下次会话收敛;
+/// ② 只识别文件名恰为 16 位小写 hex 的产物文件(`parse_cache_key_stem`);
+/// ③ best-effort:单文件删除失败仅 warn,不中断整轮。
+/// 调用方应在 `spawn_blocking` 内执行(全程阻塞 IO)。返回(删除数,释放字节)。
+pub fn reconcile_orphan_gc(
+    cache_dir: &Path,
+    live_keys: &std::collections::HashSet<i64>,
+    epoch: std::time::SystemTime,
+) -> (usize, u64) {
+    // 五个子目录的产物都按 cache_key 的 16 位 hex 命名(thumbnails 多一层 {size} 层级,
+    // walkdir 递归天然覆盖)。软删行的 key 在 live 集内(软删可恢复,其缓存不算孤儿)。
+    let mut removed = 0usize;
+    let mut freed = 0u64;
+    for sub in [
+        "thumbnails",
+        "ai_thumbs",
+        "face_thumbs",
+        "sprites",
+        "motion_videos",
+    ] {
+        let dir = cache_dir.join(sub);
+        if !dir.exists() {
+            continue;
+        }
+        for entry in walkdir::WalkDir::new(&dir)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let Some(key) = parse_cache_key_stem(entry.path()) else {
+                continue;
+            };
+            if live_keys.contains(&key) {
+                continue;
+            }
+            let Ok(meta) = entry.metadata() else { continue };
+            // 护栏①:mtime 取不到或不早于 epoch → 保守跳过。
+            match meta.modified() {
+                Ok(mtime) if mtime < epoch => {}
+                _ => continue,
+            }
+            let size = meta.len();
+            match std::fs::remove_file(entry.path()) {
+                Ok(()) => {
+                    removed += 1;
+                    freed += size;
+                }
+                Err(e) => tracing::warn!(
+                    "对账 GC 删除孤儿失败 {:?} | orphan GC delete failed: {}",
+                    entry.path(),
+                    e
+                ),
+            }
+        }
+    }
+    if removed > 0 {
+        tracing::info!(
+            "对账 GC 完成:删除 {} 个孤儿,释放 {} MB | orphan GC removed {} files, freed {} MB",
+            removed,
+            freed / 1024 / 1024,
+            removed,
+            freed / 1024 / 1024
+        );
+    }
+    (removed, freed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -371,16 +494,17 @@ mod tests {
         std::fs::write(path, vec![0u8; bytes]).unwrap();
     }
 
-    /// `cache_files_for_key` 枚举 7 条路径：4 档缩略图 + ai_thumb + sprite + motion，且与各 path 助手一致。
+    /// `cache_files_for_key` 枚举 8 条路径:4 档缩略图 + ai_thumb + face_thumb + sprite + motion,且与各 path 助手一致。
     #[test]
-    fn enumerates_all_seven_artifacts_for_key() {
+    fn enumerates_all_eight_artifacts_for_key() {
         let dir = Path::new("C:/cache"); // 纯路径计算，不触磁盘
         let files = cache_files_for_key(dir, 0x1234);
-        assert_eq!(files.len(), 7);
+        assert_eq!(files.len(), 8);
         // 与单产物助手逐一吻合（确保枚举不漏不串）。
         assert!(files.contains(&thumb_path(dir, 120, 0x1234)));
         assert!(files.contains(&thumb_path(dir, 960, 0x1234)));
         assert!(files.contains(&ai_cache_path(dir, 0x1234)));
+        assert!(files.contains(&face_cache_path(dir, 0x1234)));
         assert!(files.contains(&keyframe_sprite_path(dir, 0x1234)));
         assert!(files.contains(&motion_video_cache_path(dir, 0x1234)));
     }
@@ -436,6 +560,37 @@ mod tests {
         // "all" 清掉剩余。
         let freed_all = clear_cache_kind(&dir, "all");
         assert_eq!(freed_all, 100);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 对账 GC:孤儿(不在 live 集)删除;在册文件、epoch 之后的新文件、非 16-hex 文件不动。
+    #[test]
+    fn orphan_gc_respects_liveset_epoch_and_naming() {
+        let dir = unique_tmp("gc");
+        let live_key = 0x11_i64;
+        let orphan_key = 0x22_i64;
+        write_file(&thumb_path(&dir, 120, live_key), 10);
+        write_file(&thumb_path(&dir, 120, orphan_key), 10);
+        write_file(&ai_cache_path(&dir, orphan_key), 10);
+        // 外来文件:文件名非 16 位 hex,任何情况下不触碰。
+        let alien = dir.join("thumbnails").join("readme.txt");
+        write_file(&alien, 5);
+        let live: std::collections::HashSet<i64> = [live_key].into_iter().collect();
+
+        // epoch = 远古 → 所有文件 mtime 都不早于它 → 一个不删(护栏①:会话内新文件保护)。
+        let past = std::time::SystemTime::UNIX_EPOCH;
+        assert_eq!(reconcile_orphan_gc(&dir, &live, past), (0, 0));
+        assert!(thumb_path(&dir, 120, orphan_key).exists());
+
+        // epoch = 未来 → 两个孤儿(120 档缩略图 + ai 缓存)删除;在册与外来文件保留。
+        let future = std::time::SystemTime::now() + std::time::Duration::from_secs(3600);
+        let (removed, freed) = reconcile_orphan_gc(&dir, &live, future);
+        assert_eq!(removed, 2);
+        assert_eq!(freed, 20);
+        assert!(thumb_path(&dir, 120, live_key).exists());
+        assert!(!thumb_path(&dir, 120, orphan_key).exists());
+        assert!(!ai_cache_path(&dir, orphan_key).exists());
+        assert!(alien.exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

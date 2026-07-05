@@ -69,7 +69,8 @@ pub struct PackageFile {
     pub size: u64,
     /// 64 位小写 hex SHA-256。
     pub sha256: String,
-    /// worker / dylib / resource / license / sbom / compliance …（展示与策略用）。
+    /// worker / dylib / resource / license / sbom / compliance / model …(展示与策略用)。
+    /// model = zip 内随包小模型;GB 级权重不进 zip,走 `RegistryEntry.model_blobs` 分步下载(§3.7.1/T12)。
     pub kind: String,
     /// 执行位（worker/可执行需要；安装时据此设置 unix 权限）。
     #[serde(default)]

@@ -11,8 +11,14 @@
 //! 三份真相中的「授权真相」（§5.1）：token 存系统 keyring（service 固定、account=plugin_id），
 //! DB 不保存 token；日志/遥测/panic/IPC **绝不**输出 token 或 subject_hash（§5.2）。
 
+// Part7-T11 渠道物理门控:KeyringLicenseStore(keyring DRM 实现)仅 direct 渠道编入——
+// msstore/steam 构建物理不含 keyring 授权存取/激活代码(组合根在 mod.rs 按渠道选 stub,
+// 恒 fail-closed;本文件的 trait/DTO/验签原语再导出为全渠道公共契约,不随门)。注意
+// keyring **crate** 本身不门控:storage/proofread 的 API Key 凭据存储属通用能力非 DRM。
+#[cfg(feature = "channel-direct")]
 use std::sync::Arc;
 
+#[cfg(feature = "channel-direct")]
 use crate::exotic::crypto::VerifyingKeyset;
 
 // 授权 DTO / trait 住 plugin-api 叶 crate（§3.9.1a）；此处 `pub use` 再导出使引用路径不变。
@@ -25,9 +31,11 @@ pub use picasa_next_plugin_api::{
 pub use picasa_next_exotic_trust::{evaluate_token, verify_token, LicensePayload};
 
 /// keyring service（与既有 proofread/storage key 同 service，account 区分用途）。
+#[cfg(feature = "channel-direct")]
 const KEYRING_SERVICE: &str = "picasa-next";
 
 /// keyring account = plugin_id（§5.2）。集中此处，便于审计「token 存放坐标」。
+#[cfg(feature = "channel-direct")]
 fn license_account(plugin_id: &str) -> &str {
     plugin_id
 }
@@ -38,10 +46,12 @@ fn license_account(plugin_id: &str) -> &str {
 // 公钥经 `VerifyingKeyset::builtin` 注入，后续随 pro 下沉 ③b）。
 
 /// keyring 实现：token 存系统凭据库；验签用编入 Host 的信任根公钥集。
+#[cfg(feature = "channel-direct")]
 pub struct KeyringLicenseStore {
     keyset: Arc<VerifyingKeyset>,
 }
 
+#[cfg(feature = "channel-direct")]
 impl KeyringLicenseStore {
     pub fn new(keyset: Arc<VerifyingKeyset>) -> Self {
         KeyringLicenseStore { keyset }
@@ -96,6 +106,7 @@ impl KeyringLicenseStore {
     }
 }
 
+#[cfg(feature = "channel-direct")]
 impl EntitlementProvider for KeyringLicenseStore {
     fn evaluate(&self, plugin_id: &str, sku: &str, now: i64) -> LicenseStatus {
         match self.get_token(plugin_id) {

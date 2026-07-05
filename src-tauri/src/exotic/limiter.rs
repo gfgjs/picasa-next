@@ -1,5 +1,6 @@
 // src-tauri/src/exotic/limiter.rs
 //! 后台重活公平并发池（v3.1 勘误 R4）。
+//! 另含 GPU 推理令牌 [`GpuToken`](Part4 D2/T11)——复用同一公平队列骨架的独立类型,额度恒 1。
 //!
 //! **derivation 重型任务与 exotic Worker 请求共享同一个全局 permit 预算**——二者同级（总纲优先级阶梯），
 //! 谁也不硬让步谁。若各开各的 semaphore，大视频库持续派生会饿死 exotic（PSD 永不出图）。
@@ -114,6 +115,8 @@ fn remove_ticket(queue: &mut VecDeque<u64>, ticket: u64) {
 }
 
 /// permit 持有凭证。Drop 即归还额度并唤醒队首。
+/// must_use:取到即弃 = 没有互斥,必是逻辑错误。
+#[must_use]
 pub struct HeavyPermit {
     limiter: Arc<BackgroundHeavyLimiter>,
 }
@@ -122,6 +125,54 @@ impl Drop for HeavyPermit {
     fn drop(&mut self) {
         self.limiter.release();
     }
+}
+
+/// GPU 推理令牌:全局额度**恒 1**(集显/单 GPU 语义,Part4 D2 §3.1;多 permit 放行留
+/// T22 按 VRAM 档位实测)。薄封装复用 [`BackgroundHeavyLimiter`] 的 FIFO 公平队列 +
+/// 取消感知 + RAII 释放,但作为**独立类型**存在——防 CPU permit 池与 GPU 令牌在调用点
+/// 混用,也让获取顺序纪律有类型可依。
+///
+/// 分层(D2 §3.2,勿合并):`AppState::gpu_analysis_owner` 管**会话语义**(哪条流水线在
+/// 分析,分钟级,用户可见的 start/pause);本令牌管**物理并发**(哪个 worker 此刻真的在
+/// 打 GPU,批粒度,秒级)。合并会让「暂停人脸让 CLIP 跑」这类语义纠缠进批调度。
+///
+/// 🔴 获取顺序天条(D2 §3.1/§4,防死锁):同时需要 CPU permit 与 GPU 令牌的路径,必须
+/// **先 `BackgroundHeavyLimiter::acquire` 再 `GpuToken::acquire`**;释放顺序不限(RAII
+/// Drop)。全局唯一获取顺序 → 等待图无环 → 无死锁。
+///
+/// 形态不变性(D2 §3.3):合并单 ai-worker(池宽 1)下令牌几乎恒空闲即得,退化为保险丝
+/// (防未来第二 GPU 消费者);分离双 worker 下真跨池仲裁。两形态代码路径一致,T9.5/T20
+/// 拍板不影响本模块。acquire 点接线随 T13/T15 批派发落地(发 EmbedBatch/FaceDetectEmbed
+/// 前;文本塔恒 CPU 不占令牌,D2 §5)。
+pub struct GpuToken {
+    inner: Arc<BackgroundHeavyLimiter>,
+}
+
+impl GpuToken {
+    /// 创建全局唯一 GPU 令牌(经 `AppState.gpu_token` 共享给全部 GPU 消费者)。
+    pub fn new() -> Arc<Self> {
+        Arc::new(GpuToken {
+            inner: BackgroundHeavyLimiter::new(1),
+        })
+    }
+
+    /// 公平取 GPU 令牌;阻塞直到拿到或 `token` 取消(取消返回 None,不泄漏票)。
+    /// 语义与 [`BackgroundHeavyLimiter::acquire`] 完全一致。
+    pub fn acquire(&self, token: &CancellationToken) -> Option<GpuPermit> {
+        self.inner.acquire(token).map(|p| GpuPermit { _permit: p })
+    }
+
+    /// 令牌当前是否空闲(瞬时快照;仅供观测/测试)。
+    pub fn is_idle(&self) -> bool {
+        self.inner.available() == 1
+    }
+}
+
+/// GPU 令牌持有凭证:Drop 即释放——批完成/超时/进程死/panic 展开均经 Drop,无泄漏面
+/// (D2 §3.1「release 点」)。
+#[must_use]
+pub struct GpuPermit {
+    _permit: HeavyPermit,
 }
 
 #[cfg(test)]
@@ -212,5 +263,95 @@ mod tests {
         b.join().unwrap();
         let got = order.lock().unwrap().clone();
         assert_eq!(got, vec!["A", "B"], "FIFO：先入队者先获 permit");
+    }
+}
+
+#[cfg(test)]
+mod gpu_token_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::thread;
+
+    #[test]
+    fn amount_fixed_at_one_with_raii_release() {
+        let gpu = GpuToken::new();
+        let token = CancellationToken::new();
+        assert!(gpu.is_idle());
+        let held = gpu.acquire(&token).expect("空闲时必得");
+        assert!(!gpu.is_idle(), "额度 1:持有期间不空闲");
+
+        // 第二个请求在持有期内必须阻塞,释放后立即获得。
+        let got_after_release = Arc::new(AtomicBool::new(false));
+        let gpu2 = Arc::clone(&gpu);
+        let token2 = token.clone();
+        let flag = Arc::clone(&got_after_release);
+        let waiter = thread::spawn(move || {
+            let _p = gpu2.acquire(&token2).expect("释放后应获得");
+            flag.store(true, Ordering::SeqCst);
+        });
+        thread::sleep(Duration::from_millis(50));
+        assert!(
+            !got_after_release.load(Ordering::SeqCst),
+            "持有期内第二请求不得放行"
+        );
+        drop(held); // RAII 释放
+        waiter.join().unwrap();
+        assert!(got_after_release.load(Ordering::SeqCst));
+        assert!(gpu.is_idle(), "全部归还");
+    }
+
+    #[test]
+    fn released_on_panic_path() {
+        // D2 §4 验收②:panic 展开路径同样经 Drop 释放,无泄漏面。
+        let gpu = GpuToken::new();
+        let token = CancellationToken::new();
+        let gpu2 = Arc::clone(&gpu);
+        let panicker = thread::spawn(move || {
+            let _p = gpu2.acquire(&token).unwrap();
+            panic!("模拟批处理线程 panic");
+        });
+        assert!(panicker.join().is_err(), "线程应 panic");
+        assert!(gpu.is_idle(), "panic 展开后令牌应已释放");
+    }
+
+    #[test]
+    fn fifo_two_waiters_served_in_order() {
+        // D2 §4 验收①:薄封装不得破坏内层 FIFO 公平。
+        let gpu = GpuToken::new();
+        let token = CancellationToken::new();
+        let held = gpu.acquire(&token).unwrap();
+        let order = Arc::new(Mutex::new(Vec::<&'static str>::new()));
+        let mk = |name: &'static str| {
+            let gpu = Arc::clone(&gpu);
+            let token = token.clone();
+            let order = Arc::clone(&order);
+            thread::spawn(move || {
+                let _p = gpu.acquire(&token).unwrap();
+                order.lock().unwrap().push(name);
+            })
+        };
+        let a = mk("A");
+        thread::sleep(Duration::from_millis(30)); // 确保 A 先入队
+        let b = mk("B");
+        thread::sleep(Duration::from_millis(30));
+        drop(held); // 释放 → 必先给 A
+        a.join().unwrap();
+        b.join().unwrap();
+        assert_eq!(*order.lock().unwrap(), vec!["A", "B"]);
+    }
+
+    #[test]
+    fn cancel_while_waiting_returns_none_without_leak() {
+        let gpu = GpuToken::new();
+        let token = CancellationToken::new();
+        let held = gpu.acquire(&token).unwrap();
+        let gpu2 = Arc::clone(&gpu);
+        let token2 = token.clone();
+        let waiter = thread::spawn(move || gpu2.acquire(&token2).is_none());
+        thread::sleep(Duration::from_millis(50));
+        token.cancel();
+        assert!(waiter.join().unwrap(), "取消应返回 None");
+        drop(held);
+        assert!(gpu.is_idle(), "无票泄漏");
     }
 }

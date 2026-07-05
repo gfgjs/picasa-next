@@ -35,13 +35,12 @@ use crate::exotic::fingerprint::thumbnail_fingerprint;
 use crate::exotic::limiter::BackgroundHeavyLimiter;
 use crate::exotic::sink::write_thumbnail_atomic;
 use crate::exotic::worker::{
-    default_thumbnail_limits, TaskOutcome, WorkerConfig, WorkerLimits, WorkerSpec,
+    default_thumbnail_limits, RawOutcome, TaskOutcome, WorkerConfig, WorkerLimits, WorkerSpec,
 };
-use crate::layout::LayoutCache;
 
 // ── 常量 ───────────────────────────────────────────────────────────────────────
 /// 单任务超时（PSD 缩略图很快；给足余量覆盖大画布）。
-const TASK_TIMEOUT: Duration = Duration::from_secs(30);
+const TASK_TIMEOUT: Duration = crate::exotic::coordinator::op_timeouts::THUMBNAIL; // 收拢 per-op 表(T13/D3)
 /// 租约 TTL：≥ task_timeout + kill/wait 宽限；孤儿恢复只回收超此时长的 processing。
 const LEASE_TTL_SECS: i64 = 120;
 /// 在途租约续租周期（须 << lease_ttl；取 ttl/3，R2 第4条）。
@@ -62,8 +61,16 @@ const MAX_POOL: usize = 2;
 
 // ── Worker 抽象（便于 mock 单测）─────────────────────────────────────────────────
 
+/// Worker 生命周期公共面(T15 拆分,Part6 §3.4.2 C5):thumbnail 与 embed 两类 worker
+/// 共享的簿记能力;各自的任务方法在子 trait。
+pub trait WorkerTask: Send {
+    fn worker_version(&self) -> String;
+    fn is_alive(&self) -> bool;
+    fn shutdown(self: Box<Self>, grace: Duration);
+}
+
 /// 缩略图 Worker 行为（[`crate::exotic::supervisor::WorkerSupervisor`] 实现；测试用 mock）。
-pub trait ThumbnailWorker: Send {
+pub trait ThumbnailWorker: WorkerTask {
     fn run_thumbnail(
         &mut self,
         req: &RequestBody,
@@ -71,9 +78,42 @@ pub trait ThumbnailWorker: Send {
         timeout: Duration,
         cancelled: &dyn Fn() -> bool,
     ) -> TaskOutcome;
-    fn worker_version(&self) -> String;
-    fn is_alive(&self) -> bool;
-    fn shutdown(self: Box<Self>, grace: Duration);
+}
+
+/// 嵌入/人脸 Worker 行为(C5;会话生命周期 + 批量 op)。消费方 = T17 的
+/// [`crate::ai::worker_client::AiWorkerClient`];批结果校验用 worker.rs 的 validate_*。
+pub trait EmbedWorker: WorkerTask {
+    /// 当前已加载会话的快照;None = 未加载。派批前 host 据此比对目标模型,
+    /// 不符则先 close 再 init(切换语义,D3 §4②)。
+    fn session(&self) -> Option<&crate::exotic::supervisor::SessionDescriptor>;
+    /// SessionInit(记录会话快照);超时用 op_timeouts::SESSION_INIT 档。
+    fn init_session(
+        &mut self,
+        req: &RequestBody,
+        timeout: Duration,
+        cancelled: &dyn Fn() -> bool,
+    ) -> RawOutcome;
+    /// SessionClose(幂等;host 主导卸载)。
+    fn close_session(&mut self, timeout: Duration, cancelled: &dyn Fn() -> bool) -> RawOutcome;
+    /// EmbedBatch / FaceDetectEmbed / EncodeText 批请求(Success 未经 op 校验,调用方分派验证)。
+    fn run_batch(
+        &mut self,
+        req: &RequestBody,
+        timeout: Duration,
+        cancelled: &dyn Fn() -> bool,
+    ) -> RawOutcome;
+}
+
+impl WorkerTask for crate::exotic::supervisor::WorkerSupervisor {
+    fn worker_version(&self) -> String {
+        crate::exotic::supervisor::WorkerSupervisor::worker_version(self).to_string()
+    }
+    fn is_alive(&self) -> bool {
+        crate::exotic::supervisor::WorkerSupervisor::is_alive(self)
+    }
+    fn shutdown(self: Box<Self>, grace: Duration) {
+        crate::exotic::supervisor::WorkerSupervisor::shutdown(*self, grace)
+    }
 }
 
 impl ThumbnailWorker for crate::exotic::supervisor::WorkerSupervisor {
@@ -88,14 +128,30 @@ impl ThumbnailWorker for crate::exotic::supervisor::WorkerSupervisor {
             self, req, limits, timeout, cancelled,
         )
     }
-    fn worker_version(&self) -> String {
-        crate::exotic::supervisor::WorkerSupervisor::worker_version(self).to_string()
+}
+
+impl EmbedWorker for crate::exotic::supervisor::WorkerSupervisor {
+    fn session(&self) -> Option<&crate::exotic::supervisor::SessionDescriptor> {
+        crate::exotic::supervisor::WorkerSupervisor::session(self)
     }
-    fn is_alive(&self) -> bool {
-        crate::exotic::supervisor::WorkerSupervisor::is_alive(self)
+    fn init_session(
+        &mut self,
+        req: &RequestBody,
+        timeout: Duration,
+        cancelled: &dyn Fn() -> bool,
+    ) -> RawOutcome {
+        crate::exotic::supervisor::WorkerSupervisor::init_session(self, req, timeout, cancelled)
     }
-    fn shutdown(self: Box<Self>, grace: Duration) {
-        crate::exotic::supervisor::WorkerSupervisor::shutdown(*self, grace)
+    fn close_session(&mut self, timeout: Duration, cancelled: &dyn Fn() -> bool) -> RawOutcome {
+        crate::exotic::supervisor::WorkerSupervisor::close_session(self, timeout, cancelled)
+    }
+    fn run_batch(
+        &mut self,
+        req: &RequestBody,
+        timeout: Duration,
+        cancelled: &dyn Fn() -> bool,
+    ) -> RawOutcome {
+        crate::exotic::supervisor::WorkerSupervisor::run_request(self, req, timeout, cancelled)
     }
 }
 
@@ -125,7 +181,9 @@ pub struct PipelineDeps<'a> {
     pub writer: &'a Mutex<Connection>,
     pub limiter: &'a Arc<BackgroundHeavyLimiter>,
     pub token: &'a CancellationToken,
-    pub layout_cache: &'a LayoutCache,
+    /// items 取数缓存：缩略图结果就地 patch（S3 后唯一 patch 目标——布局行仅存几何，
+    /// 出口拼装自本缓存取载荷；真实接线 = AppState 字段）。
+    pub items_cache: &'a crate::layout::items_cache::ItemsCache,
     pub cache_dir: PathBuf,
     /// 当前缩略图档位请求尺寸（吸附在指纹/Worker 内做）。
     pub requested_size: u32,
@@ -657,7 +715,8 @@ fn finalize_success(
         ok
     };
 
-    // 3. 同步常驻 layout cache（使产物在滚出再滚回时无需整表重算）。
+    // 3. 同步 items 取数缓存（S3：布局行仅存几何，出口拼装自 items 缓存取载荷——
+    //    patch 单点即可使产物在滚出再滚回时立即可见，无需整表重算）。
     if committed {
         let thumb = crate::db::models::ThumbResult {
             item_id: task.item_id,
@@ -665,7 +724,10 @@ fn finalize_success(
             thumb_path: Some(sink.thumb_db_path),
             thumbhash: Some(sink.thumbhash),
         };
-        crate::layout::cache::apply_thumb_results(deps.layout_cache, std::slice::from_ref(&thumb));
+        crate::layout::items_cache::apply_thumb_results(
+            deps.items_cache,
+            std::slice::from_ref(&thumb),
+        );
     }
     Ok(committed)
 }
@@ -741,6 +803,15 @@ mod tests {
         behavior: Behavior,
         dead: bool,
     }
+    impl WorkerTask for MockWorker {
+        fn worker_version(&self) -> String {
+            "mock-1.0.0".into()
+        }
+        fn is_alive(&self) -> bool {
+            !self.dead
+        }
+        fn shutdown(self: Box<Self>, _grace: Duration) {}
+    }
     impl ThumbnailWorker for MockWorker {
         fn run_thumbnail(
             &mut self,
@@ -758,7 +829,7 @@ mod tests {
                 },
                 Behavior::Failure { code, retryable } => TaskOutcome::Failure(FailureBody {
                     item_id: req.item_id(),
-                    input_fingerprint: req.input_fingerprint().into(),
+                    input_fingerprint: req.input_fingerprint().map(String::from),
                     code,
                     retryable,
                     message: "mock".into(),
@@ -769,13 +840,6 @@ mod tests {
                 }
             }
         }
-        fn worker_version(&self) -> String {
-            "mock-1.0.0".into()
-        }
-        fn is_alive(&self) -> bool {
-            !self.dead
-        }
-        fn shutdown(self: Box<Self>, _grace: Duration) {}
     }
 
     struct MockFactory {
@@ -829,18 +893,24 @@ mod tests {
         (item_id, cache_key)
     }
 
+    /// 测试共享的进程级 items 缓存（初始 None、测试不读它——真实接线见 coordinator）。
+    fn test_items_cache() -> &'static crate::layout::items_cache::ItemsCache {
+        static CACHE: std::sync::OnceLock<crate::layout::items_cache::ItemsCache> =
+            std::sync::OnceLock::new();
+        CACHE.get_or_init(crate::layout::items_cache::new_items_cache)
+    }
+
     fn deps<'a>(
         writer: &'a Mutex<Connection>,
         limiter: &'a Arc<BackgroundHeavyLimiter>,
         token: &'a CancellationToken,
-        layout: &'a LayoutCache,
         cache_dir: PathBuf,
     ) -> PipelineDeps<'a> {
         PipelineDeps {
             writer,
             limiter,
             token,
-            layout_cache: layout,
+            items_cache: test_items_cache(),
             cache_dir,
             requested_size: 480,
             plugin_id: PID.to_string(),
@@ -866,11 +936,10 @@ mod tests {
         let writer = Mutex::new(conn);
         let limiter = BackgroundHeavyLimiter::new(2);
         let token = CancellationToken::new();
-        let layout = crate::layout::cache::new_layout_cache();
         let cache_dir = std::env::temp_dir().join(format!("exotic-pl-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&cache_dir);
 
-        let d = deps(&writer, &limiter, &token, &layout, cache_dir.clone());
+        let d = deps(&writer, &limiter, &token, cache_dir.clone());
         let factory = MockFactory {
             behavior: Behavior::Success,
         };
@@ -902,12 +971,10 @@ mod tests {
         let writer = Mutex::new(conn);
         let limiter = BackgroundHeavyLimiter::new(2);
         let token = CancellationToken::new();
-        let layout = crate::layout::cache::new_layout_cache();
         let mut d = deps(
             &writer,
             &limiter,
             &token,
-            &layout,
             std::env::temp_dir().join("exotic-pl-norun"),
         );
         d.is_runnable = Arc::new(|| false); // 授权在运行期失效
@@ -930,12 +997,10 @@ mod tests {
         let writer = Mutex::new(conn);
         let limiter = BackgroundHeavyLimiter::new(2);
         let token = CancellationToken::new();
-        let layout = crate::layout::cache::new_layout_cache();
         let d = deps(
             &writer,
             &limiter,
             &token,
-            &layout,
             std::env::temp_dir().join("exotic-pl-term"),
         );
         let factory = MockFactory {
@@ -960,12 +1025,10 @@ mod tests {
         let writer = Mutex::new(conn);
         let limiter = BackgroundHeavyLimiter::new(2);
         let token = CancellationToken::new();
-        let layout = crate::layout::cache::new_layout_cache();
         let d = deps(
             &writer,
             &limiter,
             &token,
-            &layout,
             std::env::temp_dir().join("exotic-pl-retry"),
         );
         let factory = MockFactory {
@@ -1071,9 +1134,8 @@ mod tests {
         let writer = Mutex::new(conn);
         let limiter = BackgroundHeavyLimiter::new(2);
         let token = CancellationToken::new();
-        let layout = crate::layout::cache::new_layout_cache();
         let cache_dir = root.join("cache");
-        let d = deps(&writer, &limiter, &token, &layout, cache_dir.clone());
+        let d = deps(&writer, &limiter, &token, cache_dir.clone());
 
         let factory = SupervisorFactory {
             spec: WorkerSpec {
@@ -1102,12 +1164,10 @@ mod tests {
         let limiter = BackgroundHeavyLimiter::new(2);
         let token = CancellationToken::new();
         token.cancel(); // 预先取消
-        let layout = crate::layout::cache::new_layout_cache();
         let d = deps(
             &writer,
             &limiter,
             &token,
-            &layout,
             std::env::temp_dir().join("exotic-pl-cancel"),
         );
         let factory = MockFactory {

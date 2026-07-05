@@ -90,6 +90,9 @@ interface UseVirtualScrollOptions {
   /// Current target grid row height (px) — drives the adaptive scroll buffer.
   /// 当前网格目标行高（px）—— 驱动自适应滚动缓冲。
   rowHeight: () => number
+  /// 双引擎互斥开关(T16 方案B):false = 本引擎休眠——不取数、不写 transform、不挂
+  /// wheel 补偿(强制退出平移态)。缺省恒 true,单引擎用法行为零变化。
+  enabled?: () => boolean
 }
 
 export function useVirtualScroll(opts: UseVirtualScrollOptions) {
@@ -126,6 +129,8 @@ export function useVirtualScroll(opts: UseVirtualScrollOptions) {
   let lastFetchedBottom = -1
   let ticking = false
   let pendingUpdate = false
+
+  const isEnabled = () => opts.enabled?.() ?? true
 
   // ── Geometry helpers ───────────────────────────────────────────────────
   // ── 几何辅助 ───────────────────────────────────────────────────
@@ -177,6 +182,7 @@ export function useVirtualScroll(opts: UseVirtualScrollOptions) {
   // ── 滚动处理程序（由宿主 @scroll 调用） ────────────────────────────
 
   function onScroll() {
+    if (!isEnabled()) return
     // Keep the render layer glued to the viewport on every frame (matters in
     // translated mode where native scroll moves at the wrong logical rate).
     // 每帧把渲染层钉在视口上（平移模式下原生滚动的逻辑速率不对，必须每帧修正）。
@@ -228,6 +234,19 @@ export function useVirtualScroll(opts: UseVirtualScrollOptions) {
   // 随 isTranslated 翻转开关 wheel 补偿（updateVisible 中设置 isTranslated）。
   watch(isTranslated, (on) => setWheelCompensation(on))
 
+  // 引擎互斥(T16 方案B):被停用时强制退出平移态——否则 bucket 引擎接管后,残留的
+  // wheel 补偿监听仍会按 ratio 篡改滚轮增量、直接破坏原生滚动手感;重新启用时强制
+  // 重取当前视口(spacer 高度/可见行在休眠期间已失真)。
+  if (opts.enabled) {
+    watch(opts.enabled, (on) => {
+      if (on) {
+        scheduleUpdate(true)
+      } else {
+        isTranslated.value = false
+      }
+    })
+  }
+
   function scheduleUpdate(force = false) {
     if (force) {
       lastFetchedTop = -1
@@ -262,6 +281,7 @@ export function useVirtualScroll(opts: UseVirtualScrollOptions) {
   // ── 计算可见窗口 ─────────────────────────────────────────────
 
   async function updateVisible(force: boolean = false) {
+    if (!isEnabled()) return
     if (force) {
       lastFetchedTop = -1
     }

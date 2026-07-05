@@ -214,6 +214,22 @@ export const useMediaStore = defineStore('media', () => {
     }
   }
 
+  // T16 方案B:按段取行(半开区间 [startY, endY),精确段归属——区别于 fetchRowsByY 的
+  // 视口相交语义,那会把邻段边界行掺进来)。供 useBucketVirtualScroll 段挂载取数。
+  async function fetchBucketRows(startY: number, endY: number): Promise<LayoutRow[]> {
+    const version = layoutSummary.value?.layoutVersion
+    try {
+      return await invokeIpc<LayoutRow[]>(IPC.GET_BUCKET_ROWS, {
+        startY,
+        endY,
+        layoutVersion: version,
+      })
+    } catch (e) {
+      console.error(`[MediaStore] fetchBucketRows(${startY}, ${endY}) FAILED:`, e)
+      throw e
+    }
+  }
+
   async function openDetailFromSearch(id: number, resultIds: number[]) {
     navContext.value = {
       type: 'search',
@@ -350,6 +366,7 @@ export const useMediaStore = defineStore('media', () => {
     layoutVersion,
     computeLayout,
     fetchRowsByY,
+    fetchBucketRows,
     ensureMeta,
     openDetail,
     openDetailFromSearch,

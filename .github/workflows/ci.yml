@@ -3,9 +3,9 @@
 # 改造点(相对旧版):
 #   ① 触发扩到 dev + PR + 手动 dispatch(旧版仅 main push → 429 个测试对日常提交零门控);
 #   ② 加 cargo test --workspace(旧版只有 check+clippy,"测试全绿"长期仅本地断言);
-#   ③ Rust job 补 setup-node + npm ci:tauri.windows.conf.json 的 bundle.resources 指向
-#      node_modules 内 ONNX/DirectML 二进制(750817b 平台拆分),tauri-build 在 build script
-#      阶段校验其存在——不装依赖则 cargo check 直接红(私有 CI 2026-07-02 连红根因);
+#   ③ ~~Rust job 补 setup-node + npm ci 材料化 ONNX 资源~~(2026-07-04 随 Part7-T6 撤销:
+#      bundle 不再声明 ONNX/DirectML 资源,tauri-build 无资源校验面,Rust job 不再需要 node;
+#      dev 推理 DLL 改由 .cargo/config.toml [env] ORT_DYLIB_PATH 直指 npm 包);
 #   ④ 占位 dist:tauri::generate_context! 编译期校验 frontendDist(oss-gate 四跑实证,debug 也查);
 #   ⑤ Rust job 全部命令迁 workspace 根(旧版钉 ./src-tauri,漏掉 crates/* 五个 member)。
 # 步骤写法与 oss-gate.yml 对齐(bash shell / rust-cache / node 22 npm ci),复用其六轮实跑踩坑结论。
@@ -14,6 +14,7 @@ name: CI
 on:
   push:
     branches: [ "main", "dev" ]
+    tags: [ "v*" ] # Part7-T1:release tag 触发(冒烟 job 只在 tag/手动跑,见下)
   pull_request:
     branches: [ "main", "dev" ]
   workflow_dispatch:
@@ -37,15 +38,7 @@ jobs:
       - name: Rust 编译缓存
         uses: Swatinem/rust-cache@v2
 
-      # ③ 见文件头:npm ci 材料化 node_modules 内的推理运行时资源,否则 build script 资源校验红。
-      #    这不是前端质量门(前端质量在 frontend job),只是 Rust 构建的环境复原。
-      - name: Node 环境(npm 缓存)
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - name: npm ci(材料化 onnxruntime/DirectML 资源)
-        run: npm ci
+      # ③ 见文件头:原「npm ci 材料化 ONNX 资源」步骤已随 Part7-T6 撤销(资源声明已删)。
 
       # ④ 见文件头:generate_context! 编译期校验 frontendDist("../dist")存在。
       - name: 占位 dist(generate_context 校验 frontendDist)
@@ -59,6 +52,29 @@ jobs:
 
       - name: cargo test --workspace
         run: cargo test --workspace --locked
+
+      # Part7-T11/§3.6.5⑤ 第四面:渠道依赖树断言(cargo tree 只解析不编译,秒级)。
+      # Store 渠道树不得含 updater;direct 树必须仍含(反向守卫防误删)。
+      # 组合「编译」验证在本地施工时实证,T16 商业流水线建成后随矩阵常态化。
+      # 🔴 herestring 而非管道(2026-07-04 首跑实证):GitHub 的 shell:bash 注入 pipefail,
+      #    「echo 大文本 | grep -q」在 grep 命中早退时上游收 SIGPIPE(141)→ 管道整体非零——
+      #    正向断言(期望命中)被误判失败;反向的 forbidden 扫描则可能真命中被静默放行。
+      #    竞态取决于管道缓冲/调度,本地无 pipefail 或缓冲更大即跑不出。herestring 是重定向,
+      #    无管道无竞态;$( ) 捕获亦保 set -e 对上游失败仍生效。
+      - name: 渠道依赖树断言(updater 物理排除)
+        run: |
+          for ch in channel-msstore channel-steam; do
+            tree=$(cargo tree -p picasa-next -e normal --no-default-features --features "custom-protocol,lite,$ch" --locked)
+            if grep -q "tauri-plugin-updater" <<< "$tree"; then
+              echo "::error::tauri-plugin-updater 泄入 $ch 依赖树(Part7 §3.6.2 红线)"; exit 1
+            fi
+          done
+          tree=$(cargo tree -p picasa-next -e normal --locked)
+          if ! grep -q "tauri-plugin-updater" <<< "$tree"; then
+            echo "诊断:direct 树共 $(grep -c "" <<< "$tree") 行,未见 tauri-plugin-updater"
+            echo "::error::direct 依赖树意外丢失 tauri-plugin-updater(updater 能力被误删?)"; exit 1
+          fi
+          echo "✓ 渠道依赖树断言过:store 渠道零 updater;direct 树含 updater"
 
   frontend:
     name: Frontend Typecheck & Test
@@ -76,6 +92,11 @@ jobs:
       - name: npm ci
         run: npm ci
 
+      # Part7-T5 版本单源门控:package.json 与锚(根 [workspace.package] version)一致、
+      # tauri.conf.json 无独立 version、src-tauri 走 workspace 继承;失配则提示 --write。
+      - name: 版本单源检查(sync-version --check)
+        run: node scripts/sync-version.mjs --check
+
       # R2-3:存量 33 lint 错清零后开硬门(含 R1-7 的 vue/no-bare-strings-in-template i18n 防回潮规则)。
       - name: ESLint
         run: npm run lint
@@ -85,3 +106,59 @@ jobs:
 
       - name: vitest 单元测试
         run: npm test
+
+      # Part7-T11/§3.6.5⑤ 前三面:conf/capability/dist 渠道合规扫描。
+      # 🔴 必须扫 minify 后生产 bundle(原型实证:未 minify 的 if(false) 死块函数名残留会误报);
+      # 脚本启动先跑内置 selftest(正反样本),防扫描器退化成只会 PASS 的空壳。
+      - name: vite build(生产 bundle)
+        run: npm run build
+
+      - name: 渠道合规扫描(verify-channel-bundle)
+        run: node scripts/verify-channel-bundle.mjs
+
+  # ── Part7-T1 开机冒烟(§3.1.6)——只在 release tag / 手动 dispatch 上跑 ──────────────
+  # 日常 push 保持轻量(本 job 含完整 tauri build,windows runner 上 10 分钟级)。
+  # 🔴 须跑构建产物:frontendDist 编译期内嵌;tauri dev 依赖 vite devUrl,不适合无头冒烟。
+  # --no-bundle 只产 exe 不打安装包,exe 原地可跑(Part7-T6 后 bundle 无 ONNX/DirectML
+  # 资源;冒烟只验开机就绪,不触 AI 推理)。
+  # 钩子机制:lib.rs 的 RunEvent::Ready 分支检测 PICASA_SMOKE_TEST=1 → 就绪即 exit(0);
+  # setup 中途 panic(reactor/迁移/DB)→ 永不到 Ready → 非零退出,本步即红。
+  # T16/T17 commercial/oss 双流水线建成后,本 job 迁入其中(§3.1.6 的最终归宿)。
+  smoke:
+    name: 开机冒烟(build 产物断言)
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust 编译缓存
+        uses: Swatinem/rust-cache@v2
+
+      - name: Node 环境(npm 缓存)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: npm ci
+        run: npm ci
+
+      # Part7-T5 tag 一致性:tag vX.Y.Z 必须等于版本锚,防 tag 与产物版本漂移。
+      - name: tag 与版本锚一致性
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: node scripts/sync-version.mjs --check-tag "$GITHUB_REF_NAME"
+
+      - name: tauri build --no-bundle(release exe)
+        run: npx tauri build --no-bundle
+
+      - name: 开机冒烟断言(PICASA_SMOKE_TEST=1 → exit 0)
+        timeout-minutes: 5
+        run: |
+          PICASA_SMOKE_TEST=1 ./target/release/picasa-next.exe
+          echo "冒烟通过:应用达 RunEvent::Ready 并 exit(0)"

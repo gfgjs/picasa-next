@@ -124,6 +124,24 @@
         <div class="settings-card__item">
           <button
             class="pin-btn"
+            :class="{ active: ui.pinnedSettings.includes('bucketScroll') }"
+            @click="ui.togglePinnedSetting('bucketScroll')"
+            :title="$t('settings.pinToSidebar')"
+            :aria-label="$t('settings.pinToSidebar')"
+          >
+            <Pin :size="14" />
+          </button>
+          <div class="settings-card__info">
+            <div class="settings-card__label" style="display: flex; align-items: center; gap: 8px">
+              {{ $t('settings.bucketScroll') }}
+            </div>
+            <div class="settings-card__desc">{{ $t('settings.bucketScrollDesc') }}</div>
+          </div>
+          <DynamicSettingControl setting-key="bucketScroll" />
+        </div>
+        <div class="settings-card__item">
+          <button
+            class="pin-btn"
             :class="{ active: ui.pinnedSettings.includes('closeBehavior') }"
             @click="ui.togglePinnedSetting('closeBehavior')"
             :title="$t('settings.pinToSidebar')"

@@ -8,7 +8,7 @@
 
 [package]
 name = "picasa-next-free-stub"
-version = "0.1.0"
+version.workspace = true # Part7-T5:随根版本锚(free-stub 是核心产物的一部分)
 edition = "2021"
 publish = false
 

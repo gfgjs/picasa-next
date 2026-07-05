@@ -113,6 +113,15 @@
   <!-- Right controls -->
   <!-- 右侧控件 -->
   <div class="toolbar__right">
+    <!-- H-Lab 横向画廊实验室入口(多布局候选真人调研;plan-docs/2026-07-02-horizontal-gallery-lab.md) -->
+    <button
+      class="btn-icon"
+      :title="$t('toolbar.hgalleryLab')"
+      :aria-label="$t('toolbar.hgalleryLab')"
+      @click="router.push('/hgallery-lab')"
+    >
+      <FlaskConical :size="18" />
+    </button>
     <!-- Undo / Redo — folder move & copy | 撤销 / 重做 — 文件夹移动与复制 -->
     <button
       class="btn-icon"
@@ -264,10 +273,10 @@
         :min="60"
         :max="960"
         :step="20"
-        :value="ui.gridRowHeight"
+        :value="sliderRowHeight"
         @input="onRowHeightInput"
       />
-      <span class="row-height-value">{{ ui.gridRowHeight }}px</span>
+      <span class="row-height-value">{{ sliderRowHeight }}px</span>
     </div>
 
     <!-- Group by selector | 分组选择器 -->
@@ -330,8 +339,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import {
   ImageIcon,
   Video,
@@ -350,6 +360,7 @@ import {
   Calendar,
   LayoutGrid,
   GalleryVertical,
+  FlaskConical,
 } from '@lucide/vue'
 import StarRating from '../common/StarRating.vue'
 import ColorLabelPicker from '../common/ColorLabelPicker.vue'
@@ -366,6 +377,7 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+const router = useRouter()
 const ui = useUiStore()
 const filter = useFilterStore()
 const media = useMediaStore()
@@ -608,17 +620,27 @@ function toggleLayoutMode() {
   ui.setLayoutMode(ui.layoutMode === 'grid' ? 'justified' : 'grid')
 }
 
+// S4（Part2 重排提速）：拖动中只更新本地显示值，**不写 ui.gridRowHeight** ——
+// useJustifiedLayout 的 relayout watch 吃的是 store 值，原实现每 20px 步进即触发一次
+// 全量重排（百万库下串行排队数次 × 秒级）；原 300ms 防抖只防了持久化、没防重排。
+// 停手 250ms 后一次性提交 store + 持久化（setGridRowHeight），重排恰好一次。
+const sliderRowHeight = ref(ui.gridRowHeight)
+// 外部变化（启动读配置等）→ 回同步本地显示值。
+watch(
+  () => ui.gridRowHeight,
+  (v) => {
+    sliderRowHeight.value = v
+  },
+)
 let rowHeightTimer: ReturnType<typeof setTimeout> | null = null
 
 function onRowHeightInput(e: Event) {
   const value = parseInt((e.target as HTMLInputElement).value, 10)
-  ui.gridRowHeight = value // 即时更新 UI
-  // Debounce the actual layout recomputation
-  // 防抖实际的布局重新计算
+  sliderRowHeight.value = value // 即时更新滑块与数值显示（纯本地，不触发重排）
   if (rowHeightTimer) clearTimeout(rowHeightTimer)
   rowHeightTimer = setTimeout(() => {
-    ui.setGridRowHeight(value) // 持久化
-  }, 300)
+    ui.setGridRowHeight(value) // 停手后一次：写 store（触发唯一一次重排）+ 持久化
+  }, 250)
 }
 
 function onGroupByChange(e: Event) {

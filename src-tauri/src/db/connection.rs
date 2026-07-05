@@ -56,6 +56,43 @@ pub fn create_write_connection(db_path: &Path) -> Result<DbWriter> {
     Ok(Mutex::new(conn))
 }
 
+/// 启动期 WAL 截断（S3.6，S3.7 修正调用时机）：退出钩子只覆盖正常退出——dev Ctrl+C/崩溃/
+/// 强杀会让 WAL 带着整个会话的管线写量（缩略图/富化/AI）跨会话累积，拖慢后续所有读。
+/// **调用方须在 tracing 订阅器就绪后调用**（原挂在 create_write_connection 内，先于日志
+/// 初始化,info!/warn! 被静默丢弃——S3.6 首轮真机看不到日志的原因）。setup 内 tracing init
+/// 之后、管线拉起之前调用：读池连接已归还、无并发读者，TRUNCATE 可完整回收；WAL 越大本步
+/// 越久（一次性清偿，日志可见），失败仅告警不阻断启动。
+pub(crate) fn checkpoint_wal_at_boot(conn: &Connection, db_path: &Path) {
+    // SQLite WAL 命名 = 数据库路径直接追加 "-wal"（不是替换扩展名）。
+    let wal_path = {
+        let mut p = db_path.as_os_str().to_owned();
+        p.push("-wal");
+        std::path::PathBuf::from(p)
+    };
+    let size_mb = |p: &Path| {
+        std::fs::metadata(p)
+            .map(|m| m.len() as f64 / 1_048_576.0)
+            .unwrap_or(0.0)
+    };
+    let before = size_mb(&wal_path);
+    // 返回 (busy, WAL 总页数, 已检查点页数)；非 WAL 库返回 (0, -1, -1)，无害。
+    let result: rusqlite::Result<(i64, i64, i64)> =
+        conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        });
+    match result {
+        Ok((busy, log, ckpt)) => info!(
+            "Boot WAL checkpoint: {:.1}MB → {:.1}MB (busy={}, pages {}/{}) | 启动期 WAL 截断",
+            before,
+            size_mb(&wal_path),
+            busy,
+            ckpt,
+            log
+        ),
+        Err(e) => tracing::warn!("Boot WAL checkpoint failed | 启动期 WAL 截断失败: {}", e),
+    }
+}
+
 // ── Read pool ───────────────────────────────────────────────────────────────
 // ── 读取池 ───────────────────────────────────────────────────────────────
 

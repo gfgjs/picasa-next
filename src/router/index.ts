@@ -51,6 +51,13 @@ const router = createRouter({
       meta: { title: 'routes.audio' },
     },
     {
+      // H-Lab 横向画廊实验室:多种横向布局候选的真人调研载体,与 MediaGrid 完全平行
+      // (独立后端缓存/滚动器;plan-docs/2026-07-02-horizontal-gallery-lab.md)。
+      path: '/hgallery-lab',
+      component: () => import('../views/HGalleryLabView.vue'),
+      meta: { title: 'routes.hgalleryLab' },
+    },
+    {
       path: '/trash',
       component: () => import('../components/media/MediaGrid.vue'),
       meta: { title: 'sidebar.trash' },

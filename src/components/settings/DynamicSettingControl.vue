@@ -73,6 +73,18 @@
       </label>
     </template>
 
+    <!-- Bucket Segmented Scrolling (T16 方案B B1) -->
+    <template v-else-if="settingKey === 'bucketScroll'">
+      <label class="toggle" :class="{ 'compact-toggle': compact }">
+        <input
+          type="checkbox"
+          v-model="ui.bucketSegmentedScroll"
+          @change="ui.setBucketSegmentedScroll(ui.bucketSegmentedScroll)"
+        />
+        <span class="toggle__thumb" />
+      </label>
+    </template>
+
     <!-- Video Cover Extraction -->
     <template v-else-if="settingKey === 'enableVideoCover'">
       <label class="toggle" :class="{ 'compact-toggle': compact }">

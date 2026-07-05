@@ -634,3 +634,10 @@ CREATE INDEX IF NOT EXISTS idx_media_sort ON media_items(sort_datetime DESC, id 
 CREATE INDEX IF NOT EXISTS idx_media_trash ON media_items(deleted_at DESC, id DESC)
     WHERE is_deleted = 1;
 ";
+
+/// v12(Part6-T13 多渠道预留,§8.4):安装真相加安装来源渠道列。
+/// 既有行回填 DEFAULT 'direct'——v12 前所有安装均来自直销 Registry,回填语义为真;
+/// 值域见 exotic::installer::InstallSource(direct / steam_depot / store_bundled)。
+pub const SCHEMA_V12: &str = "
+ALTER TABLE exotic_plugins ADD COLUMN entitlement_source TEXT NOT NULL DEFAULT 'direct';
+";

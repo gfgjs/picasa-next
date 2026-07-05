@@ -117,6 +117,8 @@ pub fn spawn(app: AppHandle, state: Arc<AppState>) -> tauri::async_runtime::Join
                         changes.len(),
                         changes.len()
                     );
+                    // S1：availability 随布局行下发（离线置灰徽标）→ bump 使重排取到新态。
+                    state.bump_data_version();
                     // 前端据此刷新画廊（离线徽标显隐）。失败仅记日志（无监听者时属正常）。
                     let _ = app.emit(EVENT_VOLUMES_CHANGED, changes.len());
                 }

@@ -589,7 +589,7 @@ fn write_results(
         // scroll-out/in without a full recompute (invariant §1.3.4).
         // 同步常驻布局缓存（按 id 索引 O(batch)），使封面在滚出再滚回时无需整表重算（不变量 §1.3.4）。
         if !cover_thumbs.is_empty() {
-            crate::layout::cache::apply_thumb_results(&state.layout_cache, &cover_thumbs);
+            state.apply_thumb_results(&cover_thumbs);
             *covers_landed = true;
         }
         batch.clear();

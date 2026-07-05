@@ -38,6 +38,8 @@ export interface FaceModelInfo {
   active: boolean
   /** Has a verified download manifest (one-click). false = manual import only | 有已校验清单（可一键下载）；false=仅手动导入 */
   downloadable: boolean
+  /** Inference cross-checked vs upstream reference; false = activation refused | 已与上游参考对拍;false=拒绝激活(防静默算错) */
+  verified: boolean
 }
 
 /** Download progress streamed over a Channel from download_face_model (camelCase, mirrors CLIP) | 来自 download_face_model 的下载进度（camelCase，镜像 CLIP） */

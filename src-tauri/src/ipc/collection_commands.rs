@@ -56,7 +56,10 @@ pub async fn create_collection(
 /// 删除一个用户收藏夹（系统夹由查询层保护）。
 #[tauri::command]
 pub async fn delete_collection(album_id: i64, state: State<'_, Arc<AppState>>) -> Result<()> {
-    write_blocking(&state, move |c| q::delete_collection(c, album_id)).await
+    write_blocking(&state, move |c| q::delete_collection(c, album_id)).await?;
+    // S1：albumId 视图成员随收藏夹删除而变 → bump。
+    state.bump_data_version();
+    Ok(())
 }
 
 /// Rename a user collection (system folders are protected by the query).
@@ -78,10 +81,13 @@ pub async fn add_to_collection(
     item_ids: Vec<i64>,
     state: State<'_, Arc<AppState>>,
 ) -> Result<usize> {
-    write_blocking(&state, move |c| {
+    let n = write_blocking(&state, move |c| {
         q::add_to_collection(c, album_id, &item_ids)
     })
-    .await
+    .await?;
+    // S1：albumId 视图成员变化 → bump。
+    state.bump_data_version();
+    Ok(n)
 }
 
 /// Remove items from a collection. Returns rows deleted.
@@ -92,8 +98,11 @@ pub async fn remove_from_collection(
     item_ids: Vec<i64>,
     state: State<'_, Arc<AppState>>,
 ) -> Result<usize> {
-    write_blocking(&state, move |c| {
+    let n = write_blocking(&state, move |c| {
         q::remove_from_collection(c, album_id, &item_ids)
     })
-    .await
+    .await?;
+    // S1：albumId 视图成员变化 → bump。
+    state.bump_data_version();
+    Ok(n)
 }

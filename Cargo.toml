@@ -16,10 +16,20 @@ members = [
     "crates/exotic-protocol",
     "crates/exotic-workers/psd-worker",
     "crates/exotic-workers/psd-probe",
+    "crates/exotic-workers/ai-worker",
     "crates/picasa-next-plugin-api",
     "crates/picasa-next-free-stub",
     "crates/picasa-next-exotic-trust",
+    "crates/picasa-next-ai-core",
 ]
+
+# ── 版本锚:单一事实源(Part7-T5 / Part7 §3.2 R3)────────────────────────────────────
+# 升版只改这一处。传导链:src-tauri/free-stub `version.workspace = true` 继承 →
+# tauri.conf.json 不持有 version(Tauri codegen 回退 CARGO_PKG_VERSION)→ 产物版本;
+# package.json 由 `node scripts/sync-version.mjs --write` 从此写回,CI --check + tag 一致性兜底。
+# exotic-protocol/psd-worker 等内部组件不对外,保留自有版本(§3.2)。
+[workspace.package]
+version = "0.1.0"
 
 # ── 构建 profile（仅 workspace 根生效；member 内的 [profile.*] 会被 cargo 忽略）──────────────────
 # 自 src-tauri/Cargo.toml 迁入（连同其原注释）。
@@ -28,6 +38,50 @@ members = [
 # （见 src-tauri/src/thumbnail/generator.rs）；`panic = "abort"` 下单张坏图会中止整个进程。
 # psd-worker/psd-probe 亦依赖 unwind（每任务顶层 catch_unwind 拦 psd 对畸形输入的 panic）——
 # 根 release 不设 abort，全 member 继承 unwind，故各 member 原 `panic = "unwind"` 冗余、已删。
+# ── dev 解码 crate 单独提速(T16-R2 方案 B,2026-07-04)──────────────────────────────────────
+# dev 默认 opt-0,纯 Rust 图像解码在 24MP 原图上退化到秒级/张(实测 face 批解码均值 2.5-4s/张),
+# 是 face/AI 管线 dev 体感慢的主因(worker 化前走 WIC 原生解码,不吃 Rust 优化等级)。
+# 仅覆盖外部解码/缩放/压缩链 crate:一次性多编译几分钟,换 dev 解码约一个量级提速;
+# 本地 workspace crate 不覆盖,保持增量编译速度(全局 `"*"` 覆盖另议,留拍板)。
+# 注:按名覆盖对锁文件中同名多版本(png/ndarray)全部生效;generic 代码在调用方 crate 单态化,
+# 故纯 trait 桥 crate(num-traits 等)不列——列了也不生效。
+[profile.dev.package.image]
+opt-level = 2
+[profile.dev.package.image-webp]
+opt-level = 2
+[profile.dev.package.zune-jpeg]
+opt-level = 2
+[profile.dev.package.zune-core]
+opt-level = 2
+[profile.dev.package.png]
+opt-level = 2
+[profile.dev.package.gif]
+opt-level = 2
+[profile.dev.package.tiff]
+opt-level = 2
+[profile.dev.package.color_quant]
+opt-level = 2
+[profile.dev.package.weezl]
+opt-level = 2
+[profile.dev.package.fdeflate]
+opt-level = 2
+[profile.dev.package.flate2]
+opt-level = 2
+[profile.dev.package.miniz_oxide]
+opt-level = 2
+[profile.dev.package.adler2]
+opt-level = 2
+[profile.dev.package.crc32fast]
+opt-level = 2
+[profile.dev.package.moxcms]
+opt-level = 2
+[profile.dev.package.bytemuck]
+opt-level = 2
+[profile.dev.package.byteorder-lite]
+opt-level = 2
+[profile.dev.package.ndarray]
+opt-level = 2
+
 [profile.release]
 lto       = "thin"
 opt-level = 3

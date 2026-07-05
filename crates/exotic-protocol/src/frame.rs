@@ -24,7 +24,12 @@ use std::io::{self, Read, Write};
 pub const MAGIC: [u8; 4] = *b"EXOT";
 
 /// 当前协议版本（握手时校验；不承担包回滚防护，R11）。
-pub const PROTOCOL_VERSION: u16 = 1;
+/// v2(2026-07-03,Part4 T10):RequestBody 扩 session/embed 族 op(SessionInit/
+/// SessionClose/EmbedBatch/FaceDetectEmbed)、WorkerErrorCode +4、Success/Failure 的
+/// item 字段 Option 化。帧结构与 FrameType **不变**(D3 裁决:零新帧,SessionReady =
+/// SessionInit 的 Success 响应;D2 裁决:GPU 令牌留主进程不进协议)。帧层硬等值校验
+/// → psd-worker 与协议同波重编译,无混版(Part6 §8.2 C1)。
+pub const PROTOCOL_VERSION: u16 = 2;
 
 /// JSON 段最大字节（1 MiB）。控制字段不应接近此值；超限即协议异常 → 杀 Worker。
 pub const MAX_JSON_LEN: u32 = 1 << 20;
@@ -386,6 +391,19 @@ mod tests {
         let err = read_frame(&mut cur).unwrap_err();
         // 仍是 EOF 类（这里不强求区分；Host 对任一读错误都杀 Worker）。
         assert!(matches!(err, ProtocolError::Io(_)));
+    }
+
+    #[test]
+    fn v1_frame_rejected_with_diagnosable_error() {
+        // 旧 psd-worker(v1)的帧在读帧层即被版本门拒,错误信息含双方版本号(D3 §6 验收)。
+        let mut buf = Vec::new();
+        write_frame(&mut buf, &sample_frame()).unwrap();
+        buf[4..6].copy_from_slice(&1u16.to_le_bytes());
+        let mut cur = Cursor::new(buf);
+        match read_frame(&mut cur) {
+            Err(ProtocolError::UnsupportedVersion(1)) => {}
+            other => panic!("期望 UnsupportedVersion(1),得到 {other:?}"),
+        }
     }
 
     #[test]

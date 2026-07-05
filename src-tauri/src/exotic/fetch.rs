@@ -8,7 +8,13 @@
 //!
 //! 安全：只接受 HTTPS；下载量精确封顶到 `expected_size`（超出立即中止）；size+sha256 双校验后才
 //! `.part` → 原子 rename——这些策略现由通用引擎统一保证。
+//!
+//! **Part7-T11 渠道物理门控**:`fetch_package`/`fetch_model_blob`(下载-执行面,Store
+//! Policy 10.2.2 禁区)仅 `channel-direct` 编入;`download_registry_index`(签名元数据,
+//! 数据面)全渠道保留——Store 渠道仍可浏览插件目录,获取/安装机制归 Part8 渠道方案。
 
+// Path 仅被门控的两个下载入口使用(registry 入口收 &str)。
+#[cfg(feature = "channel-direct")]
 use std::path::Path;
 
 use crate::download::{self, DownloadError, TimeoutPolicy};
@@ -73,6 +79,7 @@ const MAX_REGISTRY_FILE: u64 = 4 * 1024 * 1024;
 ///
 /// 包体量小（MB 级），暂不接进度回调（插件商店安装进度 UI 待 Part8）；但已走通用引擎，
 /// **Range 续传/镜像回退能力随引擎天然具备**，后续接入仅需传候选源列表 + 进度回调。
+#[cfg(feature = "channel-direct")]
 pub async fn fetch_package(
     url: &str,
     dest: &Path,
@@ -103,6 +110,53 @@ pub async fn fetch_package(
     Ok(())
 }
 
+/// 下载模型权重 blob 到 `dest`(Part4 §3.7.1/T12 分步下载)。与 [`fetch_package`] 同构,但:
+/// - `TimeoutPolicy::LargeFile`(GB 级传输);
+/// - **幂等跳过**:`dest` 已存在且 size+sha256 全符 → 不触网直接 Ok(安装重试/多插件
+///   共享同名权重时天然去重);
+/// - **断点续传**:失败保留 `.part`,下次调用从残留处 Range 续传(GB 级重下代价高,
+///   与 fetch_package 的「小文件失败即删」策略刻意不同);校验失败的 `.part` 必删
+///   (损坏数据上续传只会叠加损坏);
+/// - blob 不进 zip → `InstallLimits` 的 zip-bomb 检查对其天然不适用,自身防线 =
+///   HTTPS + size 精确封顶 + sha256 + 文件名白名单(registry 数据面校验)。
+#[cfg(feature = "channel-direct")]
+pub async fn fetch_model_blob(
+    url: &str,
+    dest: &Path,
+    expected_size: u64,
+    expected_sha256: &str,
+) -> Result<(), FetchError> {
+    // 幂等:已就位且校验通过 → 跳过(不触网)。
+    if download::verify_size_sha(dest, expected_size, Some(expected_sha256)).is_ok() {
+        return Ok(());
+    }
+    let client = download::secure_client(TimeoutPolicy::LargeFile)?;
+    // 追加式 ".part" 后缀(非 with_extension 替换——"a.onnx"/"a.bin" 两 blob 不得撞同一 part)。
+    let part = dest.with_file_name(format!(
+        "{}.part",
+        dest.file_name().and_then(|s| s.to_str()).unwrap_or("blob")
+    ));
+    // 从上次失败残留处续传;残留超长交引擎清零重来。
+    let resume_from = tokio::fs::metadata(&part)
+        .await
+        .map(|m| m.len())
+        .unwrap_or(0)
+        .min(expected_size);
+    let noop = |_: u64| {};
+    download::download_with_fallback(&client, &[url], &part, resume_from, expected_size, &noop)
+        .await
+        .map_err(FetchError::from)?; // 失败保留 .part 供续传
+
+    if let Err(e) = download::verify_size_sha(&part, expected_size, Some(expected_sha256)) {
+        let _ = tokio::fs::remove_file(&part).await;
+        return Err(e.into());
+    }
+    tokio::fs::rename(&part, dest)
+        .await
+        .map_err(|e| FetchError::Io(e.to_string()))?;
+    Ok(())
+}
+
 /// 下载 Registry 的 `index.json` + `index.sig`（**验签前**的原始字节）。
 /// **不在此验签/防回滚**——交 `RegistryCache::accept`（验签 + 单调防回滚先于解析，registry.rs:242）。
 /// 返回 `(index_bytes, sig_bytes)`。`base_url` 末尾斜杠容错。
@@ -122,6 +176,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(feature = "channel-direct")]
     fn rejects_non_https() {
         // 非 https 在引擎层即拒（不发请求）；适配器透传为 FetchError::NotHttps。
         let rt = tokio::runtime::Builder::new_current_thread()
@@ -131,6 +186,40 @@ mod tests {
         let dest = std::env::temp_dir().join("exotic-fetch-nohttps.zip");
         let r = rt.block_on(fetch_package("http://x.invalid/a.zip", &dest, 1, "00"));
         assert!(matches!(r, Err(FetchError::NotHttps)));
+    }
+
+    #[test]
+    #[cfg(feature = "channel-direct")]
+    fn model_blob_rejects_non_https() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let dest = std::env::temp_dir().join("exotic-blob-nohttps.onnx");
+        let _ = std::fs::remove_file(&dest);
+        let r = rt.block_on(fetch_model_blob(
+            "http://x.invalid/a.onnx",
+            &dest,
+            1,
+            &"0".repeat(64),
+        ));
+        assert!(matches!(r, Err(FetchError::NotHttps)));
+    }
+
+    #[test]
+    #[cfg(feature = "channel-direct")]
+    fn model_blob_idempotent_skip_when_already_valid() {
+        // 已就位且 size+sha 全符 → 不触网直接 Ok(URL 即便非法也不会被访问)。
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let dest = std::env::temp_dir().join("exotic-blob-idem.onnx");
+        std::fs::write(&dest, b"weights").unwrap();
+        let sha = crate::download::sha256_hex_of_file(&dest).unwrap();
+        let r = rt.block_on(fetch_model_blob("http://x.invalid/a.onnx", &dest, 7, &sha));
+        assert!(r.is_ok(), "已就位应幂等跳过:{r:?}");
+        let _ = std::fs::remove_file(&dest);
     }
 
     #[test]

@@ -11,8 +11,15 @@
       <div
         ref="gridRef"
         class="media-grid"
-        :class="{ 'is-scrolling': isScrolling, 'is-compact': compactCells }"
+        :class="{
+          'is-scrolling': isScrolling,
+          'is-compact': compactCells,
+          'media-grid--bucket': bucketActive,
+        }"
         @scroll.passive="onGridScroll"
+        @wheel.passive="onGridWheel"
+        @keydown="onGridKeydown"
+        @touchmove.passive="onGridTouchmove"
       >
         <!-- Empty state -->
         <!-- 空状态 -->
@@ -29,10 +36,66 @@
           <span>{{ $t('empty.computing') }}</span>
         </div>
 
+        <!-- T16 方案B(B1.5):bucket 分段渲染。容器总高 = 真实逻辑高、零坐标平移;
+             等高算术分段(useBucketVirtualScroll),仅渲染愿望窗口内的 1-3 个段——可见性
+             是纯算术,无 IntersectionObserver、无全量占位 div、无内联函数 ref(B1 真机
+             根因 C/D 由此结构性消除)。段行未到时以骨架条纹占位(--loading)。与下方
+             方案 A 分支经 bucketActive 互斥,方案 A 零改动保留、开关即回退。卡片标记与
+             方案 A 保持一致(data-item-id 与全部 handlers),使选区/拖拽/可视 patch
+             消费面两边等价;B2 再抽公共行组件去重。 -->
+        <div
+          v-if="media.totalRows > 0 && bucketActive"
+          ref="bucketContentRef"
+          class="media-grid__content media-grid__content--bucket"
+          :style="{ height: bucketSpacerHeight + 'px', position: 'relative' }"
+        >
+          <div
+            v-for="seg in bucketSegments"
+            :key="seg.index"
+            class="media-grid__segment"
+            :class="{ 'media-grid__segment--loading': seg.state !== 'ready' }"
+            :style="{
+              position: 'absolute',
+              top: seg.start - bucketAnchorDelta + 'px',
+              left: 0,
+              right: 0,
+              height: seg.end - seg.start + 'px',
+            }"
+          >
+            <template v-if="seg.rows">
+              <!-- 行体 = 双引擎公共组件 MediaGridRow(T16 收尾抽取,DOM 与原内联模板
+                   逐字节等价);offset-y = 段起点。 -->
+              <MediaGridRow
+                v-for="row in seg.rows"
+                :key="row.rowType === 'separator' ? `sep-${row.y}` : `row-${row.y}`"
+                :row="row"
+                :offset-y="seg.start"
+                :gap="GAP"
+                :group-by="ui.groupBy"
+                :compact-cells="compactCells"
+                :selection-mode="selection.isSelectionMode.value"
+                :cache-dir="cacheDir"
+                :pending-delete-label="t('selection.pendingDelete')"
+                :is-selected="selection.isSelected"
+                :is-pending-delete="isPendingDelete"
+                :card-aria-label="cardAriaLabel"
+                :on-card-click="handleCardClick"
+                :on-card-pointer-down="onCardPointerDown"
+                :on-card-context-menu="onContextMenu"
+                :on-request-thumb="onRequestThumb"
+                :on-cancel-thumb="onCancelThumb"
+                :on-favorite="handleFavorite"
+                :on-rate="handleRate"
+                :on-select="selection.toggleSelect"
+              />
+            </template>
+          </div>
+        </div>
+
         <!-- Virtual scroll wrapper (absolute positioning) -->
         <!-- 虚拟滚动包装器 (绝对定位) -->
         <div
-          v-if="media.totalRows > 0"
+          v-else-if="media.totalRows > 0"
           class="media-grid__content"
           :style="{ height: spacerHeight + 'px', position: 'relative' }"
         >
@@ -50,108 +113,50 @@
               willChange: 'transform',
             }"
           >
-            <div
+            <!-- 行体 = 双引擎公共组件 MediaGridRow(T16 收尾抽取,DOM 与原内联模板
+                 逐字节等价);offset-y = renderAnchor,行加 will-change(平移模式
+                 高频重钉合成层)。 -->
+            <MediaGridRow
               v-for="row in visibleRows"
               :key="row.rowType === 'separator' ? `sep-${row.y}` : `row-${row.y}`"
-              :class="row.rowType === 'separator' ? 'date-separator' : 'media-grid__row'"
-              :style="{
-                position: 'absolute',
-                top: 0,
-                transform: `translate3d(0, ${row.y - renderAnchor}px, 0)`,
-                willChange: 'transform',
-                left: 0,
-                right: 0,
-                height: row.height + 'px',
-                gap: row.rowType === 'separator' ? undefined : GAP + 'px',
-              }"
-            >
-              <!-- Date/Folder separator -->
-              <!-- 日期/文件夹分隔符 -->
-              <template v-if="row.rowType === 'separator'">
-                <div
-                  class="separator-content"
-                  :style="{
-                    position: ui.groupBy === 'folder' ? 'sticky' : 'static',
-                    top: 0,
-                    zIndex: 5,
-                  }"
-                >
-                  <component
-                    :is="ui.groupBy === 'folder' ? Folder : Calendar"
-                    :size="18"
-                    class="separator-icon"
-                  />
-                  <span class="separator-text">{{ row.separatorLabel }}</span>
-                </div>
-              </template>
-
-              <!-- Normal row -->
-              <!-- 正常行 -->
-              <template v-else>
-                <!-- 有意不用 v-memo(R2-3 删除):嵌套 v-for 下 memo 缓存槽按模板位置分配、被外层各行共享,
-                     Vue 官方明示其在 v-for 内不生效;且原 deps 不含 item.id,grid 模式同尺寸未出图卡片
-                     deps 全等时会错误复用他项 vnode(串位隐患)。MediaThumb 子组件 props 浅比较已提供等效跳渲。 -->
-                <div
-                  v-for="item in row.items"
-                  :key="item.id"
-                  class="media-card"
-                  :data-item-id="item.id"
-                  :class="{
-                    'media-card--selection-mode': selection.isSelectionMode.value,
-                    'media-card--compact': compactCells,
-                    'media-card--pending-delete': isPendingDelete(item.id),
-                  }"
-                  :style="{ width: item.w + 'px', height: item.h + 'px' }"
-                  role="button"
-                  tabindex="0"
-                  :aria-label="cardAriaLabel(item)"
-                  :aria-pressed="selection.isSelectionMode.value ? selection.isSelected(item.id) : undefined"
-                  @click="handleCardClick(item, $event)"
-                  @keydown.enter.self.prevent="handleCardClick(item, $event)"
-                  @keydown.space.self.prevent="handleCardClick(item, $event)"
-                  @pointerdown="onCardPointerDown(item.id, $event)"
-                  @contextmenu.prevent="onContextMenu($event, item.id)"
-                >
-                  <!-- 暂存删除标记：置灰 + 「待删除」角标，退出选择模式时统一移除（撤销可恢复）。 -->
-                  <div v-if="isPendingDelete(item.id)" class="media-card__pending-badge">
-                    {{ t('selection.pendingDelete') }}
-                  </div>
-                  <MediaThumb
-                    :id="item.id"
-                    :item="item"
-                    :w="item.w"
-                    :h="item.h"
-                    :media-type="item.mediaType"
-                    :is-live-photo="item.isLivePhoto"
-                    :duration-ms="item.durationMs"
-                    :thumb-status="item.thumbStatus"
-                    :thumb-path="item.thumbPath"
-                    :thumbhash="item.thumbhash"
-                    :file-format="item.fileFormat"
-                    :file-size="item.fileSize"
-                    :similarity="item.similarity"
-                    :is-favorited="item.isFavorited"
-                    :rating="item.rating"
-                    :color-label="item.colorLabel"
-                    :is-selected="selection.isSelected(item.id)"
-                    :is-selection-mode="selection.isSelectionMode.value"
-                    :cache-dir="cacheDir"
-                    @request-thumb="onRequestThumb"
-                    @cancel-thumb="onCancelThumb"
-                    @favorite="handleFavorite"
-                    @rate="handleRate"
-                    @select="selection.toggleSelect(item.id)"
-                  />
-                </div>
-              </template>
-            </div>
-            <!-- Close v-for row -->
+              :row="row"
+              :offset-y="renderAnchor"
+              :row-will-change="true"
+              :gap="GAP"
+              :group-by="ui.groupBy"
+              :compact-cells="compactCells"
+              :selection-mode="selection.isSelectionMode.value"
+              :cache-dir="cacheDir"
+              :pending-delete-label="t('selection.pendingDelete')"
+              :is-selected="selection.isSelected"
+              :is-pending-delete="isPendingDelete"
+              :card-aria-label="cardAriaLabel"
+              :on-card-click="handleCardClick"
+              :on-card-pointer-down="onCardPointerDown"
+              :on-card-context-menu="onContextMenu"
+              :on-request-thumb="onRequestThumb"
+              :on-cancel-thumb="onCancelThumb"
+              :on-favorite="handleFavorite"
+              :on-rate="handleRate"
+              :on-select="selection.toggleSelect"
+            />
           </div>
           <!-- Close render layer -->
         </div>
         <!-- Close media-grid-content -->
       </div>
       <!-- Close media-grid -->
+
+      <!-- T16 B3.2:bucket 引擎自研逻辑滚动条(原生条已隐藏,见 .media-grid--bucket)。
+           拇指渲染纯逻辑百分比,与画廊逐帧同步;映射态停稳偿债只动物理 scrollTop,
+           对本条零感知——原生拇指「急速滚动往回跳」由此根治。 -->
+      <MediaScrollbar
+        v-if="bucketActive && media.totalRows > 0"
+        :total-height="media.totalHeight"
+        :current-y="currentLogicalY"
+        :active="isScrolling"
+        @jump="onScrollbarJump"
+      />
     </div>
     <!-- Close media-grid-wrapper -->
 
@@ -168,7 +173,7 @@
           :month-buckets="media.layoutSummary?.monthBuckets || []"
           :separators="media.layoutSummary?.separators || []"
           :total-height="media.totalHeight"
-          :current-y="logicalScrollTop"
+          :current-y="currentLogicalY"
           @jump="scrollToY"
         />
       </div>
@@ -251,7 +256,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted, onBeforeUnmount, computed, markRaw } from 'vue'
+import { ref, watch, onMounted, onBeforeUnmount, computed, markRaw, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { invokeIpc, ipcErrorMessage } from '../../utils/ipc'
 import { listen } from '@tauri-apps/api/event'
@@ -267,18 +272,18 @@ import { useGalleryLayoutSource } from '../../composables/galleryLayoutSource'
 import { useGridFlipReflow } from '../../composables/useGridFlipReflow'
 import { useViewportDimPriority } from '../../composables/useViewportDimPriority'
 import { useVirtualScroll } from '../../composables/useVirtualScroll'
+import { useBucketVirtualScroll } from '../../composables/useBucketVirtualScroll'
 import { useRequestQueue } from '../../composables/useRequestQueue'
 import { useCollectionToast } from '../../composables/useCollectionToast'
 
-import MediaThumb from './MediaThumb.vue'
+import MediaGridRow from './MediaGridRow.vue'
 import TimelineScrubber from './TimelineScrubber.vue'
+import MediaScrollbar from './MediaScrollbar.vue'
 import SelectionToolbar from './SelectionToolbar.vue'
 import ContextMenu, { type ContextMenuItem } from '../common/ContextMenu.vue'
 import FolderTreeSelectorDialog from '../common/FolderTreeSelectorDialog.vue'
 import {
   ImageIcon,
-  Folder,
-  Calendar,
   Copy,
   FolderOpen,
   ChevronLeft,
@@ -290,7 +295,7 @@ import { useSelection, type BackendSelectionDescriptor } from '../../composables
 import { useViewIds } from '../../composables/useViewIds'
 import { useHistoryStore } from '../../stores/historyStore'
 import { useMediaDragToFolder } from '../../composables/useMediaDragToFolder'
-import type { LayoutRowItem } from '../../types/layout'
+import type { LayoutRow, LayoutRowItem } from '../../types/layout'
 import type { DirNode } from '../../types/media'
 import { DEFAULTS } from '../../constants/defaults'
 import { IPC, EVENTS } from '../../constants/ipc'
@@ -424,7 +429,7 @@ async function onContextMenu(e: MouseEvent, id: number) {
 
   // 判别式收窄(R2-3,镜像 patchVisibleRating 示范):rowType 守卫后 items 已正确类型化。
   let item: LayoutRowItem | null = null
-  for (const row of visibleRows.value) {
+  for (const row of activeRows()) {
     if (row.rowType !== 'normal') continue
     item = row.items.find((i) => i.id === id) ?? null
     if (item) break
@@ -487,11 +492,21 @@ async function onContextMenu(e: MouseEvent, id: number) {
 }
 
 function scrollToY(y: number) {
+  // `y` 是逻辑坐标。bucket 走统一入口(B3 映射态:近距平滑、远跳重锚+立即落点);
+  // 方案 A 经线性平移映射后平滑滚动。
+  if (bucketActive.value) {
+    void bucketScroll.scrollToLogicalY(y, { smooth: true })
+    return
+  }
   if (gridRef.value) {
-    // `y` is a LOGICAL coordinate — map to physical for the scroll container.
-    // `y` 是逻辑坐标 — 映射到物理坐标供滚动容器使用。
     gridRef.value.scrollTo({ top: logicalToPhysical(y), behavior: 'smooth' })
   }
+}
+
+// 自研逻辑滚动条的拖拽/轨道点击跳转(B3.2,仅 bucket 引擎挂载):即时落点——拖拽中
+// 平滑动画只会让拇指跟手性变差;远跳/近跳分流由 scrollToLogicalY 统一处理。
+function onScrollbarJump(y: number) {
+  void bucketScroll.scrollToLogicalY(y)
 }
 
 // ── Virtual scroll ─────────────────────────────────────────────────────────
@@ -502,6 +517,8 @@ function getViewKey() {
 }
 
 const layerRef = ref<HTMLElement | null>(null)
+// bucket 分支的内容容器(B2):FLIP/fadeOut 在 bucket 模式以它为根查询 [data-item-id]。
+const bucketContentRef = ref<HTMLElement | null>(null)
 
 // 容器内容区宽度（去 scrollbar）——布局重算的输入；在策略源之前声明，惰性 getter 透传。
 const containerWidth = ref(0)
@@ -510,6 +527,14 @@ const containerWidth = ref(0)
 // 当前仅 justified 一种策略。useVirtualScroll 只依赖 source 的 totalHeight/totalRows/
 // fetchRowsByY 抽象契约，与具体布局算法解耦——A2 将新增 grid 策略实现同一接口后由此切换。
 const layoutSource = useGalleryLayoutSource(() => containerWidth.value)
+
+// ── T16 方案B:bucket 分段引擎适用域(声明须先于两引擎构造——useVirtualScroll 内部
+// watch(opts.enabled) 构造时即求值)──────────────────────────────────────────────
+// B1.5 等高算术分段与分组语义无关 → 三种分组(date/folder/none)统一覆盖;B3 段级坐标
+// 映射落地后**无总高上限**(>16M 进映射态:spacer 封顶、局部 1:1 + 低频重锚,见
+// useBucketVirtualScroll 头注)——bucketActive 仅由开关与非空视图决定。两引擎常驻
+// 实例化、各以 enabled() 休眠/接管,运行时即切即生效(滚动位保持见下方 watch)。
+const bucketActive = computed(() => ui.bucketSegmentedScroll && media.totalRows > 0)
 
 const {
   visibleRows,
@@ -526,6 +551,48 @@ const {
   containerRef: () => gridRef.value,
   layerRef: () => layerRef.value,
   rowHeight: () => ui.gridRowHeight,
+  // 方案 A 与 bucket 引擎互斥:bucket 接管时本引擎休眠(不取数、卸 wheel 补偿)。
+  enabled: () => !bucketActive.value,
+})
+
+// bucket 分段引擎(T16 方案B B1.5):愿望窗口/取数自驱于 onScroll 算术同步与
+// layoutVersion watch,宿主的各处 compute()+updateVisible() 调用无需逐一适配——
+// compute 换 layoutVersion 即触发段表重建。
+const bucketScroll = useBucketVirtualScroll({
+  enabled: () => bucketActive.value,
+  totalHeight: () => media.totalHeight,
+  layoutVersion: () => media.layoutVersion,
+  fetchBucketRows: (startY, endY) => media.fetchBucketRows(startY, endY),
+  containerRef: () => gridRef.value,
+})
+const { segments: bucketSegments, anchorDelta: bucketAnchorDelta, spacerHeight: bucketSpacerHeight } = bucketScroll
+
+// 双引擎统一读数面:逻辑滚动位(scrubber 高亮/分隔符联动)与「当前可视行」(可视项
+// 就地 patch:缩略图/收藏/评分/色标/右键查找/行高锚点)。bucket 模式零映射,
+// 物理 scrollTop 即逻辑 y。
+const currentLogicalY = computed(() =>
+  bucketActive.value ? bucketScroll.logicalScrollTop.value : logicalScrollTop.value,
+)
+
+function activeRows(): LayoutRow[] {
+  return bucketActive.value ? bucketScroll.mountedRows() : visibleRows.value
+}
+
+// 引擎切换(一键开关/空视图翻转)时保持逻辑滚动位:两引擎的物理 scrollTop 语义不同
+// (bucket 经 scrollToLogicalY 统一入口——B3 映射态的重锚自处理;方案 A 平移模式 =
+// 压缩坐标)。切换瞬间读「离开方」的逻辑位,等 DOM(容器内容高度)换代后按「进入方」
+// 语义回设。方案 A 的重取由其 enabled watch 自触发(scheduleUpdate(true) 的 rAF 晚于
+// 本 nextTick,读到的已是回设后的 scrollTop)。
+watch(bucketActive, async (nowBucket) => {
+  const el = gridRef.value
+  if (!el) return
+  const logicalY = nowBucket ? logicalScrollTop.value : bucketScroll.logicalScrollTop.value
+  await nextTick()
+  if (nowBucket) {
+    await bucketScroll.scrollToLogicalY(Math.max(0, logicalY))
+  } else {
+    el.scrollTop = logicalToPhysical(logicalY)
+  }
 })
 
 // ── Row-height anchor (问题1) ────────────────────────────────────────────────
@@ -555,8 +622,8 @@ function captureRowHeightAnchor() {
   // 每段拖动只捕获一次；在单次滑动触发的多次重算间保持同一锚点，避免钉住的项漂移。
   scheduleAnchorClear()
   if (pendingAnchor !== null || !gridRef.value) return
-  const vTop = logicalScrollTop.value
-  for (const row of visibleRows.value) {
+  const vTop = currentLogicalY.value
+  for (const row of activeRows()) {
     if (row.rowType !== 'normal') continue
     if (row.items.length && row.y + row.height > vTop) {
       pendingAnchor = { id: row.items[0].id, screenOffset: row.y - vTop }
@@ -571,9 +638,16 @@ async function restoreRowHeightAnchor(): Promise<boolean> {
   try {
     const y = await invoke<number | null>(IPC.GET_ITEM_Y_BY_ID, { itemId: anchor.id })
     if (y !== null && gridRef.value) {
-      const physY = logicalToPhysical(Math.max(0, y - anchor.screenOffset))
-      gridRef.value.scrollTop = physY
-      scrollCache.set(getViewKey(), physY)
+      const targetY = Math.max(0, y - anchor.screenOffset)
+      if (bucketActive.value) {
+        // bucket:统一入口(B3 映射态重锚自处理);缓存存逻辑 y(映射态物理位不自足)。
+        await bucketScroll.scrollToLogicalY(targetY)
+        scrollCache.set(getViewKey(), targetY)
+      } else {
+        const physY = logicalToPhysical(targetY)
+        gridRef.value.scrollTop = physY
+        scrollCache.set(getViewKey(), physY)
+      }
       return true
     }
   } catch (e) {
@@ -591,8 +665,21 @@ watch(
   () => captureRowHeightAnchor(),
 )
 
+// B3.1 输入源分类转发(仅 bucket 引擎消费):wheel/滚动键/触屏盖 1:1 印记,与滚动条
+// 拖动区分;wheel 另担映射态物理钉边后的边缘续滚。全部不阻断,对原生滚动零干预。
+function onGridWheel(e: WheelEvent) {
+  if (bucketActive.value) bucketScroll.onWheel(e)
+}
+function onGridKeydown(e: KeyboardEvent) {
+  if (bucketActive.value) bucketScroll.onKeydown(e)
+}
+function onGridTouchmove() {
+  if (bucketActive.value) bucketScroll.onTouchmove()
+}
+
 function onGridScroll() {
-  onScroll()
+  if (bucketActive.value) bucketScroll.onScroll()
+  else onScroll()
   if (!isScrolling.value) {
     isScrolling.value = true
   }
@@ -607,7 +694,7 @@ function onGridScroll() {
     // separator y values are LOGICAL — compare against logicalScrollTop, not the
     // physical scrollTop (they diverge once coordinate translation is active).
     // 分隔符 y 是逻辑坐标 — 与 logicalScrollTop 比较，而非物理 scrollTop（平移激活后二者不同）。
-    const scrollTop = logicalScrollTop.value
+    const scrollTop = currentLogicalY.value
     if (media.layoutSummary?.separators) {
       let activeSep = null
       for (const sep of media.layoutSummary.separators) {
@@ -632,7 +719,11 @@ function onGridScroll() {
     // 平滑滚动已停稳 — 恢复 画廊→侧栏 联动。
     endProgrammaticScroll()
     if (gridRef.value) {
-      scrollCache.set(getViewKey(), gridRef.value.scrollTop)
+      // bucket 缓存逻辑 y(B3 映射态下物理 scrollTop 不自足);方案 A 仍缓存物理。
+      scrollCache.set(
+        getViewKey(),
+        bucketActive.value ? currentLogicalY.value : gridRef.value.scrollTop,
+      )
     }
   }, 150)
 }
@@ -663,14 +754,12 @@ onMounted(async () => {
   // Read container width immediately
   // 立即读取容器宽度
   if (gridRef.value) {
-    // clientWidth 包含 padding，但布局计算需要的是内部内容区域宽度。
-    // 左侧 padding = var(--scrollbar-width)
-    // 右侧 padding = 0
-    // 所以总 padding = var(--scrollbar-width)
-    const style = getComputedStyle(document.documentElement)
-    const swStr = style.getPropertyValue('--scrollbar-width').trim().replace('px', '')
-    const sw = parseInt(swStr) || 6
-    containerWidth.value = gridRef.value.clientWidth - sw
+    // clientWidth 包含 padding，但布局计算需要的是内部内容区域宽度。实测容器自身的
+    // 双侧 padding(bucket 模式右侧多一条 --scrollbar-width 的对称 padding,B3.2),
+    // 与 ResizeObserver 路径的 contentRect 语义保持一致。
+    const cs = getComputedStyle(gridRef.value)
+    const pad = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0)
+    containerWidth.value = gridRef.value.clientWidth - pad
   } else {
     console.warn('[MediaGrid] onMounted: gridRef is null!')
   }
@@ -716,7 +805,7 @@ async function onRequestThumb(id: number) {
     const result = await queue.request(id)
     // Find and patch the item in visibleRows
     // 查找并修补 visibleRows 中的项目
-    for (const row of visibleRows.value) {
+    for (const row of activeRows()) {
       if (row.rowType !== 'normal') continue
       const item = row.items.find((it) => it.id === id)
       if (item) {
@@ -735,7 +824,10 @@ async function onRequestThumb(id: number) {
 // 可视窗口优先取尺寸已抽到 useViewportDimPriority（自包含 feature：注入 visibleRows/isScrolling
 // 与 recompute/refresh，内部自持去重集 + 防抖调度，resetKey 变化即清去重集）。
 useViewportDimPriority({
-  visibleRows,
+  // B2:行源引擎感知——bucket 模式喂已挂载段的行(与 activeRows() 同源;computed 亦是
+  // Ref,内部 watch 随段挂载/换代自然触发)。refresh 在 bucket 模式为 no-op(方案 A 门控),
+  // 重算后的段回填由 layoutVersion watch 自驱。
+  visibleRows: computed(() => (bucketActive.value ? bucketScroll.mountedRows() : visibleRows.value)),
   isScrolling,
   recompute: compute,
   refresh: updateVisible,
@@ -772,7 +864,7 @@ async function handleFavorite(itemId: number) {
 // 重渲染，无需 triggerRef —— 与收藏/缩略图回写同一机制。被 hover 单项评分与键盘批量评分共用。
 function patchVisibleRating(ids: Set<number>, rating: number) {
   // 用判别字段 rowType 收窄到 LayoutRowNormal（其 items 已正确类型化），避免周边的 (row as any) 写法。
-  for (const row of visibleRows.value) {
+  for (const row of activeRows()) {
     if (row.rowType !== 'normal') continue
     for (const item of row.items) {
       if (ids.has(item.id)) item.rating = rating
@@ -782,7 +874,7 @@ function patchVisibleRating(ids: Set<number>, rating: number) {
 
 // 乐观更新收藏态（镜像 patchVisibleRating）。供 in-grid 收藏 + 详情页回灌信号共用。
 function patchVisibleFavorite(ids: Set<number>, isFavorited: boolean) {
-  for (const row of visibleRows.value) {
+  for (const row of activeRows()) {
     if (row.rowType !== 'normal') continue
     for (const item of row.items) {
       if (ids.has(item.id)) item.isFavorited = isFavorited
@@ -818,7 +910,7 @@ async function handleRate(itemId: number, value: number) {
 
 // 乐观更新颜色标签（镜像 patchVisibleRating）。
 function patchVisibleColorLabel(ids: Set<number>, colorLabel: number) {
-  for (const row of visibleRows.value) {
+  for (const row of activeRows()) {
     if (row.rowType !== 'normal') continue
     for (const item of row.items) {
       if (ids.has(item.id)) item.colorLabel = colorLabel
@@ -837,7 +929,7 @@ function selectionDescriptor(): BackendSelectionDescriptor {
 // 批量路径的乐观刷新：对选区内**可见**项打补丁。SelectAll 态不物化 id，以 isSelected
 // 谓词判定（可见窗口仅几十项，逐项判定廉价）;单项路径仍用上面的 Set 版补丁函数。
 function patchVisibleSelected(apply: (item: LayoutRowItem) => void) {
-  for (const row of visibleRows.value) {
+  for (const row of activeRows()) {
     if (row.rowType !== 'normal') continue
     for (const item of row.items) {
       if (selection.isSelected(item.id)) apply(item)
@@ -975,9 +1067,12 @@ async function batchUnfavorite() {
 }
 
 // 删除/移除后的平滑重排动画（FLIP + 淡出）已抽到 useGridFlipReflow（自包含 DOM 工具，仅依赖
-// 渲染层 layerRef）。仅用于删除/移除路径，绝不挂到滚动驱动的 updateVisible（避免与虚拟滚动 +
-// renderAnchor 打架）。
-const { flipReflow, fadeOutCells } = useGridFlipReflow(() => layerRef.value)
+// 一个根元素 getter）。仅用于删除/移除路径，绝不挂到滚动驱动的 updateVisible（避免与虚拟滚动 +
+// renderAnchor 打架）。B2:根引擎感知——方案 A 用渲染层 layerRef,bucket 模式用段容器
+// (两分支卡片同为 [data-item-id],FLIP 按 id 匹配跨段照常成立)。
+const { flipReflow, fadeOutCells } = useGridFlipReflow(() =>
+  bucketActive.value ? bucketContentRef.value : layerRef.value,
+)
 
 // ── 暂存删除（置灰 + 退出选择时一次重排 + 撤销）─────────────────────────────────
 // 用户反馈：每次删除立即重算仍闪一下。改为：删除**即落库**（进回收站）但**不立即重排**，
@@ -1045,6 +1140,9 @@ async function commitPendingReflow() {
   await flipReflow(async () => {
     await compute()
     updateVisible()
+    // B2:bucket 模式的行数据在版本换代后异步回填——等愿望窗口内段全部落地,
+    // FLIP 的 Last 快照才能读到重排后的真实位置(否则 DOM 为空,动画静默失效)。
+    if (bucketActive.value) await bucketScroll.whenSettled()
   })
 }
 
@@ -1274,7 +1372,8 @@ watch(
       const restored = await restoreRowHeightAnchor()
       if (!restored) {
         const saved = scrollCache.get(getViewKey()) || 0
-        gridRef.value.scrollTop = saved
+        if (bucketActive.value) await bucketScroll.scrollToLogicalY(saved)
+        else gridRef.value.scrollTop = saved
       }
     }
     updateVisible(true)
@@ -1287,11 +1386,16 @@ watch(
 // 当信息浮层开启时，仅为可视项懒加载重型元数据（EXIF/GPS/名称/路径）——
 // 这些字段已从常驻布局缓存剥离（A1），经 get_meta_for_viewport 按需提供。
 watch(
-  [visibleRows, () => ui.showThumbInfo],
+  // 第三源:bucket 模式的段挂载/卸载(段行深响应,mountedRows() 的依赖变化即触发)。
+  [
+    visibleRows,
+    () => ui.showThumbInfo,
+    () => (bucketActive.value ? bucketScroll.mountedRows() : null),
+  ],
   () => {
     if (!ui.showThumbInfo) return
     const ids: number[] = []
-    for (const row of visibleRows.value) {
+    for (const row of activeRows()) {
       if (row.rowType === 'normal') {
         for (const it of row.items) ids.push(it.id)
       }
@@ -1329,9 +1433,15 @@ async function scrollToDir(dirId: number) {
       // Landed on a descendant → highlight/expand that subfolder, not the empty parent.
       // 落到后代 → 高亮/展开该子文件夹，而非空父文件夹。
       if (ui.groupBy === 'folder' && target.dirId !== dirId) ui.scrolledDirectoryId = target.dirId
-      const physY = logicalToPhysical(Math.max(0, target.y))
-      gridRef.value.scrollTo({ top: physY, behavior: 'smooth' })
-      scrollCache.set(getViewKey(), physY)
+      const targetY = Math.max(0, target.y)
+      if (bucketActive.value) {
+        void bucketScroll.scrollToLogicalY(targetY, { smooth: true })
+        scrollCache.set(getViewKey(), targetY)
+      } else {
+        const physY = logicalToPhysical(targetY)
+        gridRef.value.scrollTo({ top: physY, behavior: 'smooth' })
+        scrollCache.set(getViewKey(), physY)
+      }
     } else {
       // Nothing to scroll — drop the guard immediately instead of waiting for settle.
       // 无需滚动 — 立即放下守卫，不必等待停稳。
@@ -1426,7 +1536,22 @@ watch(
   overflow-anchor: none;
 }
 
-.media-grid.is-scrolling .media-card {
+/* T16 B3.2:bucket 引擎隐藏原生滚动条——原生拇指只跟随物理 spacer(映射态钳 16M),
+   结构上无法表达逻辑比例,且停稳偿债挪 scrollTop 时会可见回跳;改由 MediaScrollbar
+   渲染逻辑百分比。原生条槽位(--scrollbar-width)转为右 padding,与左侧对称,引擎
+   切换零布局位移(内容宽度不变)。 */
+.media-grid--bucket {
+  scrollbar-width: none;
+  padding-right: var(--scrollbar-width, 6px);
+}
+.media-grid--bucket::-webkit-scrollbar {
+  display: none;
+}
+
+/* 行体抽入子组件 MediaGridRow 后(T16 收尾),行根类(.media-grid__row/.date-separator)
+   继承本组件作用域属性、原选择器照常命中;卡片/分隔符内部类则须 :deep() 穿透——
+   scoped 编译后特异性不变(同为一属性+一类),视觉零差异。 */
+.media-grid.is-scrolling :deep(.media-card) {
   pointer-events: none !important;
 }
 
@@ -1455,6 +1580,19 @@ watch(
   gap: var(--spacing-sm);
   padding: var(--spacing-xl);
   color: var(--color-text-tertiary);
+}
+
+/* T16 方案B(B1.5):段行未到时的骨架条纹——远跳/横扫瞬间以行状占位替代白屏;
+   单飞取数落地极快(数十 ms),常态几乎不可见。 */
+.media-grid__segment--loading {
+  background-image: repeating-linear-gradient(
+    to bottom,
+    var(--color-bg-surface) 0px,
+    var(--color-bg-surface) 172px,
+    transparent 172px,
+    transparent 180px
+  );
+  opacity: 0.6;
 }
 
 .media-grid__row {
@@ -1491,7 +1629,7 @@ watch(
   background: var(--color-bg-primary);
 }
 
-.separator-content {
+:deep(.separator-content) {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1502,7 +1640,7 @@ watch(
   margin-top: 4px;
 }
 
-.separator-icon {
+:deep(.separator-icon) {
   color: var(--color-text-secondary);
 }
 
@@ -1555,7 +1693,7 @@ watch(
   justify-content: center;
 }
 
-.media-card {
+:deep(.media-card) {
   position: relative;
   /* shape clipping is handled inside .media-thumb; keep card visible */
   /* 形状剪裁在 .media-thumb 内部处理；保持卡片可见 */
@@ -1579,14 +1717,14 @@ watch(
 
 /* ── 暂存删除（待重排）：置灰 + 降透明 + 「待删除」角标 ─────────────────────── */
 /* 退出选择模式时这些项会被 fadeOut + FLIP 一次性重排移除（撤销可恢复）。 */
-.media-card--pending-delete {
+:deep(.media-card--pending-delete) {
   filter: grayscale(1) brightness(0.7);
   opacity: 0.45;
   transition:
     opacity 0.2s ease,
     filter 0.2s ease;
 }
-.media-card__pending-badge {
+:deep(.media-card__pending-badge) {
   position: absolute;
   top: 4px;
   left: 4px;
@@ -1607,7 +1745,7 @@ watch(
    极小单元模式：让浏览器跳过离屏单元的渲染。单元有显式行内宽高，
    故尺寸包含不会使其塌陷。
    同时禁用 will-change / transition / hover-scale 以释放 800+ GPU 合成层。 */
-.media-card--compact {
+:deep(.media-card--compact) {
   content-visibility: auto;
   will-change: auto;
   transition: none;
@@ -1615,14 +1753,14 @@ watch(
 
 /* compact 模式下彻底禁用 hover 放大——60px 格子放大 6% 仅多 3.6px，
    视觉收益微乎其微但 800+ 合成层开销巨大 */
-.media-card--compact:hover {
+:deep(.media-card--compact:hover) {
   transform: none;
   box-shadow: none;
   z-index: 2;
   transition: none;
 }
 
-.media-card:hover {
+:deep(.media-card:hover) {
   transform: scale(1.06);
   z-index: 100;
   box-shadow:
@@ -1680,7 +1818,7 @@ watch(
 
 /* Selection mode: suppress hover scale to avoid visual conflict with selection overlay */
 /* 选择模式：抑制悬停缩放以避免与选择遮罩的视觉冲突 */
-.media-card--selection-mode:hover {
+:deep(.media-card--selection-mode:hover) {
   transform: none;
   box-shadow: none;
 }

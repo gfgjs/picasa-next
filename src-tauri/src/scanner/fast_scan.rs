@@ -29,9 +29,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::db::queries::{
-    finish_scan_root, invalidate_exotic_tasks_for_item, mark_missing, seed_exotic_tasks_for_item,
-    set_directory_media_count, update_scan_root_status, upsert_directory, upsert_fast_scan_item,
-    FastScanItem, UpsertOutcome,
+    finish_scan_root, invalidate_exotic_tasks_for_item, mark_missing, resolve_suspect_change,
+    seed_exotic_tasks_for_item, set_directory_media_count, update_scan_root_status,
+    upsert_directory, upsert_fast_scan_item, FastScanItem, UpsertOutcome,
 };
 use crate::error::{AppError, Result};
 use crate::exotic::catalog::CatalogSnapshot;
@@ -304,6 +304,8 @@ fn finalize_missing_detection(
 ///
 /// `quick`（T17b，§3.4 opt-in）：对 FS mtime 未变的目录跳过其直接文件的 per-file 工作并回填 seen，
 /// 提速增量重扫；唯一漏检边界是文件**就地编辑**，由全量扫描兜底。默认 false 即全量逐文件、行为不变。
+// 扫描编排参数各自独立（S1 新增批提交回调后达 8 个）、无合理分组，沿用本仓库既有约定标注。
+#[allow(clippy::too_many_arguments)]
 pub fn run_fast_scan(
     writer: &Mutex<Connection>,
     root_id: i64,
@@ -311,6 +313,9 @@ pub fn run_fast_scan(
     catalog: &CatalogSnapshot,
     channel: &Channel<ScanChannelPayload>,
     cancel: &CancellationToken,
+    // S1：每批事务提交后回调（生产接线 = AppState::bump_data_version，使 items 取数缓存
+    // 逐批失效——扫描进行中前端按进度事件逐批重排，必须看到新入库的项）。
+    on_batch_committed: &(dyn Fn() + Sync),
     // T17b：opt-in「快速扫描」。true 时对 FS mtime 未变的目录跳过其直接文件的 per-file 工作
     // （仍遍历整棵树、仍处理变更目录与所有子目录），代价是漏「就地编辑」（见 decide_dir_pruned）。
     // false（默认）→ 行为与 T17b 之前完全一致（全量逐文件）。
@@ -425,6 +430,9 @@ pub fn run_fast_scan(
             .collect();
 
         // 本批一事务入库。
+        // 可疑变更(mtime 变 size 同,§3.3.2)攒批:指纹计算是文件 IO,绝不进写事务——
+        // 本批提交、写锁释放后,在事务外算指纹、逐项短写定案。
+        let mut suspects: Vec<(i64, FastScanItem, std::path::PathBuf)> = Vec::new();
         let conn = writer.lock().map_err(|e| AppError::System(e.to_string()))?;
         let tx = conn.unchecked_transaction()?;
         let root_name = root.file_name().and_then(|n| n.to_str()).unwrap_or("");
@@ -496,6 +504,11 @@ pub fn run_fast_scan(
             if matches!(outcome, UpsertOutcome::Inserted(_)) {
                 inserted += 1;
             }
+            if let UpsertOutcome::SuspectChanged(id) = outcome {
+                // 可疑变更:留待本批事务外定案(exotic 动作也延后到定案分支)。
+                suspects.push((id, fast_item.clone(), fi.walked.abs_path.clone()));
+                continue;
+            }
 
             // ── exotic 任务播种/失效（R13：扫描事务内完成，不等 enrichment）──────────
             // 只依赖扩展名查 Catalog；命中即为 exotic 格式（如 psd）。
@@ -509,6 +522,8 @@ pub fn run_fast_scan(
                     UpsertOutcome::Inserted(_) => {}
                     // Unchanged：任务已存在且源未变，无需动作。
                     UpsertOutcome::Unchanged(_) => continue,
+                    // SuspectChanged 已在上方收集并 continue,不会到达此处。
+                    UpsertOutcome::SuspectChanged(_) => unreachable!("suspect 已提前 continue"),
                 }
                 // 按 capabilities 播种（INSERT OR IGNORE，幂等）。SourceChanged 后补齐可能的新能力。
                 let caps: Vec<String> = off
@@ -522,6 +537,39 @@ pub fn run_fast_scan(
 
         tx.commit()?;
         drop(conn);
+        on_batch_committed();
+
+        // ── 可疑变更定案(Part2 §3.3.2 三环)──────────────────────────────────────
+        // 批事务已提交、写锁已释放:此刻才做指纹 IO(读文件),再逐项短写定案——
+        // touch(滤 mtime 抖动,派生全保留)或 SourceChanged(同大小元数据编辑,全失效)。
+        for (sid, s_item, abs_path) in suspects {
+            let fp = match crate::utils::hash::content_fingerprint(&abs_path, s_item.file_size) {
+                Ok(h) => Some(h),
+                Err(e) => {
+                    // 读失败(竞态删除/权限):无法证明内容未变 → 交 resolve 保守失效。
+                    warn!(
+                        "可疑变更指纹计算失败,保守判 SourceChanged | suspect fingerprint failed {:?}: {e}",
+                        abs_path
+                    );
+                    None
+                }
+            };
+            let conn = writer.lock().map_err(|e| AppError::System(e.to_string()))?;
+            let outcome = resolve_suspect_change(&conn, sid, &s_item, volume_id, fp.as_deref())?;
+            if matches!(outcome, UpsertOutcome::SourceChanged(_)) {
+                // 与主循环 SourceChanged 分支同款 exotic 处理(失效旧任务 + 补种能力)。
+                if let Some(off) = catalog.resolve_format(&s_item.file_format) {
+                    invalidate_exotic_tasks_for_item(&conn, sid)?;
+                    let caps: Vec<String> = off
+                        .capabilities
+                        .iter()
+                        .map(|c| c.as_str().to_string())
+                        .collect();
+                    seed_exotic_tasks_for_item(&conn, sid, &off.plugin_id, &caps)?;
+                }
+            }
+            drop(conn);
+        }
 
         batch_count += file_infos.len();
         debug!("Fast scan batch committed: {} files so far", batch_count);

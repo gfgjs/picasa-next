@@ -7,9 +7,9 @@
 #    §3.7.3——本工作流仅用 github.token,无任何签名凭据)。
 #
 # 免费版形态(2026-07-04 T17 施工裁决):
-#   - 构建 = 默认 `tauri build`:default features(custom-protocol+lite+channel-direct)。
-#     §3.7.1 草稿的 `--profile lite` 无对应 cargo profile(未落地项),lite feature 已在
-#     default 集内,不另建 profile。
+#   - 构建 = 默认 `tauri build`:release profile + default features(custom-protocol+lite feature
+#     +channel-direct)。注:根 Cargo.toml **有** `[profile.lite]`(opt-z+LTO+strip)但本工作流**不调用**
+#     它(走 release profile);是否让免费版走体积优化 profile 是开放决策(见 todo H3),非本工作流缺陷。
 #   - 基座 conf 无 updater 配置块 → 运行时不注册 updater、不产 .sig 更新包(§3.6.5①
 #     条件注册;与 §3.7.1「免费版不含 updater 更新包」一致)。
 #   - 无平台签名(SmartScreen 首启提示为已知代价;EV 签免费版提信誉的成本权衡归 Part8)。

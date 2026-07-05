@@ -121,3 +121,25 @@ export interface ExoticProcessingStatus {
   running: boolean
   paused: boolean
 }
+
+/** 详情筛选桶（与摘要四桶对齐；后端 `list_exotic_task_details` 的 bucket 参数）。 */
+export type ExoticTaskBucket = 'pending' | 'processing' | 'done' | 'error'
+
+/** 详情行状态（桶内细分：待重试 retrying 归 pending 桶但单独标示）。 */
+export type ExoticTaskDetailStatus = 'pending' | 'retrying' | 'processing' | 'done' | 'error'
+
+/**
+ * 处理详情行（后端 `ExoticTaskDetail`，来自 `list_exotic_task_details`）——
+ * 进度区「展开详情」的文件级投影。
+ */
+export interface ExoticTaskDetail {
+  itemId: number
+  fileName: string
+  /** 所在目录相对扫描根的路径（根目录为空串）。 */
+  dirPath: string
+  format: string
+  status: ExoticTaskDetailStatus
+  attempts: number
+  lastErrorCode: string | null
+  lastErrorMessage: string | null
+}

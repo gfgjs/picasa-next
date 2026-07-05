@@ -25,8 +25,11 @@ use std::collections::HashMap;
 use base64::Engine as _;
 use serde::Deserialize;
 
-/// 内置生产公钥集（编译期嵌入 = 随应用签名发布）。Release **不含**测试公钥。
-const BUILTIN_KEYSET_JSON: &str = include_str!("../resources/exotic-keyset.json");
+/// 内置生产公钥集(编译期嵌入 = 随应用签名发布)。Release **不含**测试公钥。
+/// 内容经 build.rs 装配(部署配置注入点):默认 = resources/exotic-keyset.json 占位集
+/// (逐位一致);构建时设 PICASA_EXOTIC_KEYSET_FILE 可替换为内测/发布流水线 keyset。
+/// 注入只在编译期,产物信任根固定——Release 运行时无任何 keyset 旁路(SEC-02)。
+const BUILTIN_KEYSET_JSON: &str = include_str!(concat!(env!("OUT_DIR"), "/exotic-keyset.json"));
 
 /// 本 Host 支持的 keyset schema 版本。
 const SUPPORTED_KEYSET_SCHEMA: u32 = 1;

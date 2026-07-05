@@ -216,12 +216,13 @@ pub struct PluginEntitlement {
 /// **开源核心**：keyring 直销验签（[`license::KeyringLicenseStore`]）+ 内置信任根公钥集；
 /// builtin 解析失败即 fail-closed 降级 [`FreeStubEntitlement`]（授权一律拒绝，绝不放行）。
 ///
-/// 🔴 **商业构建**（③b）：把本函数体换成构造闭源 `DirectEntitlement`（pro crate）。此处刻意收敛为
-/// **单点单函数**，使红线 swap 只动一处、零扩散，且开源核心**零 pro 编译期引用**（满足 cargo
-/// resolve-all 约束）。Pattern C 私有 canonical 仓持 DirectEntitlement 版本，同步公开镜像时还原本
-/// 开源实现（§3.9.2）。
+/// 🔴 **商业构建**(③b,已落地 2026-07-05):私有树在本函数内的标记块早退构造闭源 `DirectEntitlement`
+/// (pro crate);Copybara 投影公开镜像时剥离该块,公开树回退下方开源装配。此处刻意收敛为**单点
+/// 单函数**,使红线 swap 只动一处、零扩散,且剥离后的开源核心**零 pro 编译期引用**(满足 cargo
+/// resolve-all 约束,§3.9.2)。
 ///
-/// 当前开源默认仍为 KeyringLicenseStore（保持既有行为）；③b 变现启动时再定「开源是否切 FreeStub」。
+/// 开源默认裁决(2026-07-05):**保留 KeyringLicenseStore,不切 FreeStub,不删源**——公开树直销保持
+/// 可用(fork 可自建签发链);其内置信任根为占位集,对生产 token 恒验签失败,无泄权面。
 ///
 /// **Part7-T12 渠道工厂化(2026-07-02)**:分发渠道 feature(互斥,lib.rs compile_error! 守卫)
 /// 在编译期决定授权 provider 家族——msstore/steam 现为 fail-closed 骨架桩(恒 Unlicensed,
@@ -678,6 +679,7 @@ mod tests {
             Availability::Authorized
         );
     }
+
 
     #[test]
     fn host_meets_min_version_compare() {

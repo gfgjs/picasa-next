@@ -57,6 +57,10 @@ crates/**/target/
 # 插件商店 dev registry 产物(含 dev 私钥,仅本机;scripts/exotic-dev-registry.mjs 生成)
 .dev-registry/
 
+# 内测签名产物(含内测私钥,仅签发机本机,绝不入仓/CI;scripts/exotic-internal-registry.mjs 生成。
+# 私钥丢失 = 既发 token 与内测 registry 全部作废,重建即可——内测信任根本就允许随时重铸)
+.internal-signing/
+
 # updater 签名密钥(Part7-T8,tauri signer generate 产物;私钥仅本机/CI secrets,绝不入仓。
 # 当前为 dev 密钥,首发前轮换或转正——公钥已内嵌 tauri.conf.json plugins.updater.pubkey,
 # 换密钥须同步换公钥并使既有安装版无法再收更新,故转正决策须在首个公开发布前定死)

@@ -5151,6 +5151,72 @@ pub fn count_exotic_tasks_by_status(
     .map_err(AppError::from)
 }
 
+/// 处理详情行(商店进度「展开详情」,2026-07-05):任务 × 媒体文件的展示投影。
+#[derive(Debug)]
+pub struct ExoticTaskDetailRow {
+    pub item_id: i64,
+    pub file_name: String,
+    /// 所在目录相对扫描根的路径(展示用;根目录为空串)。
+    pub dir_path: String,
+    pub format: String,
+    /// 原始状态码(0-4;命令层映射为字符串,3 细分为 retrying)。
+    pub status: i64,
+    pub attempts: i64,
+    pub last_error_code: Option<String>,
+    pub last_error_message: Option<String>,
+}
+
+/// 列某 (plugin,capability) 的任务处理详情(JOIN media/directories 取展示字段)。
+/// `bucket` 过滤桶与进度摘要四桶对齐:None=全部 / pending(0,3) / processing(1) / done(2) / error(4)。
+/// 排序 = 活动优先:processing → 待重试(3) → pending(0) → error → done,同桶 updated_at DESC
+/// (done 桶即「最近处理的在前」)。limit/offset 供「加载更多」分页,钳制在命令层。
+/// 桶谓词来自固定白名单 match(非拼接外部输入),不违参数绑定纪律。
+pub fn list_exotic_task_details(
+    conn: &Connection,
+    plugin_id: &str,
+    capability: &str,
+    bucket: Option<&str>,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<ExoticTaskDetailRow>> {
+    let bucket_pred = match bucket {
+        None => "",
+        Some("pending") => " AND t.status IN (0,3)",
+        Some("processing") => " AND t.status=1",
+        Some("done") => " AND t.status=2",
+        Some("error") => " AND t.status=4",
+        // 命令层已白名单;此处防御性空结果而非全量(未知桶不得静默放大数据面)。
+        Some(_) => return Ok(Vec::new()),
+    };
+    let sql = format!(
+        "SELECT t.item_id, m.file_name, d.rel_path, m.file_format, t.status, t.attempts,
+                t.last_error_code, t.last_error_message
+         FROM exotic_tasks t
+         JOIN media_items m ON m.id = t.item_id
+         JOIN directories d ON d.id = m.directory_id
+         WHERE t.plugin_id=?1 AND t.capability=?2{bucket_pred}
+         ORDER BY CASE t.status WHEN 1 THEN 0 WHEN 3 THEN 1 WHEN 0 THEN 2 WHEN 4 THEN 3 ELSE 4 END,
+                  t.updated_at DESC, t.id DESC
+         LIMIT ?3 OFFSET ?4"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt
+        .query_map(params![plugin_id, capability, limit, offset], |r| {
+            Ok(ExoticTaskDetailRow {
+                item_id: r.get(0)?,
+                file_name: r.get(1)?,
+                dir_path: r.get(2)?,
+                format: r.get(3)?,
+                status: r.get(4)?,
+                attempts: r.get(5)?,
+                last_error_code: r.get(6)?,
+                last_error_message: r.get(7)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
 /// 单任务重置为 pending（用户「重试此项」命令）：清输出/指纹/错误/租约/退避。返回行数。
 pub fn reset_exotic_task_for_retry(
     conn: &Connection,
@@ -6733,6 +6799,77 @@ mod exotic_dao_tests {
         assert_eq!(claim(&c, 2, "inst-A", 1000).len(), 1); // 剩 1
         assert_eq!(claim(&c, 2, "inst-A", 1000).len(), 0); // 全 processing
         assert!(claim(&c, 2, "inst-A", 1000).is_empty());
+    }
+
+    /// 详情列表(展开详情):活动优先排序 + 桶筛选 + 分页 + JOIN 展示字段。
+    #[test]
+    fn task_details_order_filter_pagination() {
+        let c = mem_db();
+        // 最小媒体链(FK 已关,只为 JOIN 供数):一目录 + 五文件。
+        c.execute_batch(
+            "INSERT INTO directories (id, root_id, rel_path, name) VALUES (10, 1, 'art/psd', 'psd');",
+        )
+        .unwrap();
+        for i in 1..=5 {
+            c.execute(
+                "INSERT INTO media_items
+                    (id, directory_id, file_name, file_size, file_mtime, file_format,
+                     media_type, width, height, sort_datetime, cache_key)
+                 VALUES (?1, 10, ?2, 1, 1, 'psd', 'image', 0, 0, 0, ?1)",
+                params![i, format!("f{i}.psd")],
+            )
+            .unwrap();
+            seed(&c, i);
+        }
+        // 造五态:1=done, 2=processing, 3=terminal error, 4=retryable, 5=pending。
+        let id1 = claim(&c, 1, "A", 1000)[0].id;
+        finish_exotic_task(&c, id1, "A", "fp", "/p.webp", "1.0.0").unwrap();
+        let _id2 = claim(&c, 1, "A", 1000)[0].id; // item 2 → processing
+        let id3 = claim(&c, 1, "A", 1000)[0].id; // item 3 → terminal
+        fail_exotic_task(&c, id3, "A", false, 1, "decode_failed", "bad psd", 0).unwrap();
+        let id4 = claim(&c, 1, "A", 1000)[0].id; // item 4 → retryable
+        fail_exotic_task(&c, id4, "A", true, 3, "worker_crash", "boom", 9999).unwrap();
+        // item 5 保持 pending。
+
+        // 全部:processing → retryable → pending → error → done。
+        let all = list_exotic_task_details(&c, PID, CAP, None, 50, 0).unwrap();
+        let order: Vec<(i64, i64)> = all.iter().map(|r| (r.item_id, r.status)).collect();
+        assert_eq!(
+            order,
+            vec![(2, 1), (4, 3), (5, 0), (3, 4), (1, 2)],
+            "活动优先序"
+        );
+        // JOIN 展示字段。
+        let done = &all[4];
+        assert_eq!(done.file_name, "f1.psd");
+        assert_eq!(done.dir_path, "art/psd");
+        assert_eq!(done.format, "psd");
+        // 错误字段透出。
+        let err = &all[3];
+        assert_eq!(err.last_error_code.as_deref(), Some("decode_failed"));
+        assert_eq!(err.attempts, 1);
+
+        // 桶筛选:pending 桶含 0 与 3;error 桶仅 terminal。
+        let pend = list_exotic_task_details(&c, PID, CAP, Some("pending"), 50, 0).unwrap();
+        assert_eq!(
+            pend.iter().map(|r| r.item_id).collect::<Vec<_>>(),
+            vec![4, 5]
+        );
+        let errs = list_exotic_task_details(&c, PID, CAP, Some("error"), 50, 0).unwrap();
+        assert_eq!(errs.len(), 1);
+        assert_eq!(errs[0].item_id, 3);
+
+        // 分页:limit/offset 拼接 == 全量。
+        let p1 = list_exotic_task_details(&c, PID, CAP, None, 2, 0).unwrap();
+        let p2 = list_exotic_task_details(&c, PID, CAP, None, 2, 2).unwrap();
+        let p3 = list_exotic_task_details(&c, PID, CAP, None, 2, 4).unwrap();
+        let paged: Vec<i64> = p1.iter().chain(&p2).chain(&p3).map(|r| r.item_id).collect();
+        assert_eq!(paged, vec![2, 4, 5, 3, 1], "分页拼接等于全量序");
+
+        // 未知桶防御性空结果。
+        assert!(list_exotic_task_details(&c, PID, CAP, Some("bogus"), 50, 0)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

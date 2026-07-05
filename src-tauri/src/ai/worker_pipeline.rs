@@ -1,5 +1,5 @@
 // src-tauri/src/ai/worker_pipeline.rs
-//! AI 分析流水线的 worker 派发路径(Part4-T17;`ai_backend=worker` 时启用)。
+//! AI 分析流水线的 worker 派发路径(Part4-T17;T16 起为**唯一**路径,进程内 ort 推理已删)。
 //!
 //! 控制面(Producer 领取/让步/续传、Writer 落库/状态机)与进程内路径**共用同一套代码**
 //! (pipeline.rs 的 produce_tasks/write_results);只有中段不同——进程内的
@@ -44,7 +44,7 @@ const CHANNEL_CAPACITY: usize = 1024;
 /// 攒批的空闲刷新周期(与进程内推理线程同值:低速进图时不无限等满批)。
 const FLUSH_TIMEOUT: Duration = Duration::from_millis(50);
 
-/// worker 派发路径主入口(由 pipeline::run_pipeline_blocking 按 `ai_backend` 分流)。
+/// worker 派发路径主入口(由 pipeline::run_pipeline_blocking 无条件调用;T16 后为唯一路径)。
 pub(crate) fn run_pipeline_worker_blocking(
     state: &Arc<AppState>,
     token: &CancellationToken,

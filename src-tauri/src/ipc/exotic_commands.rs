@@ -229,6 +229,78 @@ pub async fn get_exotic_processing_status(
     .map_err(|e| AppError::System(e.to_string()))?
 }
 
+/// 处理详情行(商店进度「展开详情」,2026-07-05 内测需求):文件级任务投影。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExoticTaskDetail {
+    pub item_id: i64,
+    pub file_name: String,
+    /// 所在目录相对扫描根的路径(根目录为空串)。
+    pub dir_path: String,
+    pub format: String,
+    /// pending / retrying / processing / done / error(与进度摘要四桶对齐,3 细分为 retrying)。
+    pub status: String,
+    pub attempts: i64,
+    pub last_error_code: Option<String>,
+    pub last_error_message: Option<String>,
+}
+
+/// 取处理详情列表。`bucket`:None=全部,或 pending/processing/done/error(与摘要四桶一致);
+/// limit 钳 1..=200、offset ≥0(「加载更多」分页)。排序=活动优先(processing→待重试→pending→error→done)。
+#[tauri::command]
+pub async fn list_exotic_task_details(
+    bucket: Option<String>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+    state: State<'_, Arc<AppState>>,
+) -> Result<Vec<ExoticTaskDetail>> {
+    // 桶白名单:未知值显式拒绝(稳定错误码),不静默降级为全量。
+    if let Some(b) = bucket.as_deref() {
+        if !matches!(b, "pending" | "processing" | "done" | "error") {
+            return Err(AppError::Exotic {
+                code: "bad_bucket",
+                message: format!("未知筛选桶:{b}"),
+            });
+        }
+    }
+    let limit = limit.unwrap_or(50).clamp(1, 200);
+    let offset = offset.unwrap_or(0).max(0);
+    let state_arc = state.inner().clone();
+    tokio::task::spawn_blocking(move || -> Result<Vec<ExoticTaskDetail>> {
+        let conn = state_arc.db_read_pool.get().map_err(AppError::from)?;
+        let rows = crate::db::queries::list_exotic_task_details(
+            &conn,
+            PSD_PLUGIN_ID,
+            CAPABILITY_STR,
+            bucket.as_deref(),
+            limit,
+            offset,
+        )?;
+        Ok(rows
+            .into_iter()
+            .map(|r| ExoticTaskDetail {
+                item_id: r.item_id,
+                file_name: r.file_name,
+                dir_path: r.dir_path,
+                format: r.format,
+                status: match r.status {
+                    1 => "processing",
+                    2 => "done",
+                    3 => "retrying",
+                    4 => "error",
+                    _ => "pending",
+                }
+                .into(),
+                attempts: r.attempts,
+                last_error_code: r.last_error_code,
+                last_error_message: r.last_error_message,
+            })
+            .collect())
+    })
+    .await
+    .map_err(|e| AppError::System(e.to_string()))?
+}
+
 /// 重试单项（item + capability）：error → pending 并唤醒。
 #[tauri::command]
 pub async fn retry_exotic_task(
@@ -355,11 +427,17 @@ pub struct ExoticRegistryEntry {
     pub registry_expired: bool,
 }
 
-/// 远程签名 Registry 基址（部署配置点）。下载坐标 = `{base}/index.json` + `{base}/index.sig`。
-/// 🔴 占位域名（RFC 2606 保留 `.invalid`，绝不解析到真实主机）：正式发布前替换为真实 CDN
-/// （命名/法务定稿后）。可经环境变量 `PICASA_REGISTRY_BASE` 覆盖（dev / 自托管 / 测试用，
-/// 不重编即可切换发行源）。后续如需「按安装实例覆盖」可下沉至 app_config，当前常量足矣。
-const DEFAULT_REGISTRY_BASE_URL: &str = "https://registry.example.invalid/exotic/v1";
+/// 远程签名 Registry 基址(部署配置点)。下载坐标 = `{base}/index.json` + `{base}/index.sig`。
+/// 解析优先级(高→低):
+/// 1. **运行时**环境变量 `PICASA_REGISTRY_BASE`(dev / 自托管 / 测试用,不重编即可切换);
+/// 2. **编译期** `option_env!("PICASA_REGISTRY_BASE_DEFAULT")`——内测/发布流水线把默认
+///    发行源烘焙进安装包,装机用户零配置(2026-07-05 内测链落地);
+/// 3. 🔴 占位域名(RFC 2606 保留 `.invalid`,绝不解析到真实主机):正式 CDN 待命名/法务
+///    定稿后替换。后续如需「按安装实例覆盖」可下沉至 app_config,当前常量足矣。
+const DEFAULT_REGISTRY_BASE_URL: &str = match option_env!("PICASA_REGISTRY_BASE_DEFAULT") {
+    Some(v) => v,
+    None => "https://registry.example.invalid/exotic/v1",
+};
 
 /// 解析当前生效的 Registry 基址：环境变量优先（非空），否则部署默认常量。
 fn registry_base_url() -> String {

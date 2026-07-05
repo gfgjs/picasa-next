@@ -628,6 +628,7 @@ pub fn run() {
             ipc::exotic_commands::pause_exotic_processing,
             ipc::exotic_commands::stop_exotic_processing,
             ipc::exotic_commands::get_exotic_processing_status,
+            ipc::exotic_commands::list_exotic_task_details,
             ipc::exotic_commands::retry_exotic_task,
             ipc::exotic_commands::retry_exotic_plugin_failures,
             // exotic 激活 / 移除授权命令（Part3 §6.6）

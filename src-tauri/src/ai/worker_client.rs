@@ -5,8 +5,8 @@
 //! (按活跃 profile 比对快照,不符先 close 再 init,D3 §4②)→ 批请求(EmbedBatch /
 //! EncodeText)→ `exotic::worker::validate_*` 输出校验(「不信任 worker」纪律延续)。
 //!
-//! 过渡双活(Part4 §3.2):默认走进程内 ort(`ai_backend` 缺省 inproc),配置
-//! `ai_backend=worker` 才启用本路径;worker e2e 验收后 T16 删 ort、本路径转正。
+//! 路径地位(T16 收束):host 已恒 worker-only——进程内 ort 推理整段删除,本句柄是唯一推理通路;
+//! 遗留 `ai_backend` 配置键已退役(读到非 worker 值仅 warn 忽略,见 `ai_commands::warn_legacy_ai_backend`)。
 //!
 //! 错误恢复契约(硬止损=重试一次):
 //!   - 进程级异常(超时/断开/协议违例/输出校验失败)→ Supervisor 已 kill(或本端弃用

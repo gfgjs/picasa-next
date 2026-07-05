@@ -61,6 +61,7 @@ picasa-next-free-stub = { path = "../crates/picasa-next-free-stub" }
 # test_support（测试构造工具）经其 `test-support` feature 暴露 → 见下方 [dev-dependencies]。
 picasa-next-exotic-trust = { path = "../crates/picasa-next-exotic-trust" }
 
+
 # ── AI 推理核心(Part4-T15 迁出)────────────────────────────────────────────────────
 # 纯契约面消费(T16 收口):profile/face_profile 注册表、embedding 字节序、face_types
 # 几何、DecodedImage 类型。默认特性关闭 = 不带 inference 面(ort/tokenizers/ndarray

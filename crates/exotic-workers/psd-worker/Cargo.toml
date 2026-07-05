@@ -6,7 +6,9 @@
 
 [package]
 name = "psd-worker"
-version = "0.1.0"
+# 0.1.1(2026-07-05):功能零变化的版本 bump——制造 worker_version 变化的 registry v3,
+# 真机验证「升级 → 版本对账 → done 任务失效重做」链路(病历 #4 修复的观察面)。
+version = "0.1.1"
 edition = "2021"
 publish = false
 

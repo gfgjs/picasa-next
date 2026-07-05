@@ -8,7 +8,7 @@ High-performance, cross-platform media asset manager aimed at **smooth gallery b
 
 ## Tech stack | 技术栈
 
-- **Backend | 后端**: Rust + [Tauri v2](https://tauri.app) — SQLite (`rusqlite` + WAL, write `Mutex` + read `r2d2` pool), `rayon` (CPU parallelism), `fast_image_resize`, WIC GPU decode (Windows), `kamadak-exif`, ONNX Runtime (`ort`, DirectML) for Chinese-CLIP.
+- **Backend | 后端**: Rust + [Tauri v2](https://tauri.app) — SQLite (`rusqlite` + WAL, write `Mutex` + read `r2d2` pool), `rayon` (CPU parallelism), `fast_image_resize`, WIC GPU decode (Windows), `kamadak-exif`. Chinese-CLIP semantic search runs its ONNX Runtime (`ort`, DirectML) inference in a separate `ai-worker` subprocess, keeping the host binary free of `ort`.
 - **Frontend | 前端**: Vue 3 (`<script setup>`) + Pinia + Vue Router + Vite + TypeScript, vanilla CSS variables.
 
 ## Performance architecture | 性能架构
@@ -17,10 +17,10 @@ High-performance, cross-platform media asset manager aimed at **smooth gallery b
 - **Backend Justified Layout | 后端两端对齐布局**: the layout is computed in Rust and cached in memory; the frontend pulls only the visible rows (row-level virtualization).
 - **Resident layout cache** holds only render-essential fields per item; heavy metadata (EXIF/GPS/path/filename) is fetched on demand for the visible viewport (`get_meta_for_viewport`).
 - **O(1) layout index**: thumbnail write-back and adjacent-item navigation use an `id → (row, col)` index (no full-table scans).
-- **Coordinate translation** (large libraries): caps the physical scroll spacer under the browser's ~16.7M px element-height limit and maps logical↔physical scroll. *(Translated mode has a known scroll bug — see `plan-docs/perf_hardening_plan_v2.md`.)*
+- **Bucket virtualization** (large libraries): the grid renders only a few fixed-size segments driven by a wishlist single-flight fetch pump; a custom logical scrollbar maps logical↔physical scroll and caps the physical spacer under the browser's ~16.7M px element-height limit.
 - **AI semantic search**: CLIP embeddings kept resident in a half-precision (f16) cache; cosine similarity computed with `rayon`.
 
-See [`plan-docs/`](plan-docs/) for the full design (`implementation_plan_v1.2.md`) and the performance-hardening plan + progress (`perf_hardening_plan_v2.md`).
+See [`plan-docs/`](plan-docs/) for the full design — the `refactor_2026/` series (Part0–Part8) is the current architecture of record, and `todo.md` tracks live status.
 
 ## Develop | 开发
 

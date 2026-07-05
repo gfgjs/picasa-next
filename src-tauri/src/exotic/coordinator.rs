@@ -21,7 +21,9 @@ use tracing::{debug, info, warn};
 
 use crate::db::queries as q;
 use crate::exotic::catalog::Capability;
-use crate::exotic::pipeline::{run_exotic_pipeline_blocking, PipelineDeps, SupervisorFactory};
+use crate::exotic::pipeline::{
+    recover_stale_exotic_leases, run_exotic_pipeline_blocking, PipelineDeps, SupervisorFactory,
+};
 use crate::exotic::worker::{WorkerConfig, WorkerSpec};
 use crate::exotic::ExoticHost;
 use crate::state::AppState;
@@ -191,20 +193,38 @@ async fn run_loop(
     while let Some(reason) = rx.recv().await {
         debug!("exotic wake: {reason:?}");
         // 合并通道内其余 wake；本批只要有一个 UserRequested 即绕过 auto 门控（auto=false 时也运行）。
+        // 病历 #4:PluginInstalled/Startup 额外携带「版本对账」语义(见 needs_reconcile 注)。
         let mut bypass_auto = reason == WakeReason::UserRequested;
+        let mut force_reconcile = needs_reconcile(reason);
         while let Ok(r) = rx.try_recv() {
             bypass_auto |= r == WakeReason::UserRequested;
+            force_reconcile |= needs_reconcile(r);
         }
         dirty.store(false, Ordering::SeqCst);
 
-        maybe_run_until_drained(&app, &state, &host, bypass_auto).await;
+        maybe_run_until_drained(&app, &state, &host, bypass_auto, force_reconcile).await;
 
         // 运行期间被丢弃的 wake（通道满）→ 再补查一轮（沿用本批 bypass：通道满时无法重建其 reason）。
         if dirty.swap(false, Ordering::SeqCst) {
-            maybe_run_until_drained(&app, &state, &host, bypass_auto).await;
+            maybe_run_until_drained(&app, &state, &host, bypass_auto, force_reconcile).await;
         }
     }
     info!("exotic Coordinator 退出");
+}
+
+/// 是否携带「worker 版本对账」语义(病历 #4,2026-07-05 真机):版本失效
+/// (pipeline 步骤 2)只在 pipeline 启动后执行,而启动条件 has_ready 只认 pending/
+/// retryable——纯升级/回滚后任务全是 done,失效永不可达,换了解码器旧缩略图仍陈旧。
+/// PluginInstalled(安装/升级/回滚)与 Startup(装机换 app 构建、错过对账的兜底)
+/// 额外允许 pipeline 免 has_ready 起一轮:探针拿到 worker_version 后步骤 2 对账,
+/// 版本没变则本轮零领取即结束(代价 = 一次 worker spawn,毫秒级)。
+fn needs_reconcile(reason: WakeReason) -> bool {
+    // UserRequested 也入集:auto 关闭的用户升级后点「开始」是其唯一触发口,不对账则同卡死。
+    // RetryDue/ScanCommitted 等周期/自动 wake 刻意排除——否则每 30s 时钟都白 spawn 一次探针。
+    matches!(
+        reason,
+        WakeReason::PluginInstalled | WakeReason::Startup | WakeReason::UserRequested
+    )
 }
 
 /// 反复运行 Pipeline 直至无就绪任务(解决尾部竞态:运行期间新增任务在本轮被消化)。
@@ -215,15 +235,33 @@ async fn maybe_run_until_drained(
     state: &Arc<AppState>,
     host: &Arc<ExoticHost>,
     bypass_auto: bool,
+    force_reconcile: bool,
 ) {
+    // 病历 #2(2026-07-05):wake 评估前先清扫过期租约。恢复不能只挂在 pipeline 步骤 0——
+    // 「是否启动 pipeline」恰由 has_ready(只认 pending/retryable)决定,硬杀遗留的 stale
+    // processing 行会让二者互锁,进度永久停摆(详见 pipeline::recover_stale_exotic_leases)。
+    // 运行中跳过:本轮启动时已清扫,活租约由 renew_loop 维持。有恢复即广播,前端进度即时刷新。
+    if !state.is_exotic_running() && recover_stale_exotic_leases(&state.db_writer) > 0 {
+        let _ = app.emit("exotic:status-changed", ());
+    }
     for desc in plugin_descriptors(&state.exotic_catalog.snapshot()) {
         for &capability in &desc.capabilities {
-            run_capability_until_drained(app, state, host, &desc, capability, bypass_auto).await;
+            run_capability_until_drained(
+                app,
+                state,
+                host,
+                &desc,
+                capability,
+                bypass_auto,
+                force_reconcile,
+            )
+            .await;
         }
     }
 }
 
 /// 单 (插件, 能力) 的 drained 循环(原 maybe_run_until_drained 主体参数化,T13)。
+#[allow(clippy::too_many_arguments)]
 async fn run_capability_until_drained(
     app: &AppHandle,
     state: &Arc<AppState>,
@@ -231,6 +269,7 @@ async fn run_capability_until_drained(
     desc: &PluginDescriptor,
     capability: Capability,
     bypass_auto: bool,
+    force_reconcile: bool,
 ) {
     // T15 接缝:目前仅 thumbnail 能力有 pipeline 实装;embedding/face_detect_embed 的
     // 批派发随推理核心迁移(T15)落地——届时在此按能力分派 EmbedWorker 管线,并按
@@ -261,6 +300,9 @@ async fn run_capability_until_drained(
     });
     let worker_available = worker_path.is_some();
 
+    // 版本对账只允许「首轮」免 has_ready(消费一次即失效)——后续轮次须有真实就绪任务,
+    // 否则对账后零任务会无限空转。
+    let mut force_once = force_reconcile;
     loop {
         // 门控判定（读配置 + 授权 + 就绪任务）。
         let should = {
@@ -272,6 +314,7 @@ async fn run_capability_until_drained(
                 capability,
                 worker_available,
                 bypass_auto,
+                std::mem::take(&mut force_once),
             )
         };
         if !should {
@@ -380,6 +423,9 @@ async fn run_capability_until_drained(
 /// 顺序：Worker 可用 → 子系统启用 → 未暂停 → auto 门控 → 插件可领取(授权+平台+能力) → 有就绪任务。
 /// `bypass_auto`：本批含用户显式请求（start/retry）时为 true，绕过 `exotic_auto_process` 门控；
 /// 自动 wake（扫描/重试时钟/启动）为 false，`exotic_auto_process=false` 时不运行。
+/// `force_run_once`(病历 #4):安装/升级/回滚/启动的版本对账——仅跳过末位 has_ready 检查
+/// (其余门控全部照常),让 pipeline 起一轮做步骤 2 的 worker_version 失效比对。
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn evaluate_run(
     conn: &Connection,
     host: &ExoticHost,
@@ -387,6 +433,7 @@ pub(crate) fn evaluate_run(
     capability: Capability,
     worker_available: bool,
     bypass_auto: bool,
+    force_run_once: bool,
 ) -> bool {
     if !worker_available {
         return false;
@@ -415,6 +462,11 @@ pub(crate) fn evaluate_run(
     }
     if !host.is_task_runnable(plugin_id, capability) {
         return false;
+    }
+    // 病历 #4:版本对账轮免查就绪任务(pipeline 步骤 2 需要 spawn 探针才能拿到
+    // worker_version,此处无从预判「版本是否变了」,统一放行一轮,没变则零领取即收)。
+    if force_run_once {
+        return true;
     }
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -505,6 +557,7 @@ mod tests {
             PSD_PLUGIN_ID,
             CAPABILITY,
             false,
+            false,
             false
         ));
     }
@@ -520,6 +573,7 @@ mod tests {
             PSD_PLUGIN_ID,
             CAPABILITY,
             true,
+            false,
             false
         ));
     }
@@ -535,6 +589,7 @@ mod tests {
             PSD_PLUGIN_ID,
             CAPABILITY,
             true,
+            false,
             false
         ));
     }
@@ -549,6 +604,7 @@ mod tests {
             PSD_PLUGIN_ID,
             CAPABILITY,
             true,
+            false,
             false
         ));
     }
@@ -563,6 +619,7 @@ mod tests {
             PSD_PLUGIN_ID,
             CAPABILITY,
             true,
+            false,
             false
         ));
     }
@@ -578,6 +635,7 @@ mod tests {
             PSD_PLUGIN_ID,
             CAPABILITY,
             true,
+            false,
             false
         ));
     }
@@ -594,8 +652,58 @@ mod tests {
             PSD_PLUGIN_ID,
             CAPABILITY,
             true,
+            false,
             false
         ));
+    }
+
+    #[test]
+    fn reconcile_wake_bypasses_ready_check_but_not_gates() {
+        // 病历 #4(2026-07-05 真机):安装/升级/回滚/启动的版本对账轮——无就绪任务
+        // (纯升级后任务全 done)也放行一轮,让 pipeline 步骤 2 拿探针 worker_version 做失效比对。
+        let c = mem_db();
+        // 零任务/零就绪:对账轮放行(版本是否变了只有 spawn 探针才知道)。
+        assert!(evaluate_run(
+            &c,
+            &authorized_host(),
+            PSD_PLUGIN_ID,
+            CAPABILITY,
+            true,
+            false,
+            true
+        ));
+        // 其余门控不被对账绕过:worker 不可用照拦……
+        assert!(!evaluate_run(
+            &c,
+            &authorized_host(),
+            PSD_PLUGIN_ID,
+            CAPABILITY,
+            false,
+            false,
+            true
+        ));
+        // ……暂停也照拦。
+        q::set_config(&c, "exotic_paused", "true").unwrap();
+        assert!(!evaluate_run(
+            &c,
+            &authorized_host(),
+            PSD_PLUGIN_ID,
+            CAPABILITY,
+            true,
+            false,
+            true
+        ));
+    }
+
+    #[test]
+    fn needs_reconcile_maps_reasons() {
+        // 对账集 = 安装/升级/回滚 + 启动兜底 + 用户显式开始;周期时钟刻意排除(防 30s 白 spawn)。
+        assert!(needs_reconcile(WakeReason::PluginInstalled));
+        assert!(needs_reconcile(WakeReason::Startup));
+        assert!(needs_reconcile(WakeReason::UserRequested));
+        assert!(!needs_reconcile(WakeReason::RetryDue));
+        assert!(!needs_reconcile(WakeReason::ScanCommitted));
+        assert!(!needs_reconcile(WakeReason::ConfigChanged));
     }
 
     #[test]
@@ -610,7 +718,8 @@ mod tests {
             PSD_PLUGIN_ID,
             CAPABILITY,
             true,
-            true
+            true,
+            false
         ));
     }
 }

@@ -119,7 +119,7 @@ pub fn start_face_pipeline(state: Arc<AppState>, token: CancellationToken) {
             state.release_gpu_analysis(crate::state::GPU_OWNER_FACE);
         }
 
-        // 不卸载共享的 `state.ai_engine`（见模块头："与 CLIP 的关系"）。仅清空本流水线自己的令牌。
+        // 不卸载共享的 ai-worker 子进程（与 CLIP 分析共用,空闲 300s 自杀兜底）。仅清空本流水线自己的令牌。
         state.cancel_face_analysis();
     });
 }
@@ -511,7 +511,7 @@ fn flush_face_failed(state: &Arc<AppState>, failed_ids: &mut Vec<i64>) {
     failed_ids.clear();
 }
 
-// ── worker 派发路径(face 接线波;`ai_backend=worker` 时启用)────────────────────
+// ── worker 派发路径(face 接线波;T16 起为唯一路径,进程内 ort 已删)──────────────────
 
 /// worker 端可解码的源格式白名单(ai-worker 用纯 `image` crate 解码,无 WIC/exotic 引擎;
 /// 与 ai-worker Cargo.toml 的 image features 对齐)。缩略图档位与 face 缓存源恒为 webp(可解);
@@ -535,7 +535,7 @@ fn face_dispatch_cap(session_batch: u32) -> usize {
     (session_batch as usize).clamp(1, FACE_DISPATCH_BATCH)
 }
 
-/// worker 派发路径主入口(由 run_face_pipeline_blocking 按 `ai_backend` 分流)。
+/// worker 派发路径主入口(由 run_face_pipeline_blocking 无条件调用;T16 后为唯一路径)。
 /// Producer/Writer 与进程内共用;中段 = 单派发线程攒批 → FaceDetectEmbed(解码在 worker)。
 fn run_face_pipeline_worker_blocking(
     state: &Arc<AppState>,

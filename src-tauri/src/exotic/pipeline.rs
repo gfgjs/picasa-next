@@ -234,6 +234,31 @@ fn now_secs() -> i64 {
         .unwrap_or(0)
 }
 
+/// Coordinator 每次 wake 评估前的孤儿租约清扫(2026-07-05 内测病历 #2)。
+///
+/// 恢复代码原本只存在于 run 的步骤 0——而「是否 run」由 has_ready(只认 pending/
+/// retryable)决定:硬杀/管线 panic 遗留的 stale processing 行使 has_ready 恒 false,
+/// pipeline 不再启动、步骤 0 永不可达,进度从此永久停摆(真机实证:卡 60/62)。
+/// 在 wake 评估前清扫一次,过期租约回 pending 后 has_ready 恢复真值、pipeline 重新可启。
+/// 只回收超过 LEASE_TTL_SECS 的租约:活实例经 renew_loop 以 TTL/3 周期续租,不受影响;
+/// 极端租约丢失(如线程阻塞超 TTL)由 finish/fail 的 `status=1 AND lease_owner` 条件
+/// 更新兜底——迟到结果只会被丢弃(计 lease_lost),不会双写。
+pub(crate) fn recover_stale_exotic_leases(writer: &Mutex<Connection>) -> usize {
+    let conn = writer.lock().unwrap_or_else(|e| e.into_inner());
+    match q::recover_orphaned_exotic_tasks(&conn, LEASE_TTL_SECS, now_secs()) {
+        Ok(n) => {
+            if n > 0 {
+                info!("exotic:wake 前清扫恢复 {n} 个过期租约 processing→pending");
+            }
+            n
+        }
+        Err(e) => {
+            warn!("exotic:wake 前孤儿清扫失败:{e}");
+            0
+        }
+    }
+}
+
 /// 一个已领取、已构造请求的任务。
 struct ClaimedTask {
     task_id: i64,
@@ -961,6 +986,36 @@ mod tests {
         let p = crate::thumbnail::cache::thumb_path(&cache_dir, 480, cache_key);
         assert!(p.exists(), "缩略图文件应已落盘");
         let _ = std::fs::remove_dir_all(&cache_dir);
+    }
+
+    #[test]
+    fn stale_lease_deadlock_recovered_by_wake_sweep() {
+        // 病历 #2 回归锁(2026-07-05 真机 60/62):硬杀/panic 遗留的 stale processing 行使
+        // has_ready(只认 0/3)恒 false → pipeline 不启动 → 其步骤 0 的孤儿恢复永不可达,
+        // 进度永久停摆。wake 前清扫必须能独立打破该互锁。
+        let conn = Connection::open_in_memory().unwrap();
+        let (item_id, _) = setup_db(&conn);
+        // 模拟已死实例的过期租约:claimed_at 早于 now - LEASE_TTL_SECS。
+        let stale_at = now_secs() - LEASE_TTL_SECS - 60;
+        let claimed =
+            q::claim_exotic_tasks(&conn, PID, CAPABILITY, 10, "dead-instance", stale_at).unwrap();
+        assert_eq!(claimed.len(), 1);
+        // 死锁面:此刻无就绪任务 → Coordinator 的 evaluate_run 不会启动 pipeline。
+        assert!(!q::has_ready_exotic_task(&conn, PID, CAPABILITY, now_secs()).unwrap());
+        // wake 前清扫恢复过期租约 → has_ready 恢复真值。
+        let writer = Mutex::new(conn);
+        assert_eq!(recover_stale_exotic_leases(&writer), 1);
+        let conn = writer.into_inner().unwrap();
+        assert_eq!(
+            task_status(&conn, item_id),
+            0,
+            "stale processing 应回 pending"
+        );
+        assert!(q::has_ready_exotic_task(&conn, PID, CAPABILITY, now_secs()).unwrap());
+        // 对偶面:活租约(claimed_at=now)不得被误清。
+        let _ = q::claim_exotic_tasks(&conn, PID, CAPABILITY, 10, "alive", now_secs()).unwrap();
+        let writer = Mutex::new(conn);
+        assert_eq!(recover_stale_exotic_leases(&writer), 0, "活租约不得回收");
     }
 
     #[test]

@@ -237,6 +237,8 @@ export const IPC = {
   ROLLBACK_EXOTIC_PLUGIN: 'rollback_exotic_plugin',
   // 处理进度摘要 + 控制（恢复/暂停/停止本次运行/重试某插件全部失败）。
   GET_EXOTIC_PROCESSING_STATUS: 'get_exotic_processing_status',
+  /** 处理详情列表（进度区「展开详情」：文件级任务 + 状态/错误码，桶筛选 + 分页）。 */
+  LIST_EXOTIC_TASK_DETAILS: 'list_exotic_task_details',
   START_EXOTIC_PROCESSING: 'start_exotic_processing',
   PAUSE_EXOTIC_PROCESSING: 'pause_exotic_processing',
   STOP_EXOTIC_PROCESSING: 'stop_exotic_processing',
@@ -261,4 +263,6 @@ export const EVENTS = {
   MEDIA_UPDATED: 'db:media_updated',
   /** 卷插拔监听（Part2 T2）：卷在线态变化 → 画廊刷新离线徽标显隐。 */
   VOLUMES_CHANGED: 'volumes:changed',
+  /** exotic 处理进度/状态变化（后端 Pipeline 每批进度 + 租约清扫时发）→ 商店进度区实时刷新。 */
+  EXOTIC_STATUS_CHANGED: 'exotic:status-changed',
 } as const

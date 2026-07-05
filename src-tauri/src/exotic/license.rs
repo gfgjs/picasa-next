@@ -3,7 +3,8 @@
 //!
 //! 【Part6 §3.9.1a 去环 ③a】纯验签逻辑（`verify_token`/`evaluate_token`/`LicensePayload`）已迁至
 //! 开源叶 crate `picasa-next-exotic-trust`（无秘密价值、pro 需复用）。本文件保留**真实 keyring I/O**
-//! 实现 `KeyringLicenseStore`（依赖 keyring crate；③b 再随 pro 下沉为 `DirectEntitlement`），并
+//! 实现 `KeyringLicenseStore`(依赖 keyring crate;③b 裁决 2026-07-05:**保留本实现**为公开树直销
+//! 装配,私有树由组合根标记块 swap 至闭源 DirectEntitlement,双实现有意并存),并
 //! `pub use` 再导出迁走的原语，使既有 `crate::exotic::license::{verify_token, LicensePayload, ...}`
 //! 引用路径不变。授权 DTO / trait（`EntitlementProvider`/`LicenseStatus`/`LicenseError`）住更底层的
 //! 叶 crate `picasa-next-plugin-api`。
@@ -42,8 +43,8 @@ fn license_account(plugin_id: &str) -> &str {
 
 // `LicenseSource` trait 升格为 plugin-api 的 `EntitlementProvider`（上方 `pub use`）;
 // 始终未授权的 `UnlicensedSource` 下沉为 free-stub 的 `FreeStubEntitlement`。
-// 本文件保留真实 keyring 实现 `KeyringLicenseStore`（验签逻辑经 exotic-trust 复用，§8.7;真实生产
-// 公钥经 `VerifyingKeyset::builtin` 注入，后续随 pro 下沉 ③b）。
+// 本文件保留真实 keyring 实现 `KeyringLicenseStore`(验签逻辑经 exotic-trust 复用,§8.7;③b 已落地:
+// 真实生产公钥仅在 pro 侧,本实现信任根=exotic-trust builtin——公开树为占位集,对生产 token 恒验签失败)。
 
 /// keyring 实现：token 存系统凭据库；验签用编入 Host 的信任根公钥集。
 #[cfg(feature = "channel-direct")]

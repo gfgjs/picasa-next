@@ -843,3 +843,65 @@ mod dev_registry_artifact_tests {
         let _ = std::fs::remove_dir_all(&staging);
     }
 }
+
+/// 内测 registry 工具产物核验(scripts/exotic-internal-registry.mjs)。#[ignore]:依赖
+/// 已生成的 .internal-signing/ 目录,CI/常规 test 不跑。跑法:
+///   cargo test -p picasa-next --lib internal_registry_artifacts -- --ignored
+/// 与 dev 版差异:keyset 为「占位+内测键」超集、package_url 为真实 HTTPS(无需 dev
+/// file:// 开关)——正是内测安装包在生产验证链下将经历的形态(2026-07-05 内测链)。
+#[cfg(test)]
+mod internal_registry_artifact_tests {
+    use crate::exotic::crypto::VerifyingKeyset;
+    use crate::exotic::install::{verify_and_extract, InstallLimits, RegistryExpect};
+
+    #[test]
+    #[ignore]
+    fn internal_registry_artifacts_pass_production_validators() {
+        let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../.internal-signing");
+        let root = base.join("registry");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let ks_json = std::fs::read_to_string(base.join("internal-keyset.json"))
+            .expect("先运行 node scripts/exotic-internal-registry.mjs");
+        let ks = VerifyingKeyset::parse(&ks_json).expect("内测 keyset 解析");
+        let index = std::fs::read(root.join("index.json")).unwrap();
+        let sig = std::fs::read(root.join("index.sig")).unwrap();
+        let v = crate::exotic::registry::verify_and_parse(&index, &sig, &ks, now, 0)
+            .expect("index 验签+条目校验");
+        assert!(!v.expired, "内测 index 不应过期(重跑生成工具刷新)");
+        let e = v
+            .index
+            .select("exotic-image-psd", "x86_64-pc-windows-msvc")
+            .expect("PSD 条目");
+        assert!(
+            e.package_url.starts_with("https://"),
+            "内测条目必须是真实 HTTPS 直链(不同于 dev 的 file://)"
+        );
+
+        let zip = root.join("exotic-image-psd.zip");
+        let staging =
+            std::env::temp_dir().join(format!("internal-reg-verify-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&staging);
+        let expect = RegistryExpect {
+            plugin_id: &e.plugin_id,
+            version: &e.version,
+            target: &e.target,
+            package_sequence: e.package_sequence,
+        };
+        let ex = verify_and_extract(
+            &zip,
+            &ks,
+            &expect,
+            "0.1.0",
+            now,
+            &staging,
+            &InstallLimits::default(),
+        )
+        .expect("zip 生产校验链");
+        assert!(ex.manifest.files.iter().any(|f| f.kind == "worker"));
+        assert!(staging.join("psd-worker.exe").exists());
+        let _ = std::fs::remove_dir_all(&staging);
+    }
+}

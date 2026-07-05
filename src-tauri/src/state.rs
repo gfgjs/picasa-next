@@ -495,8 +495,8 @@ impl AppState {
     /// 廉价（Arc/Pool clone），命令与调度按需新建、不缓存——确保读到最新
     /// 安装/授权状态（安装、激活后立即生效）。
     pub fn exotic_host(&self) -> crate::exotic::ExoticHost {
-        // 授权 provider 经组合根单点装配（Part6 §3.9.1a ①）：开源＝keyring 直销；商业构建把
-        // default_entitlement_provider 换成 DirectEntitlement（③b）。for_runtime 本身对渠道无知。
+        // 授权 provider 经组合根单点装配(Part6 §3.9.1a ①):公开树=keyring 直销;私有树=闭源
+        // DirectEntitlement(③b 已落地 2026-07-05,swap 点内标记块切换)。for_runtime 本身对渠道无知。
         crate::exotic::ExoticHost::for_runtime(
             self.exotic_catalog.clone(),
             self.db_read_pool.clone(),
@@ -506,7 +506,7 @@ impl AppState {
 
     /// 命令层取授权 provider 的统一入口（审查 R1-1）：激活 / 撤销与 evaluate 全走
     /// [`crate::exotic::default_entitlement_provider`] 同一 swap 点装配，消除「evaluate 走注入
-    /// provider、activate 直构 KeyringLicenseStore」的信任根分裂——③b 商业构建换 swap 点函数体，
+    /// provider、activate 直构 KeyringLicenseStore」的信任根分裂——③b(已落地)在 swap 点标记块内切换,
     /// 全部授权路径即一并切换。与 [`Self::exotic_host`] 同理按需新建、不缓存（廉价，读到最新态）。
     pub fn entitlement_provider(&self) -> std::sync::Arc<dyn crate::exotic::EntitlementProvider> {
         crate::exotic::default_entitlement_provider()

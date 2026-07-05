@@ -63,6 +63,61 @@
           {{ $t('exotic.procBlocked', { n: proc.blockedByAvailability }) }}
         </span>
         <span v-if="proc.error > 0" class="ps-proc__err">✗ {{ proc.error }}</span>
+        <button class="ps-proc__toggle" @click="toggleDetails">
+          <component :is="detailsOpen ? ChevronUp : ChevronDown" :size="13" />
+          {{ detailsOpen ? $t('exotic.procDetailsHide') : $t('exotic.procDetails') }}
+        </button>
+      </div>
+
+      <!-- 展开详情：文件级任务列表（筛选桶 + 活动优先排序 + 加载更多）。 -->
+      <div v-if="detailsOpen" class="ps-proc__details">
+        <div class="ps-proc__filters">
+          <button
+            v-for="b in bucketDefs"
+            :key="b.key ?? 'all'"
+            class="ps-filter"
+            :class="{ 'ps-filter--active': detailBucket === b.key }"
+            @click="setBucket(b.key)"
+          >
+            {{ b.label }}<span class="ps-filter__n">{{ b.count }}</span>
+          </button>
+        </div>
+        <ul v-if="details.length" class="ps-proc__list">
+          <li v-for="row in details" :key="row.itemId" class="ps-task">
+            <span
+              class="ps-task__dot"
+              :class="'ps-task__dot--' + row.status"
+              :title="statusText(row.status)"
+            />
+            <span
+              class="ps-task__file"
+              :title="(row.dirPath ? row.dirPath + '/' : '') + row.fileName"
+              >{{ row.fileName }}</span
+            >
+            <span class="ps-task__fmt">{{ row.format.toUpperCase() }}</span>
+            <span class="ps-task__path">{{ row.dirPath || '/' }}</span>
+            <span
+              v-if="row.lastErrorCode"
+              class="ps-task__errcode"
+              :title="row.lastErrorMessage ?? ''"
+              >{{ row.lastErrorCode }}</span
+            >
+          </li>
+        </ul>
+        <p v-else class="ps-proc__empty">{{ $t('exotic.procDetailEmpty') }}</p>
+        <div class="ps-proc__details-foot">
+          <button
+            v-if="canLoadMore"
+            class="btn btn-ghost btn-sm"
+            :disabled="detailsLoading"
+            @click="loadMoreDetails"
+          >
+            {{ $t('exotic.procLoadMore') }}
+          </button>
+          <span v-if="details.length >= DETAIL_CAP" class="ps-proc__cap">
+            {{ $t('exotic.procDetailCap', { n: DETAIL_CAP }) }}
+          </span>
+        </div>
       </div>
     </section>
 
@@ -141,8 +196,18 @@
               >
                 <Wrench :size="14" /> {{ $t('exotic.repair') }}
               </button>
-              <!-- 激活（复用 ExoticActivateDialog）。 -->
-              <button class="btn btn-ghost btn-sm" @click="activateTarget = row.pluginId">
+              <!-- 已授权 → 状态标识；否则显激活入口（激活后即时切换，2026-07-05 内测）。 -->
+              <span
+                v-if="entitlements[row.pluginId] === 'authorized'"
+                class="ps-activated"
+              >
+                <CheckCircle2 :size="14" /> {{ $t('exotic.activated') }}
+              </span>
+              <button
+                v-else
+                class="btn btn-ghost btn-sm"
+                @click="activateTarget = row.pluginId"
+              >
                 <KeyRound :size="14" /> {{ $t('exotic.activateAction') }}
               </button>
               <!-- 卸载（危险，带确认 + 可选移除授权）。 -->
@@ -167,7 +232,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import {
   RefreshCw,
   Puzzle,
@@ -180,6 +246,9 @@ import {
   Play,
   Pause,
   Square,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
 } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 
@@ -187,7 +256,15 @@ import ExoticActivateDialog from '../components/exotic/ExoticActivateDialog.vue'
 import { useExoticStore, mergeStorePlugins, type StorePluginRow } from '../composables/useExoticStore'
 import { useUiStore } from '../stores/uiStore'
 import { useConfirm } from '../composables/useConfirm'
-import type { IpcError } from '../utils/ipc'
+import { IPC, EVENTS } from '../constants/ipc'
+import type {
+  Availability,
+  ExoticTaskBucket,
+  ExoticTaskDetail,
+  ExoticTaskDetailStatus,
+  PluginEntitlement,
+} from '../types/exotic'
+import { invokeIpc, type IpcError } from '../utils/ipc'
 
 const { t } = useI18n()
 const store = useExoticStore()
@@ -216,8 +293,126 @@ const procBusy = ref(false)
 const refreshing = ref(false)
 const activateTarget = ref<string | null>(null)
 
-onMounted(() => {
+// ── 授权态（2026-07-05 内测：激活后卡片须显「已激活」，而非永远的激活按钮）────────
+// 按已装插件逐个取 entitlement；取失败（含 'no_offering' 预期分支）静默不显徽章、保留激活入口。
+const entitlements = reactive<Record<string, Availability | undefined>>({})
+
+async function loadEntitlements() {
+  await Promise.all(
+    store.installed.value.map(async (p) => {
+      try {
+        const e = await invokeIpc<PluginEntitlement>(IPC.GET_PLUGIN_ENTITLEMENT, {
+          pluginId: p.pluginId,
+        })
+        entitlements[p.pluginId] = e.availability
+      } catch {
+        entitlements[p.pluginId] = undefined
+      }
+    }),
+  )
+}
+// 已装列表每次重载（挂载 / 安装 / 卸载 / 修复 / 激活后）都换新数组引用 → 重取授权态。
+watch(() => store.installed.value, loadEntitlements)
+
+// ── 处理详情（2026-07-05 内测需求：展开查看处理了哪些冷门格式文件）──────────────
+// 桶筛选与摘要四桶对齐；列表活动优先排序（后端定序）；「加载更多」按窗口整取
+// （实时数据下 offset 追加会漂移，重取整窗幂等且封顶 DETAIL_CAP）。
+const DETAIL_CAP = 200
+const DETAIL_PAGE = 50
+const detailsOpen = ref(false)
+const detailBucket = ref<ExoticTaskBucket | null>(null)
+const details = ref<ExoticTaskDetail[]>([])
+const detailsLoading = ref(false)
+
+const bucketDefs = computed(
+  (): { key: ExoticTaskBucket | null; label: string; count: number }[] => [
+    { key: null, label: t('exotic.procFilterAll'), count: procTotal.value },
+    { key: 'pending', label: t('exotic.procStatusPending'), count: proc.value?.pending ?? 0 },
+    {
+      key: 'processing',
+      label: t('exotic.procStatusProcessing'),
+      count: proc.value?.processing ?? 0,
+    },
+    { key: 'done', label: t('exotic.procStatusDone'), count: proc.value?.done ?? 0 },
+    { key: 'error', label: t('exotic.procStatusError'), count: proc.value?.error ?? 0 },
+  ],
+)
+
+function statusText(s: ExoticTaskDetailStatus): string {
+  return t('exotic.procStatus' + s.charAt(0).toUpperCase() + s.slice(1))
+}
+
+async function fetchDetails(windowSize?: number) {
+  const size = windowSize ?? (details.value.length || DETAIL_PAGE)
+  detailsLoading.value = true
+  try {
+    details.value = await invokeIpc<ExoticTaskDetail[]>(IPC.LIST_EXOTIC_TASK_DETAILS, {
+      bucket: detailBucket.value,
+      limit: Math.min(Math.max(size, DETAIL_PAGE), DETAIL_CAP),
+      offset: 0,
+    })
+  } catch {
+    // 详情为辅助面板：取失败静默保留旧数据（摘要区仍可用，避免 toast 噪音）。
+  } finally {
+    detailsLoading.value = false
+  }
+}
+
+function toggleDetails() {
+  detailsOpen.value = !detailsOpen.value
+  if (detailsOpen.value && details.value.length === 0) void fetchDetails(DETAIL_PAGE)
+}
+
+function setBucket(b: ExoticTaskBucket | null) {
+  if (detailBucket.value === b) return
+  detailBucket.value = b
+  details.value = []
+  void fetchDetails(DETAIL_PAGE)
+}
+
+function loadMoreDetails() {
+  void fetchDetails(details.value.length + DETAIL_PAGE)
+}
+
+const bucketTotal = computed(() => {
+  const s = proc.value
+  if (!s) return 0
+  switch (detailBucket.value) {
+    case 'pending':
+      return s.pending
+    case 'processing':
+      return s.processing
+    case 'done':
+      return s.done
+    case 'error':
+      return s.error
+    default:
+      return procTotal.value
+  }
+})
+const canLoadMore = computed(() => details.value.length < Math.min(bucketTotal.value, DETAIL_CAP))
+
+// ── 进度实时化（2026-07-05 内测：后端每批进度都发 exotic:status-changed，此前无人监听，
+//    进度区是挂载时刻的冻结快照）。事件高频（每批一发）→ 500ms 尾随节流。────────────
+let statusTimer: ReturnType<typeof setTimeout> | null = null
+function refreshStatusThrottled() {
+  if (statusTimer) return
+  statusTimer = setTimeout(() => {
+    statusTimer = null
+    void store.loadStatus()
+    // 详情面板展开时同频刷新（重取当前窗口，列表随处理进展实时滚动）。
+    if (detailsOpen.value) void fetchDetails()
+  }, 500)
+}
+
+let unlistenStatus: UnlistenFn | null = null
+onMounted(async () => {
   void store.loadAll()
+  unlistenStatus = await listen(EVENTS.EXOTIC_STATUS_CHANGED, refreshStatusThrottled)
+})
+onBeforeUnmount(() => {
+  if (unlistenStatus) unlistenStatus()
+  if (statusTimer) clearTimeout(statusTimer)
 })
 
 // ── 状态标签 ────────────────────────────────────────────────────────────────
@@ -388,6 +583,141 @@ async function ctrl(fn: () => Promise<void>) {
 .ps-proc__err {
   color: var(--color-error);
 }
+.ps-proc__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+  padding: 2px 6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+.ps-proc__toggle:hover {
+  background: var(--color-bg-hover);
+}
+
+/* ── 展开详情 ─────────────────────────────────────────────────────────────── */
+.ps-proc__details {
+  margin-top: var(--spacing-sm);
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--spacing-sm);
+}
+.ps-proc__filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+  margin-bottom: var(--spacing-sm);
+}
+.ps-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: transparent;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+.ps-filter:hover {
+  background: var(--color-bg-hover);
+}
+.ps-filter--active {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+  background: var(--color-accent-subtle);
+}
+.ps-filter__n {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+.ps-proc__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.ps-task {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: 4px 2px;
+  font-size: var(--font-size-xs);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border) 45%, transparent);
+}
+.ps-task:last-child {
+  border-bottom: none;
+}
+.ps-task__dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-text-tertiary);
+}
+.ps-task__dot--retrying {
+  background: var(--color-warning);
+}
+.ps-task__dot--processing {
+  background: var(--color-accent);
+}
+.ps-task__dot--done {
+  background: var(--color-success);
+}
+.ps-task__dot--error {
+  background: var(--color-error);
+}
+.ps-task__file {
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 40%;
+}
+.ps-task__fmt {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-hover);
+  color: var(--color-text-secondary);
+}
+.ps-task__path {
+  flex: 1;
+  min-width: 0;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ps-task__errcode {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  color: var(--color-error);
+}
+.ps-proc__empty {
+  margin: var(--spacing-sm) 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+.ps-proc__details-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  margin-top: var(--spacing-xs);
+}
+.ps-proc__cap {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
 
 /* ── Empty / loading ──────────────────────────────────────────────────────── */
 .ps-empty {
@@ -522,6 +852,15 @@ async function ctrl(fn: () => Promise<void>) {
 .btn-sm {
   padding: 4px 10px;
   font-size: var(--font-size-xs);
+}
+.ps-activated {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-success);
 }
 .ps-danger {
   color: var(--color-error);

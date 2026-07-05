@@ -23,17 +23,23 @@ jobs:
     name: OSS strip-tree gate
     # 🔴 只在公开仓执行,私有仓一律跳过。
     if: github.repository == 'gfgjs/picasa-next'
-    # ⚠ 跑 windows 而非 ubuntu(2026-07-02 四跑实证的 fork 决策):gate 使命=「剥离未破坏构建」,基准须是
-    #   canonical 树**能构建的平台**(今天=Windows)。公开树当前在 Linux 上本就编不过(wic_engine.rs 无条件
-    #   编译 + `windows` crate 未做 target 限定)——那是跨平台适配(Part3 / 审查 R0-2)的路线图工作,与剥离
-    #   完整性无关。Linux 构建落地后回迁 ubuntu(见 todo C 节)。
-    runs-on: windows-latest
+    # 2026-07-05 回迁 ubuntu(todo C 节,原 2026-07-02「跑 windows」fork 决策的解除):当年 Linux 编不过
+    # 的两个前提(wic_engine 无条件编译 / windows crate 未 target 限定)已被审查 R0-2 + Part4-T16 清除;
+    # 私有超集树在 ci.yml rust-linux job(check+test)全绿实证后回迁——公开投影树是其剥离子集。
+    # ubuntu 收益:runner 更快更省;gitleaks job 早已因 windows 资产 404 而单跑 ubuntu,现两 job 同平台。
+    runs-on: ubuntu-latest
     defaults:
       run:
-        shell: bash        # windows runner 默认 pwsh;本文件脚本全为 bash(grep/[ ]/git ls-files)
+        shell: bash        # 显式声明(GitHub 对显式 bash 注入 -eo pipefail,本文件 grep 断言已全 herestring)
     steps:
       - name: Checkout sync-staging
         uses: actions/checkout@v4
+
+      # Tauri v2 Linux 前置(webkit2gtk 4.1 等;与私有 ci.yml rust-linux job 同清单)。
+      - name: Tauri Linux 系统依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
 
       # ① 静态断言:pro 目录/生产 keyset 必须不存在;禁词必须零出现(剥离成功的双验)。
       - name: 断言 pro 源码 + 生产 keyset 已剥离
@@ -87,7 +93,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      # 编译缓存:gate 每次同步都跑,windows runner 冷编译慢,缓存 registry+target 大幅提速。
+      # 编译缓存:gate 每次同步都跑,缓存 registry+target 大幅提速。
       - name: Rust 编译缓存
         uses: Swatinem/rust-cache@v2
 

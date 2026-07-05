@@ -438,14 +438,31 @@ mod tests {
         c
     }
 
+    /// 平台无关 Catalog 夹具(2026-07-05 Linux CI 面):本组测试验证 coordinator 的
+    /// 运行条件逻辑(授权/任务/暂停/自动开关),**不验证平台门控**——内置 Catalog 的
+    /// PSD 平台清单不含 Linux,在 ubuntu CI 上「应当运行」断言会因 UnsupportedPlatform
+    /// 假红,负向断言则因错误的理由通过(测不到本要测的条件)。注入「支持当前平台」的
+    /// 最小 Catalog 解耦;平台门控维度由 availability/catalog 自有测试覆盖。
+    fn test_catalog() -> Arc<CatalogStore> {
+        let json = format!(
+            r#"{{"schema":1,"sequence":1,"offerings":[{{
+                "plugin_id":"exotic-image-psd","name":"PSD 图像引擎","media_kind":"image",
+                "formats":["psd"],"capabilities":["thumbnail"],"license_tier":"paid",
+                "sku":"psd-engine-2026","platforms":["{}"],"min_host_version":"0.1.0",
+                "override_common":false,"store_url":"https://example.invalid/plugins/psd"}}]}}"#,
+            crate::exotic::current_target_triple()
+        );
+        Arc::new(CatalogStore::with_snapshot(
+            crate::exotic::catalog::CatalogSnapshot::parse(&json).unwrap(),
+        ))
+    }
+
     fn authorized_host() -> ExoticHost {
-        let store = Arc::new(CatalogStore::from_builtin().unwrap());
-        ExoticHost::with_authorized_fixture(store, PSD_PLUGIN_ID)
+        ExoticHost::with_authorized_fixture(test_catalog(), PSD_PLUGIN_ID)
     }
 
     fn unauthorized_host() -> ExoticHost {
-        let store = Arc::new(CatalogStore::from_builtin().unwrap());
-        ExoticHost::new(store)
+        ExoticHost::new(test_catalog())
     }
 
     #[test]

@@ -76,6 +76,39 @@ jobs:
           fi
           echo "✓ 渠道依赖树断言过:store 渠道零 updater;direct 树含 updater"
 
+  # ── C 节跨平台适配:Linux 编译+测试面(2026-07-05 增设)──────────────────────────
+  # 使命:①守住 R0-2/Part4-T16 的 cfg(windows) 门控成果(Linux 编译面回归即红);
+  #      ②oss-gate 从 windows-latest 回迁 ubuntu 的前置实证——gate 面=build/test,
+  #        先在私有超集树验绿(公开投影树为其剥离子集,私有绿 ⇒ 公开绿)。
+  # 范围:check+test(与 gate 对齐);clippy 维持 windows job 单点(lint 与平台无关,
+  # 不重复付费;Linux 特有 cfg 死代码若出现由 check 的 warning 面先暴露)。
+  rust-linux:
+    name: Rust Check & Test (Linux 编译面)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Tauri v2 Linux 前置(webkit2gtk 4.1 等;官方 prerequisites 清单)。
+      - name: Tauri Linux 系统依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust 编译缓存
+        uses: Swatinem/rust-cache@v2
+
+      - name: 占位 dist(generate_context 校验 frontendDist)
+        run: mkdir -p dist
+
+      - name: cargo check --workspace
+        run: cargo check --workspace --locked
+
+      - name: cargo test --workspace
+        run: cargo test --workspace --locked
+
   frontend:
     name: Frontend Typecheck & Test
     runs-on: ubuntu-latest

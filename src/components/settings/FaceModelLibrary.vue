@@ -140,17 +140,19 @@ onMounted(refresh)
   padding: 1px 6px;
   border-radius: var(--radius-sm);
 }
+/* token 彩底上的文字用 text-inverse:暗色主题的状态色/accent 是亮色,
+   白字压上去对比不足(S5 批2 统一修法)。 */
 .badge--ok {
   background: var(--color-success);
-  color: #fff;
+  color: var(--color-text-inverse);
 }
 .badge--nc {
   background: var(--color-warning);
-  color: #fff;
+  color: var(--color-text-inverse);
 }
 .badge--active {
   background: var(--color-accent);
-  color: #fff;
+  color: var(--color-text-inverse);
 }
 .face-model__desc {
   font-size: var(--font-size-xs);
@@ -191,7 +193,7 @@ onMounted(refresh)
 }
 .face-model__dl-btn:hover {
   background: var(--color-accent);
-  color: #fff;
+  color: var(--color-text-inverse);
 }
 .face-model__dl-progress {
   display: inline-flex;

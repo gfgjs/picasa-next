@@ -38,7 +38,7 @@ dependencies = [
  "exotic-protocol",
  "image",
  "ndarray 0.16.1",
- "picasa-next-ai-core",
+ "scrollery-ai-core",
  "sha2",
 ]
 
@@ -3264,104 +3264,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "picasa-next"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "arboard",
- "base64 0.22.1",
- "chrono",
- "crossbeam-channel",
- "exotic-protocol",
- "fast_image_resize",
- "half",
- "image",
- "kamadak-exif",
- "keyring",
- "lexicmp",
- "lofty",
- "picasa-next-ai-core",
- "picasa-next-exotic-trust",
- "picasa-next-free-stub",
- "picasa-next-plugin-api",
- "quick-xml 0.36.2",
- "r2d2",
- "r2d2_sqlite",
- "rayon",
- "reqwest 0.12.28",
- "reqwest_dav",
- "ring",
- "rusqlite",
- "rustc-hash",
- "serde",
- "serde_json",
- "sha2",
- "similar",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-fs",
- "tauri-plugin-shell",
- "tauri-plugin-updater",
- "tauri-plugin-window-state",
- "thiserror 1.0.69",
- "thumbhash",
- "tokio",
- "tokio-util",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "trash",
- "walkdir",
- "wallpaper",
- "windows 0.58.0",
- "xxhash-rust",
- "zip 2.4.2",
-]
-
-[[package]]
-name = "picasa-next-ai-core"
-version = "0.1.0"
-dependencies = [
- "crossbeam-channel",
- "image",
- "ndarray 0.16.1",
- "ort",
- "serde",
- "thiserror 1.0.69",
- "tokenizers",
- "tracing",
- "windows 0.58.0",
-]
-
-[[package]]
-name = "picasa-next-exotic-trust"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "picasa-next-plugin-api",
- "ring",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tracing",
-]
-
-[[package]]
-name = "picasa-next-free-stub"
-version = "0.1.0"
-dependencies = [
- "picasa-next-plugin-api",
-]
-
-[[package]]
-name = "picasa-next-plugin-api"
-version = "0.1.0"
-dependencies = [
- "thiserror 1.0.69",
-]
-
-[[package]]
 name = "pin-project-lite"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4249,6 +4151,104 @@ name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
+
+[[package]]
+name = "scrollery"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arboard",
+ "base64 0.22.1",
+ "chrono",
+ "crossbeam-channel",
+ "exotic-protocol",
+ "fast_image_resize",
+ "half",
+ "image",
+ "kamadak-exif",
+ "keyring",
+ "lexicmp",
+ "lofty",
+ "quick-xml 0.36.2",
+ "r2d2",
+ "r2d2_sqlite",
+ "rayon",
+ "reqwest 0.12.28",
+ "reqwest_dav",
+ "ring",
+ "rusqlite",
+ "rustc-hash",
+ "scrollery-ai-core",
+ "scrollery-exotic-trust",
+ "scrollery-free-stub",
+ "scrollery-plugin-api",
+ "serde",
+ "serde_json",
+ "sha2",
+ "similar",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-fs",
+ "tauri-plugin-shell",
+ "tauri-plugin-updater",
+ "tauri-plugin-window-state",
+ "thiserror 1.0.69",
+ "thumbhash",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "trash",
+ "walkdir",
+ "wallpaper",
+ "windows 0.58.0",
+ "xxhash-rust",
+ "zip 2.4.2",
+]
+
+[[package]]
+name = "scrollery-ai-core"
+version = "0.1.0"
+dependencies = [
+ "crossbeam-channel",
+ "image",
+ "ndarray 0.16.1",
+ "ort",
+ "serde",
+ "thiserror 1.0.69",
+ "tokenizers",
+ "tracing",
+ "windows 0.58.0",
+]
+
+[[package]]
+name = "scrollery-exotic-trust"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "ring",
+ "scrollery-plugin-api",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tracing",
+]
+
+[[package]]
+name = "scrollery-free-stub"
+version = "0.1.0"
+dependencies = [
+ "scrollery-plugin-api",
+]
+
+[[package]]
+name = "scrollery-plugin-api"
+version = "0.1.0"
+dependencies = [
+ "thiserror 1.0.69",
+]
 
 [[package]]
 name = "security-framework"

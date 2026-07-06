@@ -51,12 +51,12 @@
               v-for="opt in themeOptions"
               :key="opt.value"
               class="option-card"
-              :class="{ selected: ui.theme === opt.value }"
+              :class="{ selected: ui.appearance === opt.value }"
               @click="chooseTheme(opt.value)"
             >
               <component :is="opt.icon" :size="22" />
               <span>{{ t(opt.labelKey) }}</span>
-              <Check v-if="ui.theme === opt.value" :size="15" class="option-check" />
+              <Check v-if="ui.appearance === opt.value" :size="15" class="option-check" />
             </button>
           </div>
         </section>
@@ -123,7 +123,7 @@ import { invokeIpc } from '../../utils/ipc'
 import { IPC } from '../../constants/ipc'
 import { useUiStore } from '../../stores/uiStore'
 import { useScanStore } from '../../stores/scanStore'
-import type { Theme } from '../../types/ui'
+import type { AppearanceMode } from '../../types/ui'
 
 const emit = defineEmits<{ (e: 'done'): void }>()
 
@@ -135,7 +135,7 @@ const step = ref(1)
 const addedFolders = ref<string[]>([])
 
 // 主题三选项（图标 + i18n label）。点击即时应用——所见即所得。
-const themeOptions: { value: Theme; icon: typeof Sun; labelKey: string }[] = [
+const themeOptions: { value: AppearanceMode; icon: typeof Sun; labelKey: string }[] = [
   { value: 'light', icon: Sun, labelKey: 'onboarding.step2.light' },
   { value: 'dark', icon: Moon, labelKey: 'onboarding.step2.dark' },
   { value: 'system', icon: Monitor, labelKey: 'onboarding.step2.system' },
@@ -166,8 +166,8 @@ async function pickFolder() {
   }
 }
 
-function chooseTheme(value: Theme) {
-  ui.setTheme(value) // 即时应用 + 持久化 app_config 'theme'
+function chooseTheme(value: AppearanceMode) {
+  ui.setAppearance(value) // 即时应用 + 持久化 app_config 'appearance'
 }
 
 function chooseLang(lang: string) {

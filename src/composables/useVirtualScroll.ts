@@ -56,7 +56,7 @@ const MAX_BUFFER_PX = 1200
 /// （行高 40px）以上的库进入平移模式；以下走普通模式、原生滚动零回归。
 export const SAFE_MAX_DEFAULT = 10_000_000
 
-/// 解析生效的 SAFE_MAX。**仅 dev** 期可经 `localStorage['picasa.debug.safeMax']` 覆盖（T6 §3.6.1
+/// 解析生效的 SAFE_MAX。**仅 dev** 期可经 `localStorage['scrollery.debug.safeMax']` 覆盖（T6 §3.6.1
 /// 验证用）：设一个**小于测试库总逻辑高度**的值（如 `9_000_000`）即可强制进入平移模式、迫使
 /// `ratio≈2–4×`，免重编译验证滚动条稳定性 / 可达真底 / 无跳底错位。读取一次（模块加载时），
 /// 故零每帧开销；改值后刷新页面生效，清除即恢复默认。
@@ -64,7 +64,7 @@ export const SAFE_MAX_DEFAULT = 10_000_000
 export function resolveSafeMax(): number {
   try {
     if (import.meta.env.DEV) {
-      const raw = localStorage.getItem('picasa.debug.safeMax')
+      const raw = localStorage.getItem('scrollery.debug.safeMax')
       const o = raw == null ? NaN : Number(raw)
       if (Number.isFinite(o) && o > 0) {
         console.info(LOG, `SAFE_MAX overridden → ${o} (debug, T6 §3.6.1)`)

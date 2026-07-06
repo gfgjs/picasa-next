@@ -281,7 +281,8 @@ onMounted(loadCfg)
   padding: 12px;
 }
 .pr-error {
-  color: var(--color-danger, #e5484d);
+  /* 原 var(--color-danger, #e5484d) 引用不存在的幽灵 token,一直走 fallback(S5 修) */
+  color: var(--color-error);
   font-size: var(--font-size-xs);
   padding: 0 12px;
 }
@@ -300,7 +301,7 @@ onMounted(loadCfg)
 }
 .pr-btn--primary {
   background: var(--color-accent);
-  color: #fff;
+  color: var(--color-text-inverse);
   border-color: transparent;
 }
 .pr-btn:disabled {
@@ -338,16 +339,16 @@ onMounted(loadCfg)
   color: var(--color-text-secondary);
 }
 .op-insert {
-  background: rgba(46, 160, 67, 0.18);
+  background: color-mix(in srgb, var(--color-success) 18%, transparent);
 }
 .op-delete {
-  background: rgba(229, 72, 77, 0.18);
+  background: color-mix(in srgb, var(--color-error) 18%, transparent);
 }
 .op-insert .pr-diff__sign {
-  color: #2ea043;
+  color: var(--color-success);
 }
 .op-delete .pr-diff__sign {
-  color: #e5484d;
+  color: var(--color-error);
 }
 .pr-diff__foot {
   display: flex;

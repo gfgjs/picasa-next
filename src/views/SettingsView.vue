@@ -27,597 +27,136 @@
 
     <main class="settings-content">
       <!-- ── 外观 ─────────────────────────────────────────── -->
+      <!-- 各卡行序与行体均由注册表驱动(设计 §8):行=SettingRow 外壳,特例行就地内嵌。 -->
       <CollapsibleCard id="general" :title="$t('settings.general')">
-        <div class="settings-card__item">
-          <button
-            class="pin-btn"
-            :class="{ active: ui.pinnedSettings.includes('theme') }"
-            @click="ui.togglePinnedSetting('theme')"
-            :title="$t('settings.pinToSidebar')"
-            :aria-label="$t('settings.pinToSidebar')"
-          >
-            <Pin :size="14" />
-          </button>
-          <div class="settings-card__info">
-            <div class="settings-card__label" style="display: flex; align-items: center; gap: 8px">
-              {{ $t('settings.theme') }}
-            </div>
-            <div class="settings-card__desc">{{ $t('settings.themeDesc') }}</div>
-          </div>
-          <DynamicSettingControl setting-key="theme" />
-        </div>
-
-        <div class="settings-card__item">
-          <button
-            class="pin-btn"
-            :class="{ active: ui.pinnedSettings.includes('language') }"
-            @click="ui.togglePinnedSetting('language')"
-            :title="$t('settings.pinToSidebar')"
-            :aria-label="$t('settings.pinToSidebar')"
-          >
-            <Pin :size="14" />
-          </button>
-          <div class="settings-card__info">
-            <div class="settings-card__label" style="display: flex; align-items: center; gap: 8px">
-              {{ $t('settings.language') }}
-            </div>
-            <div class="settings-card__desc">{{ $t('settings.languageDesc') }}</div>
-          </div>
-          <DynamicSettingControl setting-key="language" />
-        </div>
-
-        <div class="settings-card__item">
-          <button
-            class="pin-btn"
-            :class="{ active: ui.pinnedSettings.includes('uiFontSize') }"
-            @click="ui.togglePinnedSetting('uiFontSize')"
-            :title="$t('settings.pinToSidebar')"
-            :aria-label="$t('settings.pinToSidebar')"
-          >
-            <Pin :size="14" />
-          </button>
-          <div class="settings-card__info">
-            <div class="settings-card__label" style="display: flex; align-items: center; gap: 8px">
-              {{ $t('settings.uiFontSize') }}
-            </div>
-            <div class="settings-card__desc">{{ $t('settings.uiFontSizeDesc') }}</div>
-          </div>
-          <DynamicSettingControl setting-key="uiFontSize" />
-        </div>
-
-        <div class="settings-card__item">
-          <button
-            class="pin-btn"
-            :class="{ active: ui.pinnedSettings.includes('hoverScale') }"
-            @click="ui.togglePinnedSetting('hoverScale')"
-            :title="$t('settings.pinToSidebar')"
-            :aria-label="$t('settings.pinToSidebar')"
-          >
-            <Pin :size="14" />
-          </button>
-          <div class="settings-card__info">
-            <div class="settings-card__label" style="display: flex; align-items: center; gap: 8px">
-              {{ $t('settings.hoverScale') }}
-            </div>
-            <div class="settings-card__desc">{{ $t('settings.hoverScaleDesc') }}</div>
-          </div>
-          <DynamicSettingControl setting-key="hoverScale" />
-        </div>
-        <div class="settings-card__item">
-          <button
-            class="pin-btn"
-            :class="{ active: ui.pinnedSettings.includes('hoverAutoplay') }"
-            @click="ui.togglePinnedSetting('hoverAutoplay')"
-            :title="$t('settings.pinToSidebar')"
-            :aria-label="$t('settings.pinToSidebar')"
-          >
-            <Pin :size="14" />
-          </button>
-          <div class="settings-card__info">
-            <div class="settings-card__label" style="display: flex; align-items: center; gap: 8px">
-              {{ $t('settings.hoverAutoplay') }}
-            </div>
-            <div class="settings-card__desc">{{ $t('settings.hoverAutoplayDesc') }}</div>
-          </div>
-          <DynamicSettingControl setting-key="hoverAutoplay" />
-        </div>
-        <div class="settings-card__item">
-          <button
-            class="pin-btn"
-            :class="{ active: ui.pinnedSettings.includes('bucketScroll') }"
-            @click="ui.togglePinnedSetting('bucketScroll')"
-            :title="$t('settings.pinToSidebar')"
-            :aria-label="$t('settings.pinToSidebar')"
-          >
-            <Pin :size="14" />
-          </button>
-          <div class="settings-card__info">
-            <div class="settings-card__label" style="display: flex; align-items: center; gap: 8px">
-              {{ $t('settings.bucketScroll') }}
-            </div>
-            <div class="settings-card__desc">{{ $t('settings.bucketScrollDesc') }}</div>
-          </div>
-          <DynamicSettingControl setting-key="bucketScroll" />
-        </div>
-        <div class="settings-card__item">
-          <button
-            class="pin-btn"
-            :class="{ active: ui.pinnedSettings.includes('closeBehavior') }"
-            @click="ui.togglePinnedSetting('closeBehavior')"
-            :title="$t('settings.pinToSidebar')"
-            :aria-label="$t('settings.pinToSidebar')"
-          >
-            <Pin :size="14" />
-          </button>
-          <div class="settings-card__info">
-            <div class="settings-card__label" style="display: flex; align-items: center; gap: 8px">
-              {{ $t('settings.closeBehavior') }}
-            </div>
-            <div class="settings-card__desc">{{ $t('settings.closeBehaviorDesc') }}</div>
-          </div>
-          <DynamicSettingControl setting-key="closeBehavior" />
-        </div>
+        <template v-for="key in sectionSettingKeys('general')" :key="key">
+          <!-- 特例:主题行无右侧控件,其控件为下方 ThemePicker;钉住区仍用 compact select -->
+          <template v-if="key === 'theme'">
+            <SettingRow setting-key="theme" no-control />
+            <ThemePicker />
+          </template>
+          <SettingRow v-else :setting-key="key" />
+        </template>
       </CollapsibleCard>
 
       <!-- ── 缩略图 ───────────────────────────────────────── -->
       <CollapsibleCard id="thumbnails" :title="$t('settings.thumbnails')">
-        <div class="settings-card__item">
-          <button
-            class="pin-btn"
-            :class="{ active: ui.pinnedSettings.includes('showThumbInfo') }"
-            @click="ui.togglePinnedSetting('showThumbInfo')"
-            :title="$t('settings.pinToSidebar')"
-            :aria-label="$t('settings.pinToSidebar')"
-          >
-            <Pin :size="14" />
-          </button>
-          <div class="settings-card__info">
-            <div class="settings-card__label" style="display: flex; align-items: center; gap: 8px">
-              {{ $t('settings.thumbInfoHover') }}
-            </div>
-            <div class="settings-card__desc">{{ $t('settings.thumbInfoHoverDesc') }}</div>
-          </div>
-          <div
-            style="
-              display: flex;
-              flex-direction: column;
-              gap: 8px;
-              align-items: flex-end;
-              max-width: 65%;
-            "
-          >
-            <DynamicSettingControl setting-key="showThumbInfo" />
-            <div
-              v-if="ui.showThumbInfo"
-              style="
-                display: flex;
-                gap: 12px;
-                font-size: 13px;
-                align-items: center;
-                flex-wrap: wrap;
-                justify-content: flex-end;
-                margin-top: 8px;
-                color: var(--color-text-primary);
-              "
-            >
-              <label style="display: flex; align-items: center; gap: 4px"
-                ><input
-                  type="checkbox"
-                  :checked="ui.thumbInfoElements.includes('status')"
-                  @click="handleThumbInfoToggle($event, 'status')"
-                />{{ $t('settings.thumbInfoStatus') }}</label
-              >
-              <label style="display: flex; align-items: center; gap: 4px"
-                ><input
-                  type="checkbox"
-                  :checked="ui.thumbInfoElements.includes('favorite')"
-                  @click="handleThumbInfoToggle($event, 'favorite')"
-                />{{ $t('settings.thumbInfoFavorite') }}</label
-              >
-              <label style="display: flex; align-items: center; gap: 4px"
-                ><input
-                  type="checkbox"
-                  :checked="ui.thumbInfoElements.includes('size')"
-                  @click="handleThumbInfoToggle($event, 'size')"
-                />{{ $t('settings.thumbInfoSize') }}</label
-              >
-              <label style="display: flex; align-items: center; gap: 4px"
-                ><input
-                  type="checkbox"
-                  :checked="ui.thumbInfoElements.includes('resolution')"
-                  @click="handleThumbInfoToggle($event, 'resolution')"
-                />{{ $t('settings.thumbInfoResolution') }}</label
-              >
-              <label style="display: flex; align-items: center; gap: 4px"
-                ><input
-                  type="checkbox"
-                  :checked="ui.thumbInfoElements.includes('date')"
-                  @click="handleThumbInfoToggle($event, 'date')"
-                />{{ $t('settings.thumbInfoDate') }}</label
-              >
-              <label style="display: flex; align-items: center; gap: 4px"
-                ><input
-                  type="checkbox"
-                  :checked="ui.thumbInfoElements.includes('filename')"
-                  @click="handleThumbInfoToggle($event, 'filename')"
-                />{{ $t('settings.thumbInfoFilename') }}</label
-              >
-              <label style="display: flex; align-items: center; gap: 4px"
-                ><input
-                  type="checkbox"
-                  :checked="ui.thumbInfoElements.includes('path')"
-                  @click="handleThumbInfoToggle($event, 'path')"
-                />{{ $t('settings.thumbInfoPath') }}</label
-              >
-              <label style="display: flex; align-items: center; gap: 4px"
-                ><input
-                  type="checkbox"
-                  :checked="ui.thumbInfoElements.includes('geo')"
-                  @click="handleThumbInfoToggle($event, 'geo')"
-                />{{ $t('settings.thumbInfoLocation') }}</label
-              >
-              <label style="display: flex; align-items: center; gap: 4px"
-                ><input
-                  type="checkbox"
-                  :checked="ui.thumbInfoElements.includes('camera')"
-                  @click="handleThumbInfoToggle($event, 'camera')"
-                />{{ $t('settings.thumbInfoCamera') }}</label
-              >
-              <label style="display: flex; align-items: center; gap: 4px"
-                ><input
-                  type="checkbox"
-                  :checked="ui.thumbInfoElements.includes('params')"
-                  @click="handleThumbInfoToggle($event, 'params')"
-                />{{ $t('settings.thumbInfoParams') }}</label
-              >
-            </div>
-          </div>
-        </div>
-
-        <div class="settings-card__item">
-          <button
-            class="pin-btn"
-            :class="{ active: ui.pinnedSettings.includes('thumbDecodeStrategy') }"
-            @click="ui.togglePinnedSetting('thumbDecodeStrategy')"
-            :title="$t('settings.pinToSidebar')"
-            :aria-label="$t('settings.pinToSidebar')"
-          >
-            <Pin :size="14" />
-          </button>
-          <div class="settings-card__info">
-            <div class="settings-card__label" style="display: flex; align-items: center; gap: 8px">
-              {{ $t('settings.thumbDecodeStrategy') }}
-            </div>
-            <div class="settings-card__desc">{{ $t('settings.thumbDecodeDesc') }}</div>
-          </div>
-          <DynamicSettingControl setting-key="thumbDecodeStrategy" />
-        </div>
-
-        <div class="settings-card__item" v-if="config.thumbStrategy === 'gpu'">
-          <button
-            class="pin-btn"
-            :class="{ active: ui.pinnedSettings.includes('gpuEngine') }"
-            @click="ui.togglePinnedSetting('gpuEngine')"
-            :title="$t('settings.pinToSidebar')"
-            :aria-label="$t('settings.pinToSidebar')"
-          >
-            <Pin :size="14" />
-          </button>
-          <div class="settings-card__info">
-            <div class="settings-card__label" style="display: flex; align-items: center; gap: 8px">
-              {{ $t('settings.gpuEngine') }}
-            </div>
-            <div class="settings-card__desc">{{ $t('settings.gpuEngineDesc') }}</div>
-          </div>
-          <DynamicSettingControl setting-key="gpuEngine" />
-        </div>
-
-        <div class="settings-card__item">
-          <button
-            class="pin-btn"
-            :class="{ active: ui.pinnedSettings.includes('thumbCacheDir') }"
-            @click="ui.togglePinnedSetting('thumbCacheDir')"
-            :title="$t('settings.pinToSidebar')"
-            :aria-label="$t('settings.pinToSidebar')"
-          >
-            <Pin :size="14" />
-          </button>
-          <div class="settings-card__info">
-            <div class="settings-card__label" style="display: flex; align-items: center; gap: 8px">
-              {{ $t('settings.thumbCacheDir') }}
-            </div>
-            <div
-              class="settings-card__desc clickable-path"
-              @click="openDirectory(thumbCacheDir)"
-              :title="$t('settings.openInExplorer')"
-            >
-              {{ thumbCacheDir || $t('settings.fetchingPath') }}
-            </div>
-          </div>
-          <button class="btn btn-secondary" @click="changeCacheDir">
-            {{ $t('settings.changeDir') }}
-          </button>
-        </div>
-
-        <div class="settings-card__item">
-          <button
-            class="pin-btn"
-            :class="{ active: ui.pinnedSettings.includes('thumbSize') }"
-            @click="ui.togglePinnedSetting('thumbSize')"
-            :title="$t('settings.pinToSidebar')"
-            :aria-label="$t('settings.pinToSidebar')"
-          >
-            <Pin :size="14" />
-          </button>
-          <div class="settings-card__info">
-            <div class="settings-card__label" style="display: flex; align-items: center; gap: 8px">
-              {{ $t('settings.thumbSize') }}
-            </div>
-            <div class="settings-card__desc">{{ $t('settings.thumbSizeHint') }}</div>
-          </div>
-          <DynamicSettingControl setting-key="thumbSize" />
-        </div>
-
-        <div class="settings-card__item">
-          <button
-            class="pin-btn"
-            :class="{ active: ui.pinnedSettings.includes('thumbSkipMaxKb') }"
-            @click="ui.togglePinnedSetting('thumbSkipMaxKb')"
-            :title="$t('settings.pinToSidebar')"
-            :aria-label="$t('settings.pinToSidebar')"
-          >
-            <Pin :size="14" />
-          </button>
-          <div class="settings-card__info">
-            <div class="settings-card__label" style="display: flex; align-items: center; gap: 8px">
-              {{ $t('settings.thumbSkipMaxKb') }}
-            </div>
-            <div class="settings-card__desc">{{ $t('settings.thumbSkipDesc') }}</div>
-          </div>
-          <DynamicSettingControl setting-key="thumbSkipMaxKb" />
-        </div>
-
-        <div class="settings-card__item">
-          <button
-            class="pin-btn"
-            :class="{ active: ui.pinnedSettings.includes('thumbCacheMaxMb') }"
-            @click="ui.togglePinnedSetting('thumbCacheMaxMb')"
-            :title="$t('settings.pinToSidebar')"
-            :aria-label="$t('settings.pinToSidebar')"
-          >
-            <Pin :size="14" />
-          </button>
-          <div class="settings-card__info">
-            <div class="settings-card__label" style="display: flex; align-items: center; gap: 8px">
-              {{ $t('settings.thumbCacheMaxMb') }}
-            </div>
-            <div class="settings-card__desc">{{ $t('settings.thumbCacheDesc') }}</div>
-          </div>
-          <DynamicSettingControl setting-key="thumbCacheMaxMb" />
-        </div>
-
-        <div class="settings-card__item">
-          <button
-            class="pin-btn"
-            :class="{ active: ui.pinnedSettings.includes('timelineScrollWidth') }"
-            @click="ui.togglePinnedSetting('timelineScrollWidth')"
-            :title="$t('settings.pinToSidebar')"
-            :aria-label="$t('settings.pinToSidebar')"
-          >
-            <Pin :size="14" />
-          </button>
-          <div class="settings-card__info">
-            <div class="settings-card__label" style="display: flex; align-items: center; gap: 8px">
-              {{ $t('settings.timelineScrollWidth') }}
-            </div>
-            <div class="settings-card__desc">{{ $t('settings.timelineScrollDesc') }}</div>
-          </div>
-          <DynamicSettingControl setting-key="timelineScrollWidth" />
-        </div>
-
-        <div class="settings-card__item">
-          <button
-            class="pin-btn"
-            :class="{ active: ui.pinnedSettings.includes('fullThumbGen') }"
-            @click="ui.togglePinnedSetting('fullThumbGen')"
-            :title="$t('settings.pinToSidebar')"
-            :aria-label="$t('settings.pinToSidebar')"
-          >
-            <Pin :size="14" />
-          </button>
-          <div class="settings-card__info">
-            <div class="settings-card__label" style="display: flex; align-items: center; gap: 8px">
-              {{ $t('settings.fullThumbGen') }}
-            </div>
-            <div class="settings-card__desc">{{ $t('settings.fullThumbGenDesc') }}</div>
-            <div v-if="scan.thumbGenProgress.status !== 'idle'" class="thumb-gen-status">
-              <div class="progress-bar">
-                <div
-                  class="progress-bar__fill"
-                  :class="{ 'progress-shimmer': scan.thumbGenProgress.isRunning }"
-                  :style="{ width: thumbGenPercent + '%' }"
-                />
-              </div>
-              <div class="thumb-gen-text" style="display: flex; align-items: center; gap: 6px">
-                <span v-if="scan.thumbGenProgress.isRunning">{{
-                  $t('settings.genStatusRunning', {
-                    generated: scan.thumbGenProgress.generated,
-                    total: scan.thumbGenProgress.total,
-                  })
-                }}</span>
-                <span
-                  v-if="scan.thumbGenProgress.isRunning && scan.thumbGenProgress.phase"
-                  style="
-                    font-weight: 500;
-                    color: var(--color-warning);
-                    border: 1px solid currentColor;
-                    padding: 0 4px;
-                    border-radius: 4px;
-                    font-size: 10px;
-                    line-height: 1.2;
-                  "
-                  >[{{ scan.thumbGenProgress.phase }}]</span
-                >
-                <span v-else-if="scan.thumbGenProgress.status === 'completed'">{{
-                  $t('settings.genStatusCompleted')
-                }}</span>
-                <span v-else-if="scan.thumbGenProgress.status === 'cancelled'">{{
-                  $t('settings.genStatusCancelled')
-                }}</span>
-                <span v-else-if="scan.thumbGenProgress.status === 'error'">{{
-                  $t('settings.genStatusError')
-                }}</span>
+        <template v-for="key in sectionSettingKeys('thumbnails')" :key="key">
+          <!-- 特例:悬停信息开关下挂信息元素多选面板 -->
+          <SettingRow v-if="key === 'showThumbInfo'" setting-key="showThumbInfo">
+            <div class="thumb-info-stack">
+              <DynamicSettingControl setting-key="showThumbInfo" />
+              <div v-if="ui.showThumbInfo" class="thumb-info-options">
+                <label v-for="el in THUMB_INFO_ELEMENTS" :key="el.value" class="thumb-info-option">
+                  <input
+                    type="checkbox"
+                    :checked="ui.thumbInfoElements.includes(el.value)"
+                    @click="handleThumbInfoToggle($event, el.value)"
+                  />{{ $t(el.labelKey) }}
+                </label>
               </div>
             </div>
-          </div>
-          <div class="setting-actions">
-            <button
-              v-if="scan.thumbGenProgress.isRunning"
-              class="btn btn-secondary"
-              @click="scan.stopFullThumbnailGeneration()"
-            >
-              {{ $t('settings.stopGen') }}
+          </SettingRow>
+          <!-- 特例:缓存目录(可点路径描述 + 换目录按钮) -->
+          <SettingRow v-else-if="key === 'thumbCacheDir'" setting-key="thumbCacheDir">
+            <template #desc>
+              <div
+                class="settings-card__desc clickable-path"
+                @click="openDirectory(thumbCacheDir)"
+                :title="$t('settings.openInExplorer')"
+              >
+                {{ thumbCacheDir || $t('settings.fetchingPath') }}
+              </div>
+            </template>
+            <button class="btn btn-secondary" @click="changeCacheDir">
+              {{ $t('settings.changeDir') }}
             </button>
-            <button v-else class="btn btn-primary" @click="scan.startFullThumbnailGeneration()">
-              {{ $t('settings.startGen') }}
-            </button>
-          </div>
-        </div>
+          </SettingRow>
+          <!-- 特例:全量缩略图生成(进度条 + 启停按钮) -->
+          <SettingRow v-else-if="key === 'fullThumbGen'" setting-key="fullThumbGen">
+            <template #extra>
+              <div v-if="scan.thumbGenProgress.status !== 'idle'" class="thumb-gen-status">
+                <div class="progress-bar">
+                  <div
+                    class="progress-bar__fill"
+                    :class="{ 'progress-shimmer': scan.thumbGenProgress.isRunning }"
+                    :style="{ width: thumbGenPercent + '%' }"
+                  />
+                </div>
+                <div class="thumb-gen-text">
+                  <span v-if="scan.thumbGenProgress.isRunning">{{
+                    $t('settings.genStatusRunning', {
+                      generated: scan.thumbGenProgress.generated,
+                      total: scan.thumbGenProgress.total,
+                    })
+                  }}</span>
+                  <span
+                    v-if="scan.thumbGenProgress.isRunning && scan.thumbGenProgress.phase"
+                    class="thumb-gen-phase"
+                    >[{{ scan.thumbGenProgress.phase }}]</span
+                  >
+                  <span v-else-if="scan.thumbGenProgress.status === 'completed'">{{
+                    $t('settings.genStatusCompleted')
+                  }}</span>
+                  <span v-else-if="scan.thumbGenProgress.status === 'cancelled'">{{
+                    $t('settings.genStatusCancelled')
+                  }}</span>
+                  <span v-else-if="scan.thumbGenProgress.status === 'error'">{{
+                    $t('settings.genStatusError')
+                  }}</span>
+                </div>
+              </div>
+            </template>
+            <div class="setting-actions">
+              <button
+                v-if="scan.thumbGenProgress.isRunning"
+                class="btn btn-secondary"
+                @click="scan.stopFullThumbnailGeneration()"
+              >
+                {{ $t('settings.stopGen') }}
+              </button>
+              <button v-else class="btn btn-primary" @click="scan.startFullThumbnailGeneration()">
+                {{ $t('settings.startGen') }}
+              </button>
+            </div>
+          </SettingRow>
+          <!-- gpuEngine 行仅在解码策略=GPU 时可见(rowVisible,与原 v-if 一致) -->
+          <SettingRow v-else-if="rowVisible(key)" :setting-key="key" />
+        </template>
       </CollapsibleCard>
 
       <!-- ── 视频 ─────────────────────────────────────────── -->
       <CollapsibleCard id="video" :title="$t('settings.video')">
-        <div class="settings-card__item">
-          <button
-            class="pin-btn"
-            :class="{ active: ui.pinnedSettings.includes('enableVideoCover') }"
-            @click="ui.togglePinnedSetting('enableVideoCover')"
-            :title="$t('settings.pinToSidebar')"
-            :aria-label="$t('settings.pinToSidebar')"
-          >
-            <Pin :size="14" />
-          </button>
-          <div class="settings-card__info">
-            <div class="settings-card__label" style="display: flex; align-items: center; gap: 8px">
-              {{ $t('settings.enableVideoCover') }}
-            </div>
-            <div class="settings-card__desc">{{ $t('settings.enableVideoCoverDesc') }}</div>
-          </div>
-          <DynamicSettingControl setting-key="enableVideoCover" />
-        </div>
-
-        <div class="settings-card__item">
-          <button
-            class="pin-btn"
-            :class="{ active: ui.pinnedSettings.includes('enableVideoKeyframes') }"
-            @click="ui.togglePinnedSetting('enableVideoKeyframes')"
-            :title="$t('settings.pinToSidebar')"
-            :aria-label="$t('settings.pinToSidebar')"
-          >
-            <Pin :size="14" />
-          </button>
-          <div class="settings-card__info">
-            <div class="settings-card__label" style="display: flex; align-items: center; gap: 8px">
-              {{ $t('settings.enableVideoKeyframes') }}
-            </div>
-            <div class="settings-card__desc">{{ $t('settings.enableVideoKeyframesDesc') }}</div>
-          </div>
-          <DynamicSettingControl setting-key="enableVideoKeyframes" />
-        </div>
+        <SettingRow v-for="key in sectionSettingKeys('video')" :key="key" :setting-key="key" />
       </CollapsibleCard>
 
       <!-- ── AI 模型配置 ──────────────────────────────────── -->
       <CollapsibleCard id="aiModels" :title="$t('settings.aiModels')">
-        <div class="settings-card__item">
-          <button
-            class="pin-btn"
-            :class="{ active: ui.pinnedSettings.includes('aiEngineStatus') }"
-            @click="ui.togglePinnedSetting('aiEngineStatus')"
-            :title="$t('settings.pinToSidebar')"
-            :aria-label="$t('settings.pinToSidebar')"
-          >
-            <Pin :size="14" />
-          </button>
-          <div class="settings-card__info">
-            <div class="settings-card__label" style="display: flex; align-items: center; gap: 8px">
-              {{ $t('settings.aiEngineStatus') }}
-            </div>
-            <div class="settings-card__desc">
-              {{ ai.providerLabel }} {{ ai.status.gpuName ? `(${ai.status.gpuName})` : '' }}
-              <span v-if="ai.status.vramGb !== null">
-                [{{ $t('settings.aiVram') }}: {{ ai.status.vramGb }}GB]</span
-              >
-              <span v-if="!ai.status.clipLoaded" style="color: var(--color-warning)">
-                {{ $t('settings.aiModelNotLoaded') }}</span
-              >
-              <span v-else style="color: var(--color-success)">
-                {{ $t('settings.aiModelLoaded') }}</span
-              >
-            </div>
-          </div>
-          <button class="btn btn-secondary" @click="ai.initEngine" :disabled="ai.status.clipLoaded">
-            {{ $t('settings.aiTestLoad') }}
-          </button>
-        </div>
-
-        <div class="settings-card__item">
-          <button
-            class="pin-btn"
-            :class="{ active: ui.pinnedSettings.includes('aiHqCache') }"
-            @click="ui.togglePinnedSetting('aiHqCache')"
-            :title="$t('settings.pinToSidebar')"
-            :aria-label="$t('settings.pinToSidebar')"
-          >
-            <Pin :size="14" />
-          </button>
-          <div class="settings-card__info">
-            <div class="settings-card__label" style="display: flex; align-items: center; gap: 8px">
-              {{ $t('settings.aiHqCache') }}
-            </div>
-            <div class="settings-card__desc">{{ $t('settings.aiHqCacheDesc') }}</div>
-          </div>
-          <DynamicSettingControl setting-key="aiHqCache" />
-        </div>
-
-        <div class="settings-card__item">
-          <button
-            class="pin-btn"
-            :class="{ active: ui.pinnedSettings.includes('aiBatchSize') }"
-            @click="ui.togglePinnedSetting('aiBatchSize')"
-            :title="$t('settings.pinToSidebar')"
-            :aria-label="$t('settings.pinToSidebar')"
-          >
-            <Pin :size="14" />
-          </button>
-          <div class="settings-card__info">
-            <div class="settings-card__label" style="display: flex; align-items: center; gap: 8px">
-              {{ $t('settings.aiBatchSize') }}
-            </div>
-            <div class="settings-card__desc">{{ $t('settings.aiBatchSizeDesc') }}</div>
-          </div>
-          <DynamicSettingControl setting-key="aiBatchSize" />
-        </div>
-
-        <div class="settings-card__item">
-          <button
-            class="pin-btn"
-            :class="{ active: ui.pinnedSettings.includes('aiHardwareStrategy') }"
-            @click="ui.togglePinnedSetting('aiHardwareStrategy')"
-            :title="$t('settings.pinToSidebar')"
-            :aria-label="$t('settings.pinToSidebar')"
-          >
-            <Pin :size="14" />
-          </button>
-          <div class="settings-card__info">
-            <div class="settings-card__label" style="display: flex; align-items: center; gap: 8px">
-              {{ $t('settings.aiHardwareStrategy') }}
-            </div>
-            <div class="settings-card__desc">
-              {{ $t('settings.aiHardwareDesc') }}
-            </div>
-          </div>
-          <DynamicSettingControl setting-key="aiHardwareStrategy" />
-        </div>
+        <template v-for="key in sectionSettingKeys('aiModels')" :key="key">
+          <!-- 特例:引擎状态(设备/显存/模型加载状态描述 + 测试加载按钮) -->
+          <SettingRow v-if="key === 'aiEngineStatus'" setting-key="aiEngineStatus">
+            <template #desc>
+              <div class="settings-card__desc">
+                {{ ai.providerLabel }} {{ ai.status.gpuName ? `(${ai.status.gpuName})` : '' }}
+                <span v-if="ai.status.vramGb !== null">
+                  [{{ $t('settings.aiVram') }}: {{ ai.status.vramGb }}GB]</span
+                >
+                <span v-if="!ai.status.clipLoaded" class="ai-status-warn">
+                  {{ $t('settings.aiModelNotLoaded') }}</span
+                >
+                <span v-else class="ai-status-ok"> {{ $t('settings.aiModelLoaded') }}</span>
+              </div>
+            </template>
+            <button
+              class="btn btn-secondary"
+              @click="ai.initEngine"
+              :disabled="ai.status.clipLoaded"
+            >
+              {{ $t('settings.aiTestLoad') }}
+            </button>
+          </SettingRow>
+          <SettingRow v-else :setting-key="key" />
+        </template>
         <!-- 手动导入 / 图像·文本模型选择已移除：模型的下载与切换统一由下方「模型库」管理。 -->
       </CollapsibleCard>
 
@@ -635,146 +174,24 @@
 
       <!-- ── 开发者工具 ─────────────────────────────────── -->
       <CollapsibleCard id="debug" :title="$t('sidebar.debugSettings')">
-        <div class="settings-card__item">
-          <button
-            class="pin-btn"
-            :class="{ active: ui.pinnedSettings.includes('clearDb') }"
-            @click="ui.togglePinnedSetting('clearDb')"
-            :title="$t('settings.pinToSidebar')"
-            :aria-label="$t('settings.pinToSidebar')"
-          >
-            <Pin :size="14" />
-          </button>
-          <div class="settings-card__info">
-            <div class="settings-card__label" style="display: flex; align-items: center; gap: 8px">
-              {{ $t('settings.clearDb') }}
-            </div>
-            <div class="settings-card__desc">{{ $t('settings.clearDbDesc') }}</div>
-          </div>
-          <DynamicSettingControl setting-key="clearDb" />
-        </div>
-
-        <div class="settings-card__item">
-          <button
-            class="pin-btn"
-            :class="{ active: ui.pinnedSettings.includes('clearSettings') }"
-            @click="ui.togglePinnedSetting('clearSettings')"
-            :title="$t('settings.pinToSidebar')"
-            :aria-label="$t('settings.pinToSidebar')"
-          >
-            <Pin :size="14" />
-          </button>
-          <div class="settings-card__info">
-            <div class="settings-card__label" style="display: flex; align-items: center; gap: 8px">
-              {{ $t('settings.clearSettings') }}
-            </div>
-            <div class="settings-card__desc">{{ $t('settings.clearSettingsDesc') }}</div>
-          </div>
-          <DynamicSettingControl setting-key="clearSettings" />
-        </div>
-
-        <div class="settings-card__item">
-          <button
-            class="pin-btn"
-            :class="{ active: ui.pinnedSettings.includes('logLevel') }"
-            @click="ui.togglePinnedSetting('logLevel')"
-            :title="$t('settings.pinToSidebar')"
-            :aria-label="$t('settings.pinToSidebar')"
-          >
-            <Pin :size="14" />
-          </button>
-          <div class="settings-card__info">
-            <div class="settings-card__label" style="display: flex; align-items: center; gap: 8px">
-              {{ $t('settings.logLevel') }}
-            </div>
-            <div class="settings-card__desc">{{ $t('settings.logLevelDesc') }}</div>
-          </div>
-          <DynamicSettingControl setting-key="logLevel" />
-        </div>
-
-        <div class="settings-card__item">
-          <button
-            class="pin-btn"
-            :class="{ active: ui.pinnedSettings.includes('logDir') }"
-            @click="ui.togglePinnedSetting('logDir')"
-            :title="$t('settings.pinToSidebar')"
-            :aria-label="$t('settings.pinToSidebar')"
-          >
-            <Pin :size="14" />
-          </button>
-          <div class="settings-card__info">
-            <div class="settings-card__label" style="display: flex; align-items: center; gap: 8px">
-              {{ $t('settings.logDir') }}
-            </div>
-            <div
-              class="settings-card__desc clickable-path"
-              @click="openDirectory(logDir)"
-              :title="$t('settings.openInExplorer')"
-            >
-              {{ logDir || $t('settings.fetchingPath') }}
-            </div>
-          </div>
-          <button class="btn btn-secondary" @click="changeLogDir">
-            {{ $t('settings.changeDir') }}
-          </button>
-        </div>
-
-        <div class="settings-card__item">
-          <button
-            class="pin-btn"
-            :class="{ active: ui.pinnedSettings.includes('clearAllThumbnails') }"
-            @click="ui.togglePinnedSetting('clearAllThumbnails')"
-            :title="$t('settings.pinToSidebar')"
-            :aria-label="$t('settings.pinToSidebar')"
-          >
-            <Pin :size="14" />
-          </button>
-          <div class="settings-card__info">
-            <div class="settings-card__label" style="display: flex; align-items: center; gap: 8px">
-              {{ $t('settings.clearAllThumbnails') }}
-            </div>
-            <div class="settings-card__desc">{{ $t('settings.clearAllThumbnailsDesc') }}</div>
-          </div>
-          <DynamicSettingControl setting-key="clearAllThumbnails" />
-        </div>
-
-        <div class="settings-card__item">
-          <button
-            class="pin-btn"
-            :class="{ active: ui.pinnedSettings.includes('clearBrowserCache') }"
-            @click="ui.togglePinnedSetting('clearBrowserCache')"
-            :title="$t('settings.pinToSidebar')"
-            :aria-label="$t('settings.pinToSidebar')"
-          >
-            <Pin :size="14" />
-          </button>
-          <div class="settings-card__info">
-            <div class="settings-card__label" style="display: flex; align-items: center; gap: 8px">
-              {{ $t('settings.clearBrowserCache') }}
-            </div>
-            <div class="settings-card__desc">{{ $t('settings.clearBrowserCacheDesc') }}</div>
-          </div>
-          <DynamicSettingControl setting-key="clearBrowserCache" />
-        </div>
-
-        <div class="settings-card__item">
-          <button
-            class="pin-btn"
-            :class="{ active: ui.pinnedSettings.includes('clearLogs') }"
-            @click="ui.togglePinnedSetting('clearLogs')"
-            :title="$t('settings.pinToSidebar')"
-            :aria-label="$t('settings.pinToSidebar')"
-          >
-            <Pin :size="14" />
-          </button>
-          <div class="settings-card__info">
-            <div class="settings-card__label" style="display: flex; align-items: center; gap: 8px">
-              {{ $t('settings.clearLogs') }}
-            </div>
-            <div class="settings-card__desc">{{ $t('settings.clearLogsDesc') }}</div>
-          </div>
-          <DynamicSettingControl setting-key="clearLogs" />
-        </div>
+        <template v-for="key in sectionSettingKeys('debug')" :key="key">
+          <!-- 特例:日志目录(可点路径描述 + 换目录按钮) -->
+          <SettingRow v-if="key === 'logDir'" setting-key="logDir">
+            <template #desc>
+              <div
+                class="settings-card__desc clickable-path"
+                @click="openDirectory(logDir)"
+                :title="$t('settings.openInExplorer')"
+              >
+                {{ logDir || $t('settings.fetchingPath') }}
+              </div>
+            </template>
+            <button class="btn btn-secondary" @click="changeLogDir">
+              {{ $t('settings.changeDir') }}
+            </button>
+          </SettingRow>
+          <SettingRow v-else :setting-key="key" />
+        </template>
       </CollapsibleCard>
     </main>
   </div>
@@ -789,15 +206,13 @@ import { useMediaStore } from '../stores/mediaStore'
 import { useAiStore } from '../stores/aiStore'
 import { useConfigStore } from '../stores/configStore'
 import { useI18n } from 'vue-i18n'
-import {
-  X,
-  Pin,
-  ChevronsDownUp,
-  ChevronsUpDown,
-} from '@lucide/vue'
+import { X, ChevronsDownUp, ChevronsUpDown } from '@lucide/vue'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { IPC } from '../constants/ipc'
+import { sectionSettingKeys } from '../constants/settingsMap'
+import SettingRow from '../components/settings/SettingRow.vue'
 import DynamicSettingControl from '../components/settings/DynamicSettingControl.vue'
+import ThemePicker from '../components/settings/ThemePicker.vue'
 import NetworkStorageSection from '../components/settings/NetworkStorageSection.vue'
 import KnownVolumesSection from '../components/settings/KnownVolumesSection.vue'
 import ModelLibrary from '../components/settings/ModelLibrary.vue'
@@ -817,6 +232,25 @@ const cards = useSettingsCards()
 function toggleAllCards() {
   cards.setAll(!cards.allOpen.value)
 }
+
+// gpuEngine 行仅在解码策略=GPU 时显示(注册式重构前的行级 v-if 原样保留,§8)。
+function rowVisible(key: string): boolean {
+  return key !== 'gpuEngine' || config.thumbStrategy === 'gpu'
+}
+
+// 悬停信息元素多选面板(顺序即渲染顺序;geo 的 i18n key 为历史命名 thumbInfoLocation)。
+const THUMB_INFO_ELEMENTS = [
+  { value: 'status', labelKey: 'settings.thumbInfoStatus' },
+  { value: 'favorite', labelKey: 'settings.thumbInfoFavorite' },
+  { value: 'size', labelKey: 'settings.thumbInfoSize' },
+  { value: 'resolution', labelKey: 'settings.thumbInfoResolution' },
+  { value: 'date', labelKey: 'settings.thumbInfoDate' },
+  { value: 'filename', labelKey: 'settings.thumbInfoFilename' },
+  { value: 'path', labelKey: 'settings.thumbInfoPath' },
+  { value: 'geo', labelKey: 'settings.thumbInfoLocation' },
+  { value: 'camera', labelKey: 'settings.thumbInfoCamera' },
+  { value: 'params', labelKey: 'settings.thumbInfoParams' },
+]
 
 const thumbCacheDir = ref('')
 const logDir = ref('')
@@ -1009,7 +443,7 @@ function closeSettings() {
 }
 .btn-close:hover {
   background: var(--color-error);
-  color: white;
+  color: var(--color-text-inverse);
   border-color: var(--color-error);
 }
 
@@ -1023,13 +457,9 @@ function closeSettings() {
   gap: 24px;
 }
 
-.settings-card__item {
-  padding-left: 12px;
-}
-
 /* ── Card overrides (extend global .settings-card) ─────────────────────── */
 /* The base .settings-card styles are in index.css. */
-/* Here we only add component-specific refinements. */
+/* 行外壳(__item 内边距/pin 钮)样式已随 §8 注册式重构移入 SettingRow.vue。 */
 
 .clickable-path {
   cursor: pointer;
@@ -1075,8 +505,53 @@ function closeSettings() {
   animation: shimmer 1.5s ease-in-out infinite;
 }
 .thumb-gen-text {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
+}
+/* 生成阶段小徽章(原内联 style 收进 class,S6) */
+.thumb-gen-phase {
+  font-weight: 500;
+  color: var(--color-warning);
+  border: 1px solid currentColor;
+  padding: 0 4px;
+  border-radius: 4px;
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+/* ── 悬停信息元素多选面板(原内联 style 收进 class,S6)─────────────────── */
+.thumb-info-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-end;
+  max-width: 65%;
+}
+.thumb-info-options {
+  display: flex;
+  gap: 12px;
+  font-size: 13px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  margin-top: 8px;
+  color: var(--color-text-primary);
+}
+.thumb-info-option {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ── AI 引擎状态描述(原内联 style 收进 class,S6)──────────────────────── */
+.ai-status-warn {
+  color: var(--color-warning);
+}
+.ai-status-ok {
+  color: var(--color-success);
 }
 @keyframes shimmer {
   0% {
@@ -1091,27 +566,6 @@ function closeSettings() {
 .setting-actions {
   display: flex;
   gap: var(--spacing-sm);
-}
-
-.pin-btn {
-  background: transparent;
-  border: none;
-  color: var(--color-text-tertiary);
-  cursor: pointer;
-  padding: 4px;
-  border-radius: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all var(--transition-fast);
-}
-.pin-btn:hover {
-  background: var(--color-bg-elevated);
-  color: var(--color-text-secondary);
-}
-.pin-btn.active {
-  color: var(--color-primary);
-  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
 }
 
 .btn {
@@ -1139,7 +593,8 @@ function closeSettings() {
 }
 .btn-primary {
   background: var(--color-accent);
-  color: #fff;
+  /* 彩底文字用反色 token:暗色主题 accent 偏亮,白字不可读(同 S5 批2 纪律) */
+  color: var(--color-text-inverse);
 }
 .btn-primary:hover {
   filter: brightness(1.1);
@@ -1151,7 +606,7 @@ function closeSettings() {
 }
 .btn-danger:hover {
   background: var(--color-error);
-  color: #fff;
+  color: var(--color-text-inverse);
   border-color: var(--color-error);
 }
 </style>

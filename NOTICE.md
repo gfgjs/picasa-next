@@ -1,6 +1,9 @@
 # Third-Party Notices
 
-Picasa Next (working title) incorporates third-party open-source software.
+Scrollery
+Copyright 2026 The Scrollery Authors
+
+Scrollery incorporates third-party open-source software.
 This file lists the packages distributed with the application (desktop app,
 bundled workers, and the compiled frontend) together with their declared licenses.
 
@@ -47,13 +50,14 @@ Application version at generation time: 0.1.0
 | CC0-1.0 OR MIT-0 OR Apache-2.0 | 1 |
 | CDLA-Permissive-2.0 | 1 |
 | MIT OR Zlib OR Apache-2.0 | 1 |
+| OFL-1.1 | 1 |
 | Unlicense | 1 |
 | Zlib | 1 |
 | Zlib OR Apache-2.0 OR MIT | 1 |
 
 ## Rust crates (402) — desktop application and workers
 
-Dependency closure (normal deps) of the shipped binaries `picasa-next`,
+Dependency closure (normal deps) of the shipped binaries `scrollery`,
 `ai-worker` and `psd-worker`, resolved for `x86_64-pc-windows-msvc`.
 
 | Crate | Version | License |
@@ -461,7 +465,7 @@ Dependency closure (normal deps) of the shipped binaries `picasa-next`,
 | [zune-core](https://crates.io/crates/zune-core) | 0.5.1 | MIT OR Apache-2.0 OR Zlib |
 | [zune-jpeg](https://crates.io/crates/zune-jpeg) | 0.5.15 | MIT OR Apache-2.0 OR Zlib |
 
-## npm packages (95) — frontend bundle
+## npm packages (96) — frontend bundle
 
 Production dependency closure from `package-lock.json` (dev tooling excluded).
 
@@ -471,6 +475,7 @@ Production dependency closure from `package-lock.json` (dev tooling excluded).
 | [@babel/helper-validator-identifier](https://www.npmjs.com/package/@babel/helper-validator-identifier) | 7.29.7 | MIT |
 | [@babel/parser](https://www.npmjs.com/package/@babel/parser) | 7.29.7 | MIT |
 | [@babel/types](https://www.npmjs.com/package/@babel/types) | 7.29.7 | MIT |
+| [@fontsource-variable/inter](https://www.npmjs.com/package/@fontsource-variable/inter) | 5.2.8 | OFL-1.1 |
 | [@intlify/core-base](https://www.npmjs.com/package/@intlify/core-base) | 9.14.5 | MIT |
 | [@intlify/message-compiler](https://www.npmjs.com/package/@intlify/message-compiler) | 9.14.5 | MIT |
 | [@intlify/shared](https://www.npmjs.com/package/@intlify/shared) | 9.14.5 | MIT |

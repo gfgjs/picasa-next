@@ -123,7 +123,8 @@
             :class="{ 'is-active': i === activeLine }"
             @click="seekTo(line.time)"
           >
-            {{ line.text || '♪' }}
+            <template v-if="line.text">{{ line.text }}</template>
+            <Music v-else :size="12" aria-hidden="true" />
           </p>
         </template>
         <pre v-else-if="detail.lyrics" class="audio-player__lyric-plain">{{ detail.lyrics }}</pre>
@@ -326,7 +327,8 @@ onBeforeUnmount(() => {
   inset: 0;
   display: flex;
   flex-direction: column;
-  background: var(--color-bg-base);
+  /* 原 --color-bg-base 为不存在的幽灵 token 且无 fallback——实际渲染透明(S5 修) */
+  background: var(--color-bg-primary);
   z-index: 5;
 }
 .audio-player__toolbar {

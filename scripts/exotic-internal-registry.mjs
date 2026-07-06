@@ -44,7 +44,7 @@ const LICENSE_KEY_ID = 'license-internal-2026-07';
 // 内测发行源(公开仓 raw 直链;更新 registry = 向该仓 push 新的三件套)。
 const REG_BASE =
   process.env.PICASA_INTERNAL_REGISTRY_BASE ||
-  'https://raw.githubusercontent.com/gfgjs/picasa-next-registry/main/exotic/v1';
+  'https://raw.githubusercontent.com/gfgjs/scrollery-registry/main/exotic/v1';
 
 // ── 1. 内测密钥对(存在即复用;与 dev/生产信任根均隔离) ───────────────────────
 const releaseKey = ensureKey(path.join(out, 'internal-release.pem'));
@@ -53,7 +53,7 @@ const licenseKey = ensureKey(path.join(out, 'internal-license.pem'));
 // keyset = 仓内占位生产集 + 内测键(超集,保注入态下既有测试断言成立)。
 const placeholder = JSON.parse(
   fs.readFileSync(
-    path.join(repo, 'crates', 'picasa-next-exotic-trust', 'resources', 'exotic-keyset.json'),
+    path.join(repo, 'crates', 'scrollery-exotic-trust', 'resources', 'exotic-keyset.json'),
     'utf8'
   )
 );
@@ -141,7 +141,7 @@ console.log(`内测 registry 已生成(seq=${seq}, version=${version}, 有效期
 
 下一步:
   1) 把三件套推到发行源仓的 exotic/v1/ 目录(路径须与发行基址一致);
-  2) 产物自检:cargo test -p picasa-next --lib internal_registry_artifacts -- --ignored
+  2) 产物自检:cargo test -p scrollery --lib internal_registry_artifacts -- --ignored
   3) 内测安装包构建(编译期注入,见 scripts/build-internal-installer.ps1):
      $env:PICASA_EXOTIC_KEYSET_FILE = '${path.join(out, 'internal-keyset.json')}'
      $env:PICASA_REGISTRY_BASE_DEFAULT = '${REG_BASE}'

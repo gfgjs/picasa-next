@@ -8,7 +8,7 @@
 //! 语义 =「与进程内实现逐位一致」;此后模型变更须重生成(见 --export-golden),
 //! 黄金语义降为「当前 worker 行为快照」的回归基线。
 //!
-//! 对拍有硬数值预期:黄金与 worker 共用 picasa-next-ai-core 同一套 preprocess/encode,
+//! 对拍有硬数值预期:黄金与 worker 共用 scrollery-ai-core 同一套 preprocess/encode,
 //! B/16 导出为固定 batch=1(批内逐张分块),EP 同为 auto(DirectML)——余弦应 >0.999,
 //! 不是「大致相似」。文本塔恒 CPU,close→重 init 后应完全确定(≈1.0)。
 //!
@@ -26,9 +26,9 @@
 //!      不重 init)的实测覆盖。
 //!
 //! 用法:
-//!   cargo build -p ai-worker && cargo run -p picasa-next --bin worker_e2e [-- <models_dir> [ai_cache_dir]]
-//! 缺省 models_dir = `%APPDATA%/com.picasanext.app/models`,
-//!       ai_cache_dir = `%APPDATA%/com.picasanext.app/cache/ai_thumbs`(开发机常规位置)。
+//!   cargo build -p ai-worker && cargo run -p scrollery --bin worker_e2e [-- <models_dir> [ai_cache_dir]]
+//! 缺省 models_dir = `%APPDATA%/com.scrollery.app/models`,
+//!       ai_cache_dir = `%APPDATA%/com.scrollery.app/cache/ai_thumbs`(开发机常规位置)。
 //! 退出码:全部通过 = 0;任一检查失败 = 1(打印 ❌ 明细)。
 //!
 //! 黄金向量重生成:`worker_e2e --export-golden [<models_dir> [ai_cache_dir]]`
@@ -39,10 +39,10 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use exotic_protocol::{EmbedItem, FaceItem};
-use picasa_next_lib::ai::face_profile::default_face_profile;
-use picasa_next_lib::ai::profile::{resolve_profile, ModelProfile, DEFAULT_PROFILE_ID};
-use picasa_next_lib::ai::worker_client::{ai_worker_exe, AiWorkerClient, SessionSpec};
-use picasa_next_lib::exotic::worker::{EmbedItemOutcome, FaceItemOutcome};
+use scrollery_lib::ai::face_profile::default_face_profile;
+use scrollery_lib::ai::profile::{resolve_profile, ModelProfile, DEFAULT_PROFILE_ID};
+use scrollery_lib::ai::worker_client::{ai_worker_exe, AiWorkerClient, SessionSpec};
+use scrollery_lib::exotic::worker::{EmbedItemOutcome, FaceItemOutcome};
 
 /// 对拍采样张数(均匀取自 ai_cache 全量,确定性)。
 const SAMPLE_COUNT: usize = 8;
@@ -111,7 +111,7 @@ struct GoldenFaceDet {
 
 /// 模型文件 sha256 前 16 hex(黄金文件的防错拍指纹)。
 fn sha16(models_dir: &Path, file: &str) -> String {
-    let hex = picasa_next_lib::utils::hash::sha256_hex_of_file(&models_dir.join(file))
+    let hex = scrollery_lib::utils::hash::sha256_hex_of_file(&models_dir.join(file))
         .expect("模型文件 sha256 计算失败");
     hex[..16].to_string()
 }
@@ -337,12 +337,12 @@ fn main() {
     let appdata = || std::env::var("APPDATA").expect("APPDATA 环境变量缺失,请显式传参");
     let models_dir: PathBuf = args.next().map(PathBuf::from).unwrap_or_else(|| {
         PathBuf::from(appdata())
-            .join("com.picasanext.app")
+            .join("com.scrollery.app")
             .join("models")
     });
     let ai_cache_dir: PathBuf = args.next().map(PathBuf::from).unwrap_or_else(|| {
         PathBuf::from(appdata())
-            .join("com.picasanext.app")
+            .join("com.scrollery.app")
             .join("cache")
             .join("ai_thumbs")
     });

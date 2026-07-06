@@ -13,7 +13,7 @@
 //! 桩本身**无条件编译**(不含任何 DRM/updater 敏感代码,§3.6.2 物理排除面不涉及它),
 //! 使默认 CI 矩阵天然覆盖其单测;仅工厂的**选择**按 channel feature 门控。
 
-use picasa_next_plugin_api::{EntitlementProvider, LicenseStatus};
+use scrollery_plugin_api::{EntitlementProvider, LicenseStatus};
 
 /// MS Store 渠道骨架桩:授权真相将来自 `StoreContext` 平台收据(Part8 D5-D7)。
 /// 接线前无从证明任何授权 → 恒 `Unlicensed`,激活 fail-closed。
@@ -47,7 +47,7 @@ impl EntitlementProvider for SteamEntitlementStub {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use picasa_next_plugin_api::LicenseError;
+    use scrollery_plugin_api::LicenseError;
 
     /// 两桩 fail-closed 契约:恒 Unlicensed、激活 ActivationUnsupported、撤销幂等、
     /// source_tag 与 trait 文档预留值("ms_store"/"steam")一致——前端 gate 按 tag 分支展示。

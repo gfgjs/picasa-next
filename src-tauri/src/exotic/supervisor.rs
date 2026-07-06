@@ -958,7 +958,7 @@ mod tests {
     /// 构建并运行：
     ///   cargo build --release --manifest-path crates/exotic-workers/psd-worker/Cargo.toml
     ///   EXOTIC_PSD_WORKER_PATH=crates/exotic-workers/psd-worker/target/release/psd-worker.exe \
-    ///     cargo test -p picasa-next exotic::supervisor::tests::real_worker -- --nocapture
+    ///     cargo test -p scrollery exotic::supervisor::tests::real_worker -- --nocapture
     #[test]
     fn real_worker_thumbnail_and_shutdown() {
         let Some(path) = resolve_psd_worker_path() else {

@@ -427,7 +427,8 @@ onBeforeUnmount(() => {
   inset: 0;
   display: flex;
   flex-direction: column;
-  background: var(--color-bg-base);
+  /* 原 --color-bg-base 为不存在的幽灵 token 且无 fallback——实际渲染透明(S5 修) */
+  background: var(--color-bg-primary);
   z-index: 5;
 }
 .doc-viewer__toolbar {
@@ -551,7 +552,7 @@ onBeforeUnmount(() => {
   border: none;
   outline: none;
   padding: 24px clamp(16px, 8vw, 120px);
-  background: var(--color-bg-base);
+  background: var(--color-bg-primary);
   color: var(--color-text-primary);
   font-family: var(--font-mono);
   font-size: var(--font-size-sm);

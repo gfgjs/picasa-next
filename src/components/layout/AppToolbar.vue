@@ -744,7 +744,7 @@ function onSortWithinGroupChange(e: Event) {
   background: var(--color-bg-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--shadow-lg);
 }
 .date-popover__field {
   display: flex;
@@ -794,14 +794,16 @@ function onSortWithinGroupChange(e: Event) {
   border-color: var(--color-border-strong);
   color: var(--color-text-primary);
 }
+/* accent 底上的按钮文字用 text-inverse:暗色主题 accent 是亮色(如 #818cf8),
+   白字压上去 ~1.6:1 不可读——inverse 在暗主题自动落深字(S5 批2 实修)。 */
 .date-popover__btn--primary {
   background: var(--color-accent);
   border-color: var(--color-accent);
-  color: #fff;
+  color: var(--color-text-inverse);
 }
 .date-popover__btn--primary:hover {
   opacity: 0.9;
-  color: #fff;
+  color: var(--color-text-inverse);
 }
 
 .toolbar__right {
@@ -963,7 +965,7 @@ function onSortWithinGroupChange(e: Event) {
 .toolbar__search-mode-btn.mode-semantic {
   background: var(--color-accent);
   border-color: var(--color-accent);
-  color: #fff;
+  color: var(--color-text-inverse);
   box-shadow: 0 0 8px color-mix(in srgb, var(--color-accent) 40%, transparent);
 }
 .toolbar__search-mode-btn.mode-normal {
@@ -984,7 +986,7 @@ function onSortWithinGroupChange(e: Event) {
   background: var(--color-bg-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--shadow-lg);
   padding: var(--spacing-xs);
   z-index: 100;
   /* fallback for backdrop-filter */

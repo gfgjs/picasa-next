@@ -17,10 +17,10 @@ members = [
     "crates/exotic-workers/psd-worker",
     "crates/exotic-workers/psd-probe",
     "crates/exotic-workers/ai-worker",
-    "crates/picasa-next-plugin-api",
-    "crates/picasa-next-free-stub",
-    "crates/picasa-next-exotic-trust",
-    "crates/picasa-next-ai-core",
+    "crates/scrollery-plugin-api",
+    "crates/scrollery-free-stub",
+    "crates/scrollery-exotic-trust",
+    "crates/scrollery-ai-core",
 ]
 
 # ── 版本锚:单一事实源(Part7-T5 / Part7 §3.2 R3)────────────────────────────────────

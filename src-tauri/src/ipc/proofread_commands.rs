@@ -14,7 +14,7 @@ use crate::proofread::{proofread_remote, ProofreadConfig};
 use crate::state::AppState;
 
 /// keyring 服务名 / 账户名 —— API key 的存放坐标。
-const KEYRING_SERVICE: &str = "picasa-next";
+use scrollery_plugin_api::KEYRING_SERVICE;
 const KEYRING_ACCOUNT: &str = "proofread_api_key";
 
 fn keyring_entry() -> std::result::Result<keyring::Entry, String> {

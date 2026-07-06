@@ -248,7 +248,7 @@ async fn fetch_tree(mirror_first: bool) -> Result<Vec<TreeEntry>, String> {
         let url = format!("{host}{path}");
         match client
             .get(&url)
-            .header("User-Agent", "picasa-next")
+            .header("User-Agent", "scrollery")
             .send()
             .await
         {

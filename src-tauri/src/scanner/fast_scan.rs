@@ -733,7 +733,7 @@ mod dir_baseline_tests {
     /// ensure_dir_chain 应把目录的文件系统 mtime 写入 directories.mtime（含递归创建的祖先目录）。
     #[test]
     fn ensure_dir_chain_persists_dir_mtime() {
-        let tmp = std::env::temp_dir().join(format!("picasa_t17a_mtime_{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("scrollery_t17a_mtime_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(tmp.join("sub")).unwrap();
 
@@ -819,7 +819,7 @@ mod quick_scan_tests {
     /// 建临时目录（取其真实 FS mtime）+ 内存库（scan_root=1，根目录 id=10），返回 (Connection, tmp)。
     /// `baseline_mtime` = 写入 directories.mtime 的基线值（用 None 表示不写、即 NULL）。
     fn setup(tag: &str, baseline_mtime: Option<i64>) -> (Connection, std::path::PathBuf) {
-        let tmp = std::env::temp_dir().join(format!("picasa_t17b_{tag}_{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("scrollery_t17b_{tag}_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
 

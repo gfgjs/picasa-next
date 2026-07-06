@@ -4,4 +4,4 @@
 //! FaceDet 搬运 + faces_to_records 落库映射 + quality 派生),来自 ai-core 的
 //! `face_types` 模块(不在 `inference` feature 门内);引用路径不变。
 
-pub use picasa_next_ai_core::face_types::DetectedFace;
+pub use scrollery_ai_core::face_types::DetectedFace;

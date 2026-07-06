@@ -131,8 +131,8 @@ impl Options {
 fn default_db_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
     let app_data = std::env::var("APPDATA")?;
     Ok(PathBuf::from(app_data)
-        .join("com.picasanext.app")
-        .join("picasa_next.db"))
+        .join("com.scrollery.app")
+        .join("scrollery.db"))
 }
 
 fn next_value(
@@ -155,7 +155,7 @@ T16 百万库(1000 目录 × 1000 日期;建议独立 root,便于在应用里整
   cargo run --bin mock_data -- --root C:/MockPhotos1M --alias "Mock 1M" --target 1000000 --dirs 1000 --days 1000
 
 选项:
-  --db <PATH>                 指定数据库路径，默认使用 APPDATA/com.picasanext.app/picasa_next.db
+  --db <PATH>                 指定数据库路径，默认使用 APPDATA/com.scrollery.app/scrollery.db
   --root <PATH>               mock 扫描根路径，默认 C:/MockPhotos
   --alias <TEXT>              mock 扫描根别名，默认 Mock Stress
   --target <N>                mock 媒体条目目标数量，默认 500000

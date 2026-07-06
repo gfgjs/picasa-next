@@ -5613,7 +5613,8 @@ mod canonical_plan_tests {
     fn bench_canonical_fat_table_1m() {
         use std::time::Instant;
         const N: i64 = 1_000_000;
-        let path = std::env::temp_dir().join(format!("picasa_bench_fat_{}.db", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("scrollery_bench_fat_{}.db", std::process::id()));
         for suffix in ["", "-wal", "-shm"] {
             let mut p = path.as_os_str().to_owned();
             p.push(suffix);
@@ -5663,7 +5664,7 @@ mod canonical_plan_tests {
                         .wrapping_add(1442695040888963407);
                     let ts = ((seed >> 16) & 0x3FFF_FFFF) as i64;
                     let thumb = format!(
-                        "C:/Users/x/AppData/Local/picasa-next/cache/thumbs/{:02x}/{:016x}.webp",
+                        "C:/Users/x/AppData/Local/scrollery/cache/thumbs/{:02x}/{:016x}.webp",
                         i & 0xff,
                         seed
                     );

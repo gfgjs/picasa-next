@@ -3,7 +3,7 @@
   <!-- 应用 Logo + 标题——固定在滚动区域上方。 -->
   <div class="sidebar-header">
     <span class="sidebar-header__icon"><Aperture :size="20" /></span>
-    <span class="sidebar-header__text">Picasa Next</span>
+    <span class="sidebar-header__text">Scrollery</span>
   </div>
 </template>
 

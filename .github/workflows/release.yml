@@ -35,7 +35,7 @@ permissions:
 jobs:
   release:
     name: 免费版构建与发布
-    if: github.repository == 'gfgjs/picasa-next'
+    if: github.repository == 'gfgjs/scrollery'
     runs-on: windows-latest
     defaults:
       run:
@@ -119,5 +119,5 @@ jobs:
             echo '```'
           } > release-body.md
           gh release create "$GITHUB_REF_NAME" release-assets/* \
-            --title "Picasa Next $GITHUB_REF_NAME(免费版)" \
+            --title "Scrollery $GITHUB_REF_NAME(免费版)" \
             --notes-file release-body.md

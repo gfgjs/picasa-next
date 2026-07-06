@@ -1,6 +1,6 @@
 # Part7-T6(2026-07-04):dev 推理运行时的 ORT DLL 指路。
 #
-# 背景:ort 走 load-dynamic(见 picasa-next-ai-core/Cargo.toml 与 engine.rs 坑1),
+# 背景:ort 走 load-dynamic(见 scrollery-ai-core/Cargo.toml 与 engine.rs 坑1),
 # 运行期按 ORT_DYLIB_PATH 加载 onnxruntime.dll(DirectML.dll/dxcompiler/dxil 由
 # onnxruntime 从自身所在目录连带加载,故指向一个文件即覆盖四件套)。
 # T6 之前 dev 靠「bundle.resources → tauri-build 复制进 target 目录 + lib.rs exe 旁探测」;

@@ -12,10 +12,12 @@ app.use(createPinia())
 app.use(router)
 app.use(i18n)
 
-// Detect system theme before mount to prevent FOUC on fresh install.
-// Returning users: saved preference is applied in useTheme.ts onMounted (overrides this).
-// 全新安装时跟随系统主题防止闪烁；老用户会在 useTheme.ts 的 onMounted 中覆盖为已保存的偏好。
-const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
-document.documentElement.setAttribute('data-theme', prefersDark ? 'dark' : 'light')
+// 兜底:防 FOUC 的首帧着色已由 index.html 内联脚本负责(读 localStorage 快照);
+// 此处仅在内联脚本未生效的异常情况下按系统偏好补一份,避免无主题裸奔。
+if (!document.documentElement.hasAttribute('data-theme')) {
+  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+  document.documentElement.setAttribute('data-theme', prefersDark ? 'dark' : 'light')
+  document.documentElement.setAttribute('data-color-scheme', prefersDark ? 'dark' : 'light')
+}
 
 app.mount('#app')

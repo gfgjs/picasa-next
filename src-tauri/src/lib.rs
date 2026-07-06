@@ -133,7 +133,7 @@ pub fn run() {
                 );
             }
 
-            let db_path = app_data_dir.join("picasa_next.db");
+            let db_path = app_data_dir.join("scrollery.db");
 
             // ── ORT DLL 路径解析 ──────────────────────────────────────────────
             // 【踩坑1】WebView2 在 Windows 上可能在我们加载之前就把 System32 里的
@@ -312,7 +312,7 @@ pub fn run() {
             impl std::io::Write for RealTimeDailyAppender {
                 fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
                     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-                    let path = self.log_dir.join(format!("picasa-next.{}.log", today));
+                    let path = self.log_dir.join(format!("scrollery.{}.log", today));
                     if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
                         let res = file.write(buf);
                         let _ = file.sync_data(); // Force OS to flush metadata (size) to disk | 强制操作系统将元数据（大小）刷新到磁盘
@@ -351,7 +351,7 @@ pub fn run() {
                 )
                 .init();
 
-            info!("Picasa Next starting up, database path: {:?} | Picasa Next 正在启动，数据库路径: {:?}", db_path, db_path);
+            info!("Scrollery starting up, database path: {:?} | Scrollery 正在启动，数据库路径: {:?}", db_path, db_path);
             info!("Log level set to: {} | 日志级别已设置为: {}", log_level, log_level);
 
             // 启动期 WAL 截断（S3.6/S3.7）：必须在 tracing 就绪后执行（否则日志静默丢弃）、
@@ -843,14 +843,14 @@ pub fn run() {
 fn fatal_startup_error(app: &tauri::AppHandle, context: &str, detail: &str) -> ! {
     eprintln!("[FATAL][startup] {context} | 启动失败: {detail}");
     let msg = format!(
-        "Picasa Next 启动失败：{context}\n\n详情 / Detail: {detail}\n\n\
+        "Scrollery 启动失败：{context}\n\n详情 / Detail: {detail}\n\n\
          可尝试：检查数据库文件是否损坏（可备份后删除以重置），或查看日志后重试。"
     );
     use tauri_plugin_dialog::DialogExt;
     let _ = app
         .dialog()
         .message(msg)
-        .title("Picasa Next 启动失败 / Startup failed")
+        .title("Scrollery 启动失败 / Startup failed")
         .blocking_show();
     std::process::exit(1);
 }

@@ -1,8 +1,7 @@
 <template>
-  <!-- data-theme 必须绑 resolved 值（dark/light），不能绑 raw 的 ui.theme：
-       'system' 不匹配任何 [data-theme='...'] 规则会丢主题色。documentElement
-       已由 applyTheme 写 resolved 值，这里与之保持一致即可。 -->
-  <div class="app-shell" :data-theme="ui.isDark ? 'dark' : 'light'">
+  <!-- data-theme 单源在 documentElement(uiStore.applyAppearance 唯一写点);此处
+       不得再绑一份——双源曾导致 system 模式规则不匹配(Part5 F1)与主题切换脱同步。 -->
+  <div class="app-shell">
     <!-- Sidebar -->
     <!-- 侧边栏 -->
     <aside class="app-sidebar" :style="{ width: ui.sidebarWidth + 'px' }">
@@ -105,6 +104,8 @@ onBeforeUnmount(() => {
   min-width: 180px;
   max-width: 400px;
   background-color: var(--color-bg-secondary);
+  /* chrome 材质叠层:仅「宣」等有纸纹的主题非 none;画布区永不消费此 token */
+  background-image: var(--texture-chrome);
   border-right: 1px solid var(--color-border);
   overflow: hidden;
   flex-shrink: 0;
@@ -141,6 +142,7 @@ onBeforeUnmount(() => {
   align-items: center;
   padding: 0 var(--spacing-md);
   background-color: var(--color-bg-secondary);
+  background-image: var(--texture-chrome);
   border-bottom: 1px solid var(--color-border);
   gap: var(--spacing-sm);
   flex-shrink: 0;
@@ -161,6 +163,7 @@ onBeforeUnmount(() => {
   align-items: center;
   padding: 0 var(--spacing-md);
   background-color: var(--color-bg-secondary);
+  background-image: var(--texture-chrome);
   border-top: 1px solid var(--color-border);
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
@@ -180,6 +183,8 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
   padding: 10px 18px;
+  /* 硬编码豁免(S5,设计 §6.2):全屏 HUD 语义为「永远深色玻璃浮层」(视频播放器
+     OSD 同款),不随主题——亮色主题下亮底 HUD 反而在全屏媒体上不可读。 */
   background: rgba(20, 20, 20, 0.82);
   color: #fff;
   border-radius: 12px;

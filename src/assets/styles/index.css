@@ -1,12 +1,18 @@
 /* src/assets/styles/index.css */
 /* Master CSS entry point — import order matters */
 
-/* Google Fonts — variable font for optical sizing + crisp rendering */
-@import url('https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300..700&display=swap');
+/* Inter 可变字体(opsz+wght)本地打包 — 桌面应用禁运行时拉 Google Fonts(离线即字体失败)。
+   @fontsource-variable/inter 注册的 font-family 为 'Inter Variable'(见 variables.css 字体栈)。 */
+@import '@fontsource-variable/inter/opsz.css';
 
 @import './variables.css';
-@import './theme-dark.css';
-@import './theme-light.css';
+/* 内置主题(语义色层;每份 = [data-theme='<id>'] 全键集覆写,契约见 src/themes/contract 测试) */
+@import './themes/ink.css';
+@import './themes/porcelain.css';
+@import './themes/moonlight.css';
+@import './themes/xuan.css';
+@import './themes/obsidian.css';
+@import './themes/dai.css';
 @import './reset.css';
 @import './animations.css';
 
@@ -81,7 +87,8 @@
 
 .btn-primary {
   background: var(--color-accent);
-  color: #fff;
+  /* 彩底文字用反色 token:暗色主题 accent 偏亮,白字压上约 1.6:1 不可读(S5) */
+  color: var(--color-text-inverse);
 }
 .btn-primary:hover {
   background: var(--color-accent-hover);
@@ -112,6 +119,10 @@
   background: var(--color-accent-subtle);
   color: var(--color-accent);
 }
+/* 按压态:置于 .active 之后使按压反馈在开关型按钮上也可见(同特异性,后者胜) */
+.btn-icon:active {
+  background: var(--color-bg-active);
+}
 
 /* ── Chip / badge ────────────────────────────────────────────────────────── */
 
@@ -141,6 +152,9 @@
   color: var(--color-accent);
   border-color: var(--color-accent);
 }
+.chip:active {
+  background: var(--color-bg-active);
+}
 
 /* ── Overlay backdrop ────────────────────────────────────────────────────── */
 .overlay-backdrop {
@@ -165,7 +179,8 @@
   color: var(--color-text-tertiary);
 }
 .empty-state__icon {
-  font-size: 64px;
+  /* 早年为 emoji 图标留的 font-size 已废——现用法均传 Lucide SVG(:size 定尺寸) */
+  display: flex;
   opacity: 0.4;
 }
 .empty-state__title {
@@ -177,6 +192,10 @@
   font-size: var(--font-size-base);
   max-width: 320px;
   line-height: 1.6;
+}
+/* 空状态「下一步动作」按钮(§6.3):与说明文案拉开一点距离,样式由 .btn-primary 提供 */
+.empty-state__action {
+  margin-top: var(--spacing-xs);
 }
 
 /* ── Input ───────────────────────────────────────────────────────────────── */

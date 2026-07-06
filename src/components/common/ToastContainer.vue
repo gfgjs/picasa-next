@@ -126,21 +126,23 @@ async function onAction(toastId: string, action: ToastAction) {
 .toast__close:hover {
   opacity: 1;
 }
+/* 状态色走主题 token(S5:原 rgba 字面量重复且绕开了各主题的明暗适配);
+   文字用 text-inverse——亮主题白字压深色 token,暗主题深字压亮色 token。 */
 .toast--success {
-  background: rgba(52, 199, 89, 0.9);
-  color: #fff;
+  background: var(--color-success);
+  color: var(--color-text-inverse);
 }
 .toast--error {
-  background: rgba(255, 59, 48, 0.9);
-  color: #fff;
+  background: var(--color-error);
+  color: var(--color-text-inverse);
 }
 .toast--warning {
-  background: rgba(255, 149, 0, 0.9);
-  color: #fff;
+  background: var(--color-warning);
+  color: var(--color-text-inverse);
 }
 .toast--info {
-  background: rgba(90, 200, 250, 0.9);
-  color: #000;
+  background: var(--color-info);
+  color: var(--color-text-inverse);
 }
 
 .toast-enter-from {

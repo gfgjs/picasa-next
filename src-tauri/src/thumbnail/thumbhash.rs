@@ -63,7 +63,7 @@ mod tests {
     //! 解码器一致」,故金标必须由同一 Cargo.lock 锁定的 crate 版本生成。
     //!
     //! 运行(手动,#[ignore] 不进常规测试/CI):
-    //!   cargo test -p picasa-next print_thumbhash_golden_fixtures -- --ignored --nocapture
+    //!   cargo test -p scrollery print_thumbhash_golden_fixtures -- --ignored --nocapture
     //! 输出到系统临时目录 thumbhash.golden.ts,人工拷贝至 src/utils/ 并过 prettier。
     //! 五张合成图全为确定性数学图案(无随机 / 时钟),重跑输出逐字节一致。
 
@@ -164,7 +164,7 @@ mod tests {
              // 自动生成,勿手改。跨语言金标:Rust thumbhash crate 编码(rgba_to_thumb_hash)\n\
              // 与解码(thumb_hash_to_rgba / thumb_hash_to_average_rgba)的逐字节输出。\n\
              // 生成器:src-tauri/src/thumbnail/thumbhash.rs 的 print_thumbhash_golden_fixtures(#[ignore])\n\
-             //   cargo test -p picasa-next print_thumbhash_golden_fixtures -- --ignored --nocapture\n\
+             //   cargo test -p scrollery print_thumbhash_golden_fixtures -- --ignored --nocapture\n\
              // 消费方:thumbhash.spec.ts(前端 TS 解码器 ↔ Rust 解码器对拍)。\n\n\
              export interface ThumbhashGoldenFixture {\n\
              \x20 /** 合成图案场景名 */\n\

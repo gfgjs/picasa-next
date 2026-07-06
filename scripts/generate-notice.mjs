@@ -3,7 +3,7 @@
 // G3「基建/法务(发行前置)」中「NOTICE + SBOM 生成」项的落地(2026-07-05)。
 //
 // 覆盖范围 = 实际分发物的依赖闭包:
-//   Rust 侧:picasa-next(主程序)+ ai-worker(随安装包同目录分发)+ psd-worker
+//   Rust 侧:scrollery(主程序)+ ai-worker(随安装包同目录分发)+ psd-worker
 //           (插件商店分发)三棵 normal 依赖树的并集,按发货平台 x86_64-pc-windows-msvc
 //           解析(mac 发货后在 SHIP_TARGETS 加三元组即可);build/dev 依赖不分发、不计入。
 //   npm 侧:package-lock.json(v3)中非 dev 的生产依赖闭包(vite 打进前端 bundle 的部分;
@@ -12,7 +12,7 @@
 // 产物:
 //   NOTICE.md(仓库根,tracked)——归属清单;内容完全由两份 lockfile 决定,无时间戳,
 //     重复生成逐字节稳定(--check 的前提)。
-//   target/sbom/picasa-next.cdx.json(untracked)——CycloneDX SBOM,发布时作为工件附带
+//   target/sbom/scrollery.cdx.json(untracked)——CycloneDX SBOM,发布时作为工件附带
 //     (接入 release 流水线归 Part7-T16;此前手动生成)。
 //
 // 用法:
@@ -32,7 +32,7 @@ const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CHECK_MODE = process.argv.includes('--check');
 
 // 发货二进制与发货平台(见文件头「覆盖范围」)。
-const SHIP_BINS = ['picasa-next', 'ai-worker', 'psd-worker'];
+const SHIP_BINS = ['scrollery', 'ai-worker', 'psd-worker'];
 const SHIP_TARGETS = ['x86_64-pc-windows-msvc'];
 
 // ── cargo tree 行解析 ─────────────────────────────────────────────────────────
@@ -134,7 +134,11 @@ function renderNotice(rustDeps, npmDeps, appVersion) {
   const L = [];
   L.push('# Third-Party Notices');
   L.push('');
-  L.push('Picasa Next (working title) incorporates third-party open-source software.');
+  // NOTICE 署名头(Apache-2.0 §4(d) 的 attribution 载体;署名主体 2026-07-06 拍板为集体式,换法律主体零改动)
+  L.push('Scrollery');
+  L.push('Copyright 2026 The Scrollery Authors');
+  L.push('');
+  L.push('Scrollery incorporates third-party open-source software.');
   L.push('This file lists the packages distributed with the application (desktop app,');
   L.push('bundled workers, and the compiled frontend) together with their declared licenses.');
   L.push('');
@@ -152,7 +156,7 @@ function renderNotice(rustDeps, npmDeps, appVersion) {
   L.push('');
   L.push(`## Rust crates (${rustDeps.length}) — desktop application and workers`);
   L.push('');
-  L.push('Dependency closure (normal deps) of the shipped binaries `picasa-next`,');
+  L.push('Dependency closure (normal deps) of the shipped binaries `scrollery`,');
   L.push('`ai-worker` and `psd-worker`, resolved for `x86_64-pc-windows-msvc`.');
   L.push('');
   L.push('| Crate | Version | License |');
@@ -224,8 +228,8 @@ function renderSbom(rustDeps, npmDeps, appVersion) {
     specVersion: '1.5',
     version: 1,
     metadata: {
-      component: { type: 'application', name: 'picasa-next', version: appVersion },
-      tools: [{ name: 'generate-notice.mjs', vendor: 'picasa-next' }],
+      component: { type: 'application', name: 'scrollery', version: appVersion },
+      tools: [{ name: 'generate-notice.mjs', vendor: 'scrollery' }],
     },
     components,
   };
@@ -248,7 +252,7 @@ function selftest() {
   assert(b2 && b2.license === 'BSD-3-Clause AND MIT', 'ANSI 着色 dedupe 标记剥离');
   const c = parseCargoLine('cssparser-macros v0.6.1 (proc-macro)~MPL-2.0');
   assert(c && c.name === 'cssparser-macros' && !c.firstParty && c.license === 'MPL-2.0', 'proc-macro 注记');
-  const d = parseCargoLine('picasa-next v0.1.0 (D:\\photoapp\\picasa-next\\src-tauri)~');
+  const d = parseCargoLine('scrollery v0.1.0 (D:\\photoapp\\scrollery\\src-tauri)~');
   assert(d && d.firstParty, 'windows path 依赖判第一方');
   const e = parseCargoLine('some-crate v0.1.0 (/home/u/repo/crates/x)~');
   assert(e && e.firstParty, 'posix path 依赖判第一方');
@@ -312,7 +316,7 @@ if (CHECK_MODE) {
   fs.writeFileSync(noticePath, notice);
   const sbomDir = path.join(repo, 'target', 'sbom');
   fs.mkdirSync(sbomDir, { recursive: true });
-  const sbomPath = path.join(sbomDir, 'picasa-next.cdx.json');
+  const sbomPath = path.join(sbomDir, 'scrollery.cdx.json');
   fs.writeFileSync(sbomPath, JSON.stringify(renderSbom(rustDeps, npmDeps, appVersion), null, 2) + '\n');
   console.log(`NOTICE.md 已生成(rust ${rustDeps.length} + npm ${npmDeps.length} 个第三方包)`);
   console.log(`SBOM 已生成:${sbomPath}`);

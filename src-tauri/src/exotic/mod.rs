@@ -34,7 +34,7 @@ use crate::db::connection::DbPool;
 pub use catalog::{Capability, CatalogOffering, CatalogSnapshot, CatalogStore, MediaKind};
 pub use crypto::VerifyingKeyset;
 pub use license::{EntitlementProvider, LicenseStatus};
-use picasa_next_free_stub::FreeStubEntitlement;
+use scrollery_free_stub::FreeStubEntitlement;
 pub use task::{ExoticTaskRow, ExoticTaskStatus};
 
 /// Host 语义版本（min_host_version 兼容门控用）。

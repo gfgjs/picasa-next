@@ -5,5 +5,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    picasa_next_lib::run()
+    scrollery_lib::run()
 }

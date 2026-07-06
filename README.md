@@ -1,4 +1,4 @@
-# Picasa Next
+# Scrollery
 
 High-performance, cross-platform media asset manager aimed at **smooth gallery browsing of 100k–1M photos**.
 面向**十万~百万张照片流畅画廊式浏览**的高性能跨平台媒体资源管理器。
@@ -59,3 +59,13 @@ src/
   composables/ virtual scroll, justified layout consumer, request queue, ...
   stores/      Pinia stores (media/scan/ui/filter/config/ai)
 ```
+
+## License | 许可
+
+Copyright 2026 The Scrollery Authors.
+
+The open-source core (this repository) is licensed under the [Apache License 2.0](LICENSE); third-party attributions are listed in [NOTICE.md](NOTICE.md).
+开源核心(本仓库)以 [Apache-2.0](LICENSE) 授权;第三方组件署名见 [NOTICE.md](NOTICE.md)。
+
+The "Scrollery" name and logo are trademarks and are **not** licensed under Apache-2.0 — see [TRADEMARK.md](TRADEMARK.md). Contributions require the [CLA](CLA.md); see [CONTRIBUTING.md](CONTRIBUTING.md).
+「Scrollery」名称与标识属商标,**不在** Apache-2.0 授权范围内(见 [TRADEMARK.md](TRADEMARK.md));贡献代码须签署 [CLA](CLA.md),流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。

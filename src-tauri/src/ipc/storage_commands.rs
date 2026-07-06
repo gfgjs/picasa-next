@@ -21,7 +21,7 @@ use crate::error::AppError;
 use crate::state::AppState;
 use crate::storage::{build_backend, BackendConfig};
 
-const KEYRING_SERVICE: &str = "picasa-next";
+use scrollery_plugin_api::KEYRING_SERVICE;
 
 fn cred_account(id: i64) -> String {
     format!("storage_backend_{id}")

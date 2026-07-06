@@ -145,7 +145,7 @@ fn test_collation() {
     // 免去文件残留 / 并发撞库 / 污染工作目录（原用 CWD 文件 `test_collation.db`）。
     // 进程号入名避免跨测试串库；写连接须在 read 之前建好并存活，以维持内存库不被回收。
     let uri = format!(
-        "file:picasa_test_collation_{}?mode=memory&cache=shared",
+        "file:scrollery_test_collation_{}?mode=memory&cache=shared",
         std::process::id()
     );
     // 写连接：直接以 URI 标志开（create_write_connection 走裸 open 不解析 URI，故此处自建），

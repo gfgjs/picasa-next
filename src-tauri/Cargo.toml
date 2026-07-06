@@ -1,13 +1,13 @@
 [package]
-name = "picasa-next"
+name = "scrollery"
 version.workspace = true # Part7-T5:版本锚在根 [workspace.package],升版只改根一处
-description = "Picasa Next — High-performance cross-platform media asset manager"
-authors = ["Picasa Next Contributors"]
+description = "Scrollery — High-performance cross-platform media asset manager"
+authors = ["Scrollery Contributors"]
 edition = "2021"
-default-run = "picasa-next"
+default-run = "scrollery"
 
 [lib]
-name = "picasa_next_lib"
+name = "scrollery_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -52,21 +52,21 @@ exotic-protocol = { path = "../crates/exotic-protocol" }
 # ── 插件平台开源契约 + 免费桩（Part6 §3.9.1a 去环叶 crate）──────────────────────────
 # plugin-api：EntitlementProvider/LicenseStatus/LicenseError 抽象（零密钥）。
 # free-stub：FreeStubEntitlement（始终 Unlicensed）。商业 build 经 overlay 改链闭源 pro。
-picasa-next-plugin-api = { path = "../crates/picasa-next-plugin-api" }
-picasa-next-free-stub = { path = "../crates/picasa-next-free-stub" }
+scrollery-plugin-api = { path = "../crates/scrollery-plugin-api" }
+scrollery-free-stub = { path = "../crates/scrollery-free-stub" }
 
 # ── 信任根验签叶 crate（Part6 §3.9.1a 去环 ③a）──────────────────────────────────────
 # VerifyingKeyset + verify_token/evaluate_token/LicensePayload 迁入此开源叶 crate，pro 可单向复用而
 # 不依赖 src-tauri（破环）。`crate::exotic::crypto`/`::license` 退化为再导出薄壳，引用路径不变。
 # test_support（测试构造工具）经其 `test-support` feature 暴露 → 见下方 [dev-dependencies]。
-picasa-next-exotic-trust = { path = "../crates/picasa-next-exotic-trust" }
+scrollery-exotic-trust = { path = "../crates/scrollery-exotic-trust" }
 
 
 # ── AI 推理核心(Part4-T15 迁出)────────────────────────────────────────────────────
 # 纯契约面消费(T16 收口):profile/face_profile 注册表、embedding 字节序、face_types
 # 几何、DecodedImage 类型。默认特性关闭 = 不带 inference 面(ort/tokenizers/ndarray
 # 整树不进 host 单包依赖图);推理恒在 ai-worker 子进程(彼处开 inference)。
-picasa-next-ai-core = { path = "../crates/picasa-next-ai-core", default-features = false }
+scrollery-ai-core = { path = "../crates/scrollery-ai-core", default-features = false }
 
 # ── Hashing ───────────────────────────────────────────────────────────────────
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
@@ -115,7 +115,7 @@ crossbeam-channel = "0.5.15"
 
 # ── AI ────────────────────────────────────────────────────────────────────────
 # T16 收口:host 零 ort/tokenizers/ndarray——推理恒在 ai-worker 子进程(ai-core 是
-# 唯一 ort 载体)。单包构建(tauri build / cargo build -p picasa-next)依赖图不含
+# 唯一 ort 载体)。单包构建(tauri build / cargo build -p scrollery)依赖图不含
 # 推理面;workspace 全量构建因 feature 并集会替 ai-worker 编译 inference 面,但
 # host 代码零引用。
 #
@@ -156,7 +156,7 @@ windows = { version = "0.58", features = ["Win32_Graphics_Imaging", "Win32_Graph
 # 工具给 src-tauri 的 installer/registry/package/install 测试（`#[cfg(test)]` 项不跨 crate 可见，故
 # 改用 feature 门控）。cargo 对同一 path crate 的 [dependencies]（无 feature）与 [dev-dependencies]
 # （含 feature）做 feature 并集：普通 `cargo build` 不启用 → 测试密钥绝不编入 Release。
-picasa-next-exotic-trust = { path = "../crates/picasa-next-exotic-trust", features = ["test-support"] }
+scrollery-exotic-trust = { path = "../crates/scrollery-exotic-trust", features = ["test-support"] }
 
 [features]
 # Lite 为默认变体（极致轻量，零大体积 native 捆绑）。custom-protocol 为 Tauri 生产构建所需。
@@ -188,7 +188,7 @@ netfs = ["dep:reqwest_dav"]
 # (不能只靠运行时不可达);仅研究/自用构建显式 --features face-noncommercial 开启。
 # 商业流水线(Part7 T16/17)另有符号扫描断言兜底(二进制不得含 scrfd/arcface/w600k)。
 # T15 起转发至 ai-core(SCRFD/ArcFace 代码已随推理核迁出,cfg 门控单一事实源在彼处)。
-face-noncommercial = ["picasa-next-ai-core/face-noncommercial"]
+face-noncommercial = ["scrollery-ai-core/face-noncommercial"]
 
 # ── 分发渠道维度(Part7-T10 / Part7 §3.6.1;与 lite/perf、开源边界(pro/free-stub)正交)──
 # 渠道 = 谁授权 + 如何分发;default 走 channel-direct(直销)。三渠道互斥由 lib.rs 顶部

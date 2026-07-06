@@ -45,13 +45,13 @@ const LOG = '[BucketScroll]'
 /// 总高 ≤ 此值 → 纯原生(零映射,B1.5 形态);总高 > 此值 → B3 映射态(spacer 封顶,段级重锚)。
 export const BUCKET_NATIVE_MAX = 16_000_000
 
-/// dev-only:localStorage['picasa.debug.bucketSpacer'] 覆盖 spacer 上限(镜像方案 A 的
+/// dev-only:localStorage['scrollery.debug.bucketSpacer'] 覆盖 spacer 上限(镜像方案 A 的
 /// debug.safeMax 先例)——调小(如 2_000_000)即可用中小库在真机触发 B3 映射态验收,
 /// 免造百万项库。模块加载时读一次(零每帧开销),改值刷新生效、清除恢复默认。
 export function resolveBucketSpacerCap(): number {
   try {
     if (import.meta.env.DEV) {
-      const raw = localStorage.getItem('picasa.debug.bucketSpacer')
+      const raw = localStorage.getItem('scrollery.debug.bucketSpacer')
       const o = raw == null ? NaN : Number(raw)
       if (Number.isFinite(o) && o > 0) {
         console.info(LOG, `spacer cap overridden → ${o} (debug, B3)`)

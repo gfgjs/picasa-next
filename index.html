@@ -2,9 +2,40 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <link rel="icon" type="image/png" href="/favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tauri + Vue + Typescript App</title>
+    <title>Scrollery</title>
+    <script>
+      // 防 FOUC:样式解析前按本地快照(uiStore.applyAppearance 每次应用时刷新)先落
+      // data-theme,固定主题的老用户首帧即着对色;权威源仍是 app_config,挂载后由
+      // 启动配置批(get_startup_config)校正。快照缺失/损坏 → 回退系统偏好。
+      ;(function () {
+        var mode = 'system'
+        var light = 'porcelain'
+        var dark = 'ink'
+        try {
+          var s = JSON.parse(localStorage.getItem('scrollery.themeSnapshot.v1') || 'null')
+          if (s) {
+            if (s.appearance === 'light' || s.appearance === 'dark' || s.appearance === 'system')
+              mode = s.appearance
+            if (typeof s.light === 'string' && s.light) light = s.light
+            if (typeof s.dark === 'string' && s.dark) dark = s.dark
+            // legacy 快照 id 映射(S1 期写过 'light'/'dark');未注册 id 首帧可能无匹配,
+            // 挂载后由 uiStore 的注册表归一化校正。
+            if (light === 'light') light = 'porcelain'
+            if (dark === 'dark') dark = 'ink'
+          }
+        } catch (e) {
+          /* 快照损坏走系统偏好兜底 */
+        }
+        var isDark =
+          mode === 'dark' ||
+          (mode === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
+        var d = document.documentElement
+        d.setAttribute('data-theme', isDark ? dark : light)
+        d.setAttribute('data-color-scheme', isDark ? 'dark' : 'light')
+      })()
+    </script>
   </head>
 
   <body>

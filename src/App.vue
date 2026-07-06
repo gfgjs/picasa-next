@@ -46,7 +46,6 @@
 import { onMounted, ref } from 'vue'
 import { invokeIpc } from './utils/ipc'
 import { IPC } from './constants/ipc'
-import { useTheme } from './composables/useTheme'
 import { useDerivationAutoStart } from './composables/useDerivationAutoStart'
 import { useUiStore } from './stores/uiStore'
 
@@ -74,10 +73,8 @@ const route = useRoute()
 // 首启向导显隐（T17）：onMounted 检测 first_launch 配置缺省时置真。
 const showOnboarding = ref(false)
 
-// Init theme
-// 初始化主题
-useTheme()
-
+// 主题初始化已并入 uiStore 的启动配置批(appearance 三键随 get_startup_config 一次读取,
+// R2-4 纪律);原 useTheme composable 的独立 IPC 已删除。
 // 自动启动派生流水线（视频封面/关键帧、音频封面、epub 封面）。
 // 此前无任何触发入口 → 流水线从未运行 → 视频封面不出现，本调用即根因修复。
 useDerivationAutoStart()

@@ -5,12 +5,13 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import type { Theme, SmartAlbum, ToastMessage, ToastAction } from '../types/ui'
+import type { AppearanceMode, SmartAlbum, ToastMessage, ToastAction } from '../types/ui'
 import type { Collection } from '../types/media'
 import { IPC } from '../constants/ipc'
 import { invokeIpc } from '../utils/ipc'
 import i18n from '../i18n'
 import { useSelection } from '../composables/useSelection'
+import { DEFAULT_LIGHT_THEME, DEFAULT_DARK_THEME, normalizeThemeId } from '../themes/registry'
 
 // get_startup_config 的载荷(R2-4:14 键单次往返;与后端 config_commands.rs StartupConfig 同步)。
 export interface StartupConfig {
@@ -28,13 +29,23 @@ export interface StartupConfig {
   thumbInfoElements: string | null
   hoverAutoplay: string | null
   bucketSegmentedScroll: string | null
+  // 多主题 S1(2026-07-06):外观三键 + legacy theme(迁移只读)→ 19 键,与后端同步。
+  theme: string | null
+  appearance: string | null
+  themeLight: string | null
+  themeDark: string | null
   firstLaunch: string | null
 }
 
 export const useUiStore = defineStore('ui', () => {
-  // ── Theme & Language ───────────────────────────────────────────────────
-  // ── 主题与语言 ──────────────────────────────────────────────────────────
-  const theme = ref<Theme>('system')
+  // ── Appearance & Language ────────────────────────────────────────────────
+  // ── 外观与语言 ──────────────────────────────────────────────────────────
+  // 多主题三键模型:appearance = 亮/暗/跟随系统(外观模式);lightThemeId/darkThemeId =
+  // 亮暗两个槽位各自选定的主题 id(指向 src/themes/registry 注册表)。
+  // data-theme 从此单源:只有 applyAppearance 写 documentElement,AppShell 不再二次绑定。
+  const appearance = ref<AppearanceMode>('system')
+  const lightThemeId = ref<string>(DEFAULT_LIGHT_THEME)
+  const darkThemeId = ref<string>(DEFAULT_DARK_THEME)
   const language = ref<string>('zh-CN')
 
   const systemIsDark = ref(window.matchMedia('(prefers-color-scheme: dark)').matches)
@@ -42,17 +53,18 @@ export const useUiStore = defineStore('ui', () => {
   // Listen for OS theme changes globally
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
     systemIsDark.value = e.matches
-    if (theme.value === 'system') {
-      applyTheme('system')
+    if (appearance.value === 'system') {
+      applyAppearance()
     }
   })
 
-  const isDark = computed(() => {
-    if (theme.value === 'system') {
-      return systemIsDark.value
-    }
-    return theme.value === 'dark'
-  })
+  // 亮槽主题恒为 light kind、暗槽恒为 dark kind(模型不变量),故明暗判定只看外观模式。
+  const isDark = computed(() =>
+    appearance.value === 'system' ? systemIsDark.value : appearance.value === 'dark',
+  )
+
+  // 当前应落到 data-theme 的主题 id(外观模式 → 槽位 → id)。
+  const resolvedThemeId = computed(() => (isDark.value ? darkThemeId.value : lightThemeId.value))
 
   function applyLanguage(lang: string) {
     language.value = lang
@@ -67,23 +79,68 @@ export const useUiStore = defineStore('ui', () => {
     invokeIpc(IPC.SET_APP_CONFIG, { key: 'language', value: lang }).catch(console.error)
   }
 
-  function applyTheme(t: Theme) {
-    const resolved = t === 'system' ? (systemIsDark.value ? 'dark' : 'light') : t
-    document.documentElement.setAttribute('data-theme', resolved)
+  // FOUC 快照:index.html 内联脚本在样式解析前读它给首帧着色;权威源仍是 app_config
+  // (启动批校正),快照仅是首帧加速缓存,损坏/缺失时内联脚本回退 matchMedia。
+  const THEME_SNAPSHOT_KEY = 'scrollery.themeSnapshot.v1'
+
+  function applyAppearance() {
+    const kind = isDark.value ? 'dark' : 'light'
+    document.documentElement.setAttribute('data-theme', resolvedThemeId.value)
+    // 供确需按明暗分支的选择器使用([data-color-scheme='dark']),组件禁止再对
+    // 具体主题 id 写选择器——那是主题文件的领地。
+    document.documentElement.setAttribute('data-color-scheme', kind)
+    try {
+      localStorage.setItem(
+        THEME_SNAPSHOT_KEY,
+        JSON.stringify({
+          appearance: appearance.value,
+          light: lightThemeId.value,
+          dark: darkThemeId.value,
+        }),
+      )
+    } catch {
+      // localStorage 不可用只损失首帧加速,静默降级
+    }
 
     // Synchronize native window titlebar theme using our custom Rust IPC command
-    // 强制同步原生窗口标题栏主题，绕过 Tauri 可能存在的无响应 BUG
-    invokeIpc(IPC.SET_WINDOW_THEME, { theme: t, resolved }).catch(() => {})
+    // 强制同步原生窗口标题栏主题，绕过 Tauri 可能存在的无响应 BUG。
+    // 标题栏真彩跟随:从当前主题计算样式取 chrome 底色/标题文本色传给 DWM
+    // (Win11 生效,Win10 降级明暗二态)。运行时取值零重复定义,未来外置主题同样生效;
+    // 非法值(空/非 #rrggbb)不传,Rust 侧跳过。
+    const cs = getComputedStyle(document.documentElement)
+    const pickHex = (name: string): string | undefined => {
+      const v = cs.getPropertyValue(name).trim()
+      return /^#[0-9a-fA-F]{6}$/.test(v) ? v : undefined
+    }
+    invokeIpc(IPC.SET_WINDOW_THEME, {
+      theme: appearance.value,
+      resolved: kind,
+      captionBg: pickHex('--color-bg-secondary'),
+      captionText: pickHex('--color-text-primary'),
+    }).catch(() => {})
   }
 
-  function setTheme(t: Theme) {
-    theme.value = t
-    applyTheme(t)
-    invokeIpc(IPC.SET_APP_CONFIG, { key: 'theme', value: t }).catch(console.error)
+  function setAppearance(mode: AppearanceMode) {
+    appearance.value = mode
+    applyAppearance()
+    invokeIpc(IPC.SET_APP_CONFIG, { key: 'appearance', value: mode }).catch(console.error)
   }
 
-  function cycleTheme() {
-    setTheme(isDark.value ? 'light' : 'dark')
+  // 给亮/暗槽位换主题包(S4 ThemePicker 的写入口;id 合法性由调用方对注册表校验)。
+  function setThemeForKind(kind: 'light' | 'dark', id: string) {
+    if (kind === 'light') lightThemeId.value = id
+    else darkThemeId.value = id
+    applyAppearance()
+    invokeIpc(IPC.SET_APP_CONFIG, {
+      key: kind === 'light' ? 'theme_light' : 'theme_dark',
+      value: id,
+    }).catch(console.error)
+  }
+
+  // 三态循环(P2 修复:原实现只在 light/dark 二态打转,system 从侧栏不可达)。
+  function cycleAppearance() {
+    const order: AppearanceMode[] = ['light', 'dark', 'system']
+    setAppearance(order[(order.indexOf(appearance.value) + 1) % order.length])
   }
 
   // 注：thumbStrategy / gpuEngine 此前在此双持（configStore 也持有并镜像至此），但 uiStore 这份
@@ -406,17 +463,34 @@ export const useUiStore = defineStore('ui', () => {
       // 与未配置的新装置都落在 bucket 引擎。
       if (cfg.bucketSegmentedScroll != null)
         bucketSegmentedScroll.value = cfg.bucketSegmentedScroll !== 'false'
+
+      // 多主题 S1:外观初始化。新键 appearance 优先,缺位读 legacy 'theme' 迁移
+      // (只读不删不回写,旧版本回滚仍可用);两者皆无 → 保持默认 'system'。
+      const isMode = (v: string | null): v is AppearanceMode =>
+        v === 'light' || v === 'dark' || v === 'system'
+      if (isMode(cfg.appearance)) appearance.value = cfg.appearance
+      else if (isMode(cfg.theme)) appearance.value = cfg.theme
+      // 槽位主题 id:注册表归一化(legacy 'light'/'dark' 映射新 id;未注册/kind 不符
+      // 落回默认)——data-theme 指向不存在的主题会丢全部颜色变量,必须在入口挡住。
+      lightThemeId.value = normalizeThemeId(cfg.themeLight, 'light')
+      darkThemeId.value = normalizeThemeId(cfg.themeDark, 'dark')
+      // 首次权威应用(校正 index.html 内联脚本按快照画的首帧,并同步原生标题栏)。
+      applyAppearance()
     })
     .catch(console.error)
 
   return {
-    // theme & language
-    // 主题与语言
-    theme,
+    // appearance & themes & language
+    // 外观、主题与语言
+    appearance,
+    lightThemeId,
+    darkThemeId,
+    resolvedThemeId,
     isDark,
-    setTheme,
-    cycleTheme,
-    applyTheme,
+    setAppearance,
+    setThemeForKind,
+    cycleAppearance,
+    applyAppearance,
     language,
     applyLanguage,
     setLanguage,

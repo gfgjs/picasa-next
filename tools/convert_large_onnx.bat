@@ -16,7 +16,7 @@ if %ERRORLEVEL% NEQ 0 (
 :: Set paths
 set SCRIPT_DIR=%~dp0
 :: Find models dir based on standard location or APPDATA
-set MODELS_DIR=C:\Users\gf\AppData\Roaming\com.picasanext.app\models
+set MODELS_DIR=C:\Users\gf\AppData\Roaming\com.scrollery.app\models
 set PT_FILE=%MODELS_DIR%\clip_cn_vit-l-14.pt
 
 if not exist "%PT_FILE%" (
@@ -71,8 +71,8 @@ if not exist "Chinese-CLIP" (
 ::    `vision_fp16_onnx_path = ...` down to `convert_attribute=True)`
 :: 
 :: [EN] If you don't do this, the script will crash at the end. Since we only need FP32 
-::      for Picasa Next desktop inference, skipping FP16 avoids the dependency hell entirely.
-:: [CN] 如果不这么做，脚本会在最后阶段崩溃。因为 Picasa Next 在电脑端推理只需要 FP32
+::      for Scrollery desktop inference, skipping FP16 avoids the dependency hell entirely.
+:: [CN] 如果不这么做，脚本会在最后阶段崩溃。因为 Scrollery 在电脑端推理只需要 FP32
 ::      原精度模型，跳过 FP16 转换可以帮我们完美绕开依赖地狱。
 :: ==============================================================================
 

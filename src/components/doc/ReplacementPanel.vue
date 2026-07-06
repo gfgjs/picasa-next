@@ -200,7 +200,7 @@ watch(() => props.itemId, reload, { immediate: true })
 }
 .repl-panel__tabs button.active {
   background: var(--color-accent);
-  color: #fff;
+  color: var(--color-text-inverse);
   border-color: transparent;
 }
 .repl-panel__list {
@@ -252,7 +252,8 @@ watch(() => props.itemId, reload, { immediate: true })
   cursor: pointer;
 }
 .repl-row__del:hover {
-  color: var(--color-danger, #e5484d);
+  /* 原 var(--color-danger, #e5484d) 引用不存在的幽灵 token,一直走 fallback(S5 修) */
+  color: var(--color-error);
 }
 .repl-panel__add {
   display: flex;
@@ -278,7 +279,7 @@ watch(() => props.itemId, reload, { immediate: true })
   align-items: center;
   gap: 4px;
   background: var(--color-accent);
-  color: #fff;
+  color: var(--color-text-inverse);
   border: none;
   border-radius: var(--radius-sm);
   padding: 5px 10px;

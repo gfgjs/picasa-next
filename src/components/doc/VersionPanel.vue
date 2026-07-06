@@ -232,7 +232,7 @@ defineExpose({ reload })
   align-self: flex-start;
   font-size: 9px;
   background: var(--color-accent);
-  color: #fff;
+  color: var(--color-text-inverse);
   border-radius: 3px;
   padding: 1px 5px;
 }
@@ -254,11 +254,13 @@ defineExpose({ reload })
   align-items: center;
 }
 .ver-row__actions button:hover {
-  background: var(--color-bg-base);
+  /* 原 --color-bg-base 幽灵 token 无 fallback 渲染透明;hover 态本有专用 token(S5 修) */
+  background: var(--color-bg-hover);
   color: var(--color-text-primary);
 }
 .ver-row__del:hover {
-  color: var(--color-danger, #e5484d);
+  /* 原 var(--color-danger, #e5484d) 引用不存在的幽灵 token,一直走 fallback(S5 修) */
+  color: var(--color-error);
 }
 
 .ver-diff {
@@ -294,15 +296,15 @@ defineExpose({ reload })
   color: var(--color-text-secondary);
 }
 .op-insert {
-  background: rgba(46, 160, 67, 0.18);
+  background: color-mix(in srgb, var(--color-success) 18%, transparent);
 }
 .op-delete {
-  background: rgba(229, 72, 77, 0.18);
+  background: color-mix(in srgb, var(--color-error) 18%, transparent);
 }
 .op-insert .ver-diff__sign {
-  color: #2ea043;
+  color: var(--color-success);
 }
 .op-delete .ver-diff__sign {
-  color: #e5484d;
+  color: var(--color-error);
 }
 </style>

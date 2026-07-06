@@ -4,7 +4,7 @@
 #       泄漏断言**,全绿方可提升到 main(提升为你侧动作:分支保护 + 手动/自动 ff,见文末说明)。
 #
 # 🔴 本文件**不被 copy.bara.sky 排除** → 随投影同步到公开仓,在公开仓生效。它也存在于私有仓,但:
-#    ①`if: github.repository == 'gfgjs/picasa-next'` 守门使它**只在公开仓执行**(私有仓 workflow_dispatch 也不跑);
+#    ①`if: github.repository == 'gfgjs/scrollery'` 守门使它**只在公开仓执行**(私有仓 workflow_dispatch 也不跑);
 #    ②私有仓无 sync-staging 分支,push 触发在私有仓天然不发生。
 #    这样 ③b 后「私有 main 含 pro member」绝不会误触本 gate 的「assert 无 pro」而误报。
 name: oss-gate
@@ -15,14 +15,16 @@ on:
   workflow_dispatch:
 
 # 与 FORBIDDEN(copy.bara.sky)保持一致的硬指标;gate 侧再验一遍(双保险,防 Copybara 规则漏网)。
+# 🔴 \b 词边界防子串误伤(scrollery_probe_* 含 scrollery_pro 子串,2026-07-06 剥离模拟实抓);
+#    必须 YAML **单引号**——双引号会把 \b 解析成退格控制符,禁词静默失效。
 env:
-  FORBIDDEN: "picasa_next_pro BEGIN-INTERNAL END-INTERNAL"
+  FORBIDDEN: 'scrollery_pro\b picasa_next_pro\b BEGIN-INTERNAL END-INTERNAL'
 
 jobs:
   gate:
     name: OSS strip-tree gate
     # 🔴 只在公开仓执行,私有仓一律跳过。
-    if: github.repository == 'gfgjs/picasa-next'
+    if: github.repository == 'gfgjs/scrollery'
     # 2026-07-05 回迁 ubuntu(todo C 节,原 2026-07-02「跑 windows」fork 决策的解除):当年 Linux 编不过
     # 的两个前提(wic_engine 无条件编译 / windows crate 未 target 限定)已被审查 R0-2 + Part4-T16 清除;
     # 私有超集树在 ci.yml rust-linux job(check+test)全绿实证后回迁——公开投影树是其剥离子集。
@@ -45,8 +47,8 @@ jobs:
       - name: 断言 pro 源码 + 生产 keyset 已剥离
         run: |
           set -e
-          if [ -d crates/picasa-next-pro ]; then
-            echo "::error::crates/picasa-next-pro/ 出现在公开树 —— Copybara glob 排除失效"; exit 1
+          if [ -d crates/scrollery-pro ]; then
+            echo "::error::crates/scrollery-pro/ 出现在公开树 —— Copybara glob 排除失效"; exit 1
           fi
           # 🔴 herestring 而非管道:shell:bash 注入 pipefail,grep -q 命中早退给上游发
           #    SIGPIPE(141)→ 管道非零 → if 为假 → **真泄漏被静默放行**(私有仓 ci.yml
@@ -68,7 +70,7 @@ jobs:
             #   include 之后,否则 --include='*.yml' 压过排除、gate 自指命中 env 里的 FORBIDDEN(第二跑实证踩坑)。
             hits=$(grep -RIn --exclude-dir=.git \
                    --include='*.rs' --include='*.toml' --include='*.json' --include='*.yml' \
-                   --exclude=oss-gate.yml \
+                   --exclude=oss-gate.yml --exclude=rename-gate.json \
                    -e "$tok" . || true)
             if [ -n "$hits" ]; then
               echo "::error::禁词 [$tok] 出现在公开树代码文件:"; echo "$hits"; fail=1
@@ -80,13 +82,13 @@ jobs:
       - name: 校验 + 重生 Cargo.lock 无 pro
         run: |
           set -e
-          if [ -f Cargo.lock ] && grep -q "picasa-next-pro" Cargo.lock; then
-            echo "::error::同步来的 Cargo.lock 含 picasa-next-pro —— 须在 gate 重生公开 lock"; exit 1
+          if [ -f Cargo.lock ] && grep -q "scrollery-pro" Cargo.lock; then
+            echo "::error::同步来的 Cargo.lock 含 scrollery-pro —— 须在 gate 重生公开 lock"; exit 1
           fi
           # 重生一份(依当前剥离后的 Cargo.toml),确认可解析且不引入 pro。
           cargo generate-lockfile
-          if grep -q "picasa-next-pro" Cargo.lock; then
-            echo "::error::重生的 Cargo.lock 仍含 picasa-next-pro"; exit 1
+          if grep -q "scrollery-pro" Cargo.lock; then
+            echo "::error::重生的 Cargo.lock 仍含 scrollery-pro"; exit 1
           fi
           echo "✓ 公开 Cargo.lock 无 pro"
 
@@ -115,14 +117,14 @@ jobs:
       - name: cargo test --workspace(附加)
         run: cargo test --workspace --locked
 
-      # ④ members 断言:workspace 成员绝不含 picasa-next-pro。
+      # ④ members 断言:workspace 成员绝不含 scrollery-pro。
       - name: 断言 workspace members 无 pro
         run: |
           set -e
           # herestring 防 SIGPIPE 竞态(同上方 keyset 断言注,2026-07-04 实录)。
           meta=$(cargo metadata --no-deps --format-version 1)
-          if grep -q '"name":"picasa-next-pro"' <<< "$meta"; then
-            echo "::error::workspace members 含 picasa-next-pro"; exit 1
+          if grep -q '"name":"scrollery-pro"' <<< "$meta"; then
+            echo "::error::workspace members 含 scrollery-pro"; exit 1
           fi
           echo "✓ members 无 pro"
 
@@ -131,7 +133,7 @@ jobs:
   #    windows_x64.tar.gz,官方 release 的 Windows 资产是 .zip → 404(六跑实证)。ubuntu 是该动作的主流路径。
   gitleaks:
     name: gitleaks 密钥扫描
-    if: github.repository == 'gfgjs/picasa-next'
+    if: github.repository == 'gfgjs/scrollery'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

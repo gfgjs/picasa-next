@@ -16,7 +16,9 @@ use tracing::info;
 use std::path::Path;
 
 use crate::ai::face_pipeline::start_face_pipeline;
-use crate::ai::face_profile::{face_profiles, find_face_profile, DEFAULT_FACE_PROFILE_ID};
+use crate::ai::face_profile::{
+    face_profiles, find_face_profile, FaceProfile, DEFAULT_FACE_PROFILE_ID,
+};
 use crate::db::models::{
     FaceBox, FaceModelInfo, FaceStatusSummary, LikelyMatchGroup, PersonSummary,
 };
@@ -30,11 +32,34 @@ use crate::db::queries::{
 use crate::ipc::ai_commands::{download_assets, models_dir, DownloadProgress};
 use crate::state::{AppState, GPU_OWNER_FACE};
 
-/// Both onnx files of a face track present on disk (single-file models, no shared vocab/extra
-/// unlike CLIP variants).
-/// 一条人脸轨的两个 onnx 文件均在磁盘上（单文件模型，不像 CLIP 变体有共享 vocab/extra）。
-fn face_variant_installed(models_dir: &Path, detect_file: &str, embed_file: &str) -> bool {
-    models_dir.join(detect_file).exists() && models_dir.join(embed_file).exists()
+/// Both onnx files of a face track present on disk, and matching the manifest size when known
+/// (single-file models, no shared vocab/extra unlike CLIP variants).
+/// 一条人脸轨的两个 onnx 文件均在盘,且——当轨的下载清单载有该文件期望 size 时——尺寸须一致
+/// (Part4-T5 选项 B,2026-07-06 拍板)。
+///
+/// size 快检只多一次 stat(零启动税),专抓「手动放入 LFS pointer 文本/截断文件」的自伤面
+/// (F5):官方下载路径落盘前已做 size+sha256 全校验,存在≈已校验,唯手动绕过时这里当场识破,
+/// 而非等 worker 推理崩溃。全量 sha256 刻意不进判定路径(数十 MB 模型的常驻税,决策 brief §3
+/// 选项 C 否决);清单无该文件条目(如 SCRFD 手动导入轨 assets 为空)→ 退回存在判定,诚实降级。
+fn face_variant_installed(models_dir: &Path, profile: &FaceProfile) -> bool {
+    [&profile.detect_file, &profile.embed_file].iter().all(|file| {
+        let path = models_dir.join(file.as_str());
+        let Ok(meta) = std::fs::metadata(&path) else {
+            return false;
+        };
+        match profile.assets.iter().find(|a| &a.dest == *file) {
+            Some(asset) if meta.len() != asset.size_bytes => {
+                tracing::warn!(
+                    "人脸模型文件尺寸与清单不符,按未安装处理(疑似 LFS pointer/截断,重新下载即修复) | {} 期望 {} 字节,实际 {} 字节",
+                    path.display(),
+                    asset.size_bytes,
+                    meta.len()
+                );
+                false
+            }
+            _ => true,
+        }
+    })
 }
 
 /// Resolve the active face model id from config (`face_model_active`), default fallback. This is
@@ -55,7 +80,7 @@ fn active_face_model_id(state: &AppState) -> String {
 /// 发生在 worker 端,host 不触引擎)。
 fn face_loaded(state: &AppState) -> bool {
     crate::ipc::ai_commands::active_face_profile(state)
-        .map(|p| face_variant_installed(&models_dir(state), &p.detect_file, &p.embed_file))
+        .map(|p| face_variant_installed(&models_dir(state), &p))
         .unwrap_or(false)
 }
 
@@ -540,7 +565,7 @@ pub async fn list_face_model_registry(
         let infos = face_profiles()
             .into_iter()
             .map(|p| {
-                let installed = face_variant_installed(&models, &p.detect_file, &p.embed_file);
+                let installed = face_variant_installed(&models, &p);
                 let active = p.id == active_id;
                 FaceModelInfo {
                     active,
@@ -598,7 +623,7 @@ pub async fn set_active_face_model(
             ));
         }
         let models = models_dir(&state_arc);
-        if !face_variant_installed(&models, &prof.detect_file, &prof.embed_file) {
+        if !face_variant_installed(&models, &prof) {
             return Err(format!(
                 "「{}」尚未安装,请先下载或导入其模型文件",
                 prof.display_name
@@ -693,4 +718,86 @@ pub async fn download_face_model(
         &prof.id,
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ai::profile::ModelAsset;
+    use std::path::PathBuf;
+
+    /// 仓例临时目录(std::env::temp_dir + 进程号,同 walker/generator 测试;不引 tempfile)。
+    fn test_dir(tag: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("scrollery_face_inst_{tag}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// 以默认轨为底、把清单期望 size 缩到测试字节数的 profile(避免造 38MB 真文件)。
+    fn tiny_profile(detect_size: Option<u64>, embed_size: Option<u64>) -> FaceProfile {
+        let mut p = face_profiles().into_iter().next().expect("默认轨必在");
+        p.assets = [
+            detect_size.map(|s| (p.detect_file.clone(), s)),
+            embed_size.map(|s| (p.embed_file.clone(), s)),
+        ]
+        .into_iter()
+        .flatten()
+        .map(|(dest, size_bytes)| ModelAsset {
+            url: String::new(),
+            mirror_url: None,
+            dest,
+            size_bytes,
+            sha256: None,
+        })
+        .collect();
+        p
+    }
+
+    #[test]
+    fn missing_file_not_installed() {
+        let dir = test_dir("missing");
+        assert!(!face_variant_installed(
+            &dir,
+            &tiny_profile(Some(3), Some(3))
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn size_match_installed() {
+        let dir = test_dir("match");
+        let p = tiny_profile(Some(3), Some(5));
+        std::fs::write(dir.join(&p.detect_file), b"det").unwrap();
+        std::fs::write(dir.join(&p.embed_file), b"embed").unwrap();
+        assert!(face_variant_installed(&dir, &p));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// F5 核心场景:手动放入 LFS pointer 文本/截断文件,size 与清单不符 → 按未安装处理。
+    #[test]
+    fn size_mismatch_treated_as_not_installed() {
+        let dir = test_dir("mismatch");
+        let p = tiny_profile(Some(3), Some(5));
+        std::fs::write(dir.join(&p.detect_file), b"det").unwrap();
+        std::fs::write(
+            dir.join(&p.embed_file),
+            b"version https://git-lfs.github.com/spec/v1",
+        )
+        .unwrap();
+        assert!(!face_variant_installed(&dir, &p));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 清单无该文件条目(如手动导入轨 assets 为空)→ 诚实降级为存在判定。
+    #[test]
+    fn no_manifest_entry_falls_back_to_existence() {
+        let dir = test_dir("fallback");
+        let p = tiny_profile(None, None);
+        std::fs::write(dir.join(&p.detect_file), b"whatever").unwrap();
+        std::fs::write(dir.join(&p.embed_file), b"x").unwrap();
+        assert!(face_variant_installed(&dir, &p));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

@@ -19,10 +19,10 @@ use std::path::{Path, PathBuf};
 use exotic_protocol::{
     ModelDescriptor, ModelHandle, ModelProfileSnapshot, ModelRole, WorkerErrorCode,
 };
-use picasa_next_ai_core::clip::ClipTokenizer;
-use picasa_next_ai_core::engine::AiEnginePool;
-use picasa_next_ai_core::face_profile::{find_face_profile, FaceProfile};
-use picasa_next_ai_core::profile::{resolve_profile, ModelProfile};
+use scrollery_ai_core::clip::ClipTokenizer;
+use scrollery_ai_core::engine::AiEnginePool;
+use scrollery_ai_core::face_profile::{find_face_profile, FaceProfile};
+use scrollery_ai_core::profile::{resolve_profile, ModelProfile};
 
 /// 初始化失败 =(稳定错误码, 诊断消息)。消息不含完整绝对路径(协议红线)。
 pub type InitError = (WorkerErrorCode, String);
@@ -226,7 +226,7 @@ pub fn sha256_file(path: &Path) -> std::io::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use picasa_next_ai_core::profile::DEFAULT_PROFILE_ID;
+    use scrollery_ai_core::profile::DEFAULT_PROFILE_ID;
 
     /// 每测试独立临时目录(进程 id + 名字),避免并行测试互踩。
     fn temp_dir(name: &str) -> PathBuf {

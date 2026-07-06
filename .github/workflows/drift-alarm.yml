@@ -21,7 +21,7 @@ jobs:
   author-check:
     name: 反向漂移告警
     # 🔴 只在公开仓执行,私有仓一律跳过。
-    if: github.repository == 'gfgjs/picasa-next'
+    if: github.repository == 'gfgjs/scrollery'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

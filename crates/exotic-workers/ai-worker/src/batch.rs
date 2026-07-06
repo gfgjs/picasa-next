@@ -19,7 +19,7 @@ use exotic_protocol::{
     FailureBody, Frame, FrameType, SuccessBody, TextEmbedSuccess, WorkerErrorCode, MAX_BLOB_LEN,
 };
 use ndarray::Array4;
-use picasa_next_ai_core::{clip, face, DecodedImage};
+use scrollery_ai_core::{clip, face, DecodedImage};
 
 use crate::session::SessionState;
 

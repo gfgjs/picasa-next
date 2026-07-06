@@ -1,0 +1,42 @@
+# crates/scrollery-exotic-trust/Cargo.toml
+# 插件平台 · 开源信任根验签叶 crate（Part6 §3.9.1a 去环 ③a）。
+#
+# 自 src-tauri 迁入 VerifyingKeyset + verify_token/evaluate_token/LicensePayload（通用 ring 封装、
+# 无秘密价值，计划明定「留开源」§3.9 line 553）。下沉动机：pro 的 DirectEntitlement 需复用这套验签
+# 原语，而 pro 不能依赖 src-tauri（否则 cargo crate 依赖成环）。依赖单向无环：
+#   plugin-api（叶）← exotic-trust ← src-tauri / pro。
+#
+# 🔴 真实**生产**公钥 exotic-keyset-prod.json + builtin() 生产构造随 pro 下沉（③b）；本 crate 现内置
+#    的是**占位**公钥（openssl 生成、私钥已弃），非生产密钥，不触「生产公钥永不入公开仓」红线。
+
+[package]
+name = "scrollery-exotic-trust"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "scrollery_exotic_trust"
+path = "src/lib.rs"
+
+[features]
+# test-support：把 crypto 的确定性签名/keyset 构造工具（test_support 模块）暴露给**下游 crate 的测试**。
+# 必要性：crypto 迁出 src-tauri 后，src-tauri 的 installer/registry/package/install/license 测试仍需
+# 这些工具，而 `#[cfg(test)]` 项**不跨 crate 可见**。故经本 feature 门控，由 src-tauri 在
+# [dev-dependencies] 启用；生产依赖不启用 → 测试密钥绝不编入 Release。
+test-support = []
+
+[dependencies]
+# 拿 LicenseError / LicenseStatus（verify_token/evaluate_token 的返回类型），最底叶 crate、单向依赖。
+scrollery-plugin-api = { path = "../scrollery-plugin-api" }
+# ring：离线 Ed25519 verify_strict（复用既有依赖，零新增）。
+ring = "0.17"
+# base64：License token / 公钥的 base64(url) 编解码。
+base64 = "0.22"
+# serde(+json)：keyset JSON 解析 + LicensePayload 反序列化。
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# thiserror：CryptoError 结构化。
+thiserror = "1"
+# tracing：验签失败的密码学层细码内部 warn（不输出 token/key 材料）。
+tracing = "0.1"

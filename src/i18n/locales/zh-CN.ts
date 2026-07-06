@@ -1,10 +1,10 @@
 export default {
   onboarding: {
-    welcome: '欢迎使用 Picasa Next',
+    welcome: '欢迎使用 Scrollery',
     subtitle: '只需三步，开始管理你的照片与视频',
     step1: {
       title: '添加照片目录',
-      desc: '选择一个包含照片或视频的文件夹，Picasa Next 会自动扫描并建立图库。之后可随时在侧栏添加更多。',
+      desc: '选择一个包含照片或视频的文件夹，Scrollery 会自动扫描并建立图库。之后可随时在侧栏添加更多。',
       addBtn: '选择文件夹',
       empty: '尚未添加目录——你也可以稍后再加',
       addFailed: '添加文件夹失败：{error}',
@@ -215,14 +215,26 @@ export default {
     zoomModeFitWidth: '铺满宽 (当前) - 点击切换为铺满高',
     zoomModeFitHeight: '铺满高 (当前) - 点击切换为自适应',
   },
+  // 内置主题名(双语并用:中文主名 + 英文副名;注册表 nameKey = themes.<id>)
+  themes: {
+    ink: '墨 · Ink',
+    porcelain: '素 · Porcelain',
+    moonlight: '月白 · Moonlight',
+    xuan: '宣 · Xuan',
+    obsidian: '玄 · Obsidian',
+    dai: '黛 · Dai',
+  },
   settings: {
     title: '设置',
     general: '通用',
     theme: '外观主题',
-    themeDesc: '选择应用的主题颜色。',
+    themeDesc: '选择外观模式,并为亮色/暗色各挑一套主题;跟随系统时自动在两者间切换。',
     themeSystem: '跟随系统',
     themeLight: '浅色',
     themeDark: '深色',
+    lightThemes: '亮色主题',
+    darkThemes: '暗色主题',
+    themeActiveNow: '当前生效',
     language: '语言',
     languageDesc: '选择应用的界面语言。',
     thumbnails: '缩略图',
@@ -459,7 +471,7 @@ export default {
     fmNotInstalled: '○ 未安装',
   },
   empty: {
-    allPhotos: '这里空空如也\n点击左侧"添加文件夹"开始导入照片。',
+    allPhotos: '这里空空如也\n添加一个存有照片的文件夹,开始建立你的资料库。',
     recentlyAdded: '暂无最近添加的照片',
     favorites: '还没有收藏任何照片\n点击照片右下角的心形图标即可收藏。',
     videos: '暂无视频文件',
@@ -507,7 +519,7 @@ export default {
     gateOpenStoreFailed: '打开购买页面失败: {error}',
     blockedTitle: '此功能当前不可用',
     blockedUnsupportedPlatform: '当前平台没有对应的插件包。',
-    blockedIncompatibleHost: '插件需要更新版本的 Picasa Next，请升级后重试。',
+    blockedIncompatibleHost: '插件需要更新版本的 Scrollery，请升级后重试。',
     blockedInvalidInstallation: '插件安装已损坏，请重新安装或修复。',
     blockedDisabled: '该插件或其所属子系统已被禁用。',
     activateTitle: '激活插件',
@@ -821,7 +833,7 @@ export default {
   // 关闭主窗口确认对话框
   closeConfirm: {
     title: '确认关闭',
-    message: '您想退出 Picasa Next，还是最小化到系统托盘？',
+    message: '您想退出 Scrollery，还是最小化到系统托盘？',
     remember: '记住我的选择，不再提示',
     minimize: '最小化到托盘',
     exit: '退出应用',

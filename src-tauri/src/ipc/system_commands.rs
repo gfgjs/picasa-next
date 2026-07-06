@@ -137,14 +137,34 @@ pub async fn close_splashscreen(
     }
     Ok(())
 }
+/// 解析 `#rrggbb` 为 Win32 COLORREF 数值(0x00BBGGRR,注意 BGR 序)。
+/// 仅 Windows 的 DWM 标题栏分支使用。
+#[cfg(target_os = "windows")]
+fn hex_to_colorref(hex: &str) -> Option<u32> {
+    let s = hex.strip_prefix('#')?;
+    if s.len() != 6 {
+        return None;
+    }
+    let n = u32::from_str_radix(s, 16).ok()?;
+    let (r, g, b) = ((n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff);
+    Some((b << 16) | (g << 8) | r)
+}
+
 #[tauri::command]
-// `resolved` 仅在 Windows 的 DWM 标题栏分支使用;非 Windows 目标压掉 unused 警告
-// (公开树 Linux check 实证告警点,审查 R0-2 顺带)。
+// `resolved`/`caption_*` 仅在 Windows 的 DWM 标题栏分支使用;非 Windows 目标压掉
+// unused 警告(公开树 Linux check 实证告警点,审查 R0-2 顺带)。
 #[cfg_attr(not(target_os = "windows"), allow(unused_variables))]
 pub async fn set_window_theme(
     app: tauri::AppHandle,
     theme: String,
     resolved: String,
+    // 多主题标题栏跟随(2026-07-06):前端从当前主题的计算样式取 chrome 底色
+    // (--color-bg-secondary)与标题文本色(--color-text-primary)传入;Win11
+    // (build 22000+)经 DWMWA_CAPTION_COLOR/TEXT_COLOR 刷成主题真彩,Win10 该
+    // 属性返回 E_INVALIDARG 被忽略,自动降级为下方明暗二态。可选参数:老调用
+    // 方不传时行为与旧版完全一致。
+    caption_bg: Option<String>,
+    caption_text: Option<String>,
 ) -> std::result::Result<(), String> {
     if let Some(main_win) = app.get_webview_window("main") {
         let t = match theme.as_str() {
@@ -163,19 +183,40 @@ pub async fn set_window_theme(
             if let Ok(hwnd) = main_win.hwnd() {
                 use windows::Win32::Foundation::HWND;
                 use windows::Win32::Graphics::Dwm::{
-                    DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE,
+                    DwmSetWindowAttribute, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR,
+                    DWMWA_USE_IMMERSIVE_DARK_MODE,
                 };
 
                 let is_dark = resolved.as_str() == "dark";
+                let hwnd = HWND(hwnd.0 as _);
 
                 let dark_mode: i32 = if is_dark { 1 } else { 0 };
                 unsafe {
                     let _ = DwmSetWindowAttribute(
-                        HWND(hwnd.0 as _),
+                        hwnd,
                         DWMWA_USE_IMMERSIVE_DARK_MODE,
                         &dark_mode as *const i32 as *const _,
                         std::mem::size_of::<i32>() as u32,
                     );
+                }
+
+                // 主题真彩标题栏:immersive 标志只能给「白/黑」二态,标题栏永远
+                // 不会跟随主题 chrome 色(鱼肚白/月白冷白均不认)——须显式刷
+                // CAPTION/TEXT 颜色才能与主题一致。
+                for (attr, hex) in [
+                    (DWMWA_CAPTION_COLOR, caption_bg.as_deref()),
+                    (DWMWA_TEXT_COLOR, caption_text.as_deref()),
+                ] {
+                    if let Some(color) = hex.and_then(hex_to_colorref) {
+                        unsafe {
+                            let _ = DwmSetWindowAttribute(
+                                hwnd,
+                                attr,
+                                &color as *const u32 as *const _,
+                                std::mem::size_of::<u32>() as u32,
+                            );
+                        }
+                    }
                 }
             }
         }

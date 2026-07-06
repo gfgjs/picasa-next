@@ -1,167 +1,42 @@
 <template>
   <div :class="['dynamic-control', { compact }]">
-    <!-- Theme -->
-    <template v-if="settingKey === 'theme'">
-      <div class="select-wrap" :class="{ 'compact-select-wrap': compact }">
-        <select v-model="ui.theme" @change="ui.setTheme(ui.theme)" class="select">
-          <option value="system">{{ $t('settings.themeSystem') }}</option>
-          <option value="light">{{ $t('settings.themeLight') }}</option>
-          <option value="dark">{{ $t('settings.themeDark') }}</option>
-        </select>
-      </div>
-    </template>
-
-    <!-- Language -->
-    <template v-else-if="settingKey === 'language'">
-      <div class="select-wrap" :class="{ 'compact-select-wrap': compact }">
-        <select v-model="ui.language" @change="ui.setLanguage(ui.language)" class="select">
-          <option value="zh-CN">简体中文</option>
-          <option value="en-US">English</option>
-        </select>
-      </div>
-    </template>
-
-    <!-- Font Size -->
-    <template v-else-if="settingKey === 'uiFontSize'">
-      <input
-        type="number"
-        v-model.number="uiFontSizeLocal"
-        @change="config.setUiFontSize(uiFontSizeLocal)"
-        min="12"
-        max="24"
-        class="input-number"
-        :class="{ 'compact-input': compact }"
-      />
-    </template>
-
-    <!-- Hover Scale -->
-    <template v-else-if="settingKey === 'hoverScale'">
-      <label class="toggle" :class="{ 'compact-toggle': compact }">
+    <!-- ── 特例:AI 批大小(固定 batch 钳制 + 分级风险提示,注册表 control='custom')── -->
+    <template v-if="settingKey === 'aiBatchSize'">
+      <div class="batch-size-stack">
         <input
-          type="checkbox"
-          v-model="enableHoverScaleLocal"
-          @change="config.setEnableHoverScale(enableHoverScaleLocal)"
+          type="number"
+          v-model.number="aiBatchSizeLocal"
+          @change="onBatchChange"
+          min="0"
+          max="512"
+          class="input-number"
+          :class="{ 'compact-input': compact }"
+          :placeholder="$t('settings.aiBatchAutoPlaceholder')"
         />
-        <span class="toggle__thumb" />
-      </label>
-    </template>
-
-    <!-- Close Behavior -->
-    <template v-else-if="settingKey === 'closeBehavior'">
-      <div class="select-wrap" :class="{ 'compact-select-wrap': compact }">
-        <select
-          v-model="ui.closeBehavior"
-          @change="ui.setCloseBehavior(ui.closeBehavior)"
-          class="select"
+        <span v-if="aiBatchSizeLocal === 0" class="batch-hint batch-hint--ok"
+          >{{ $t('settings.aiBatchAutoAllocated')
+          }}<template v-if="ai.status.activeFixedBatch">{{
+            $t('settings.aiBatchNotLowerThan', { k: ai.status.activeFixedBatch })
+          }}</template></span
         >
-          <option value="ask">{{ $t('settings.closeBehaviorAsk') }}</option>
-          <option value="minimize_to_tray">{{ $t('settings.closeBehaviorMinimize') }}</option>
-          <option value="exit">{{ $t('settings.closeBehaviorExit') }}</option>
-        </select>
-      </div>
-    </template>
-
-    <!-- Hover Auto-play -->
-    <template v-else-if="settingKey === 'hoverAutoplay'">
-      <label class="toggle" :class="{ 'compact-toggle': compact }">
-        <input
-          type="checkbox"
-          v-model="ui.hoverAutoplay"
-          @change="ui.setHoverAutoplay(ui.hoverAutoplay)"
-        />
-        <span class="toggle__thumb" />
-      </label>
-    </template>
-
-    <!-- Bucket Segmented Scrolling (T16 方案B B1) -->
-    <template v-else-if="settingKey === 'bucketScroll'">
-      <label class="toggle" :class="{ 'compact-toggle': compact }">
-        <input
-          type="checkbox"
-          v-model="ui.bucketSegmentedScroll"
-          @change="ui.setBucketSegmentedScroll(ui.bucketSegmentedScroll)"
-        />
-        <span class="toggle__thumb" />
-      </label>
-    </template>
-
-    <!-- Video Cover Extraction -->
-    <template v-else-if="settingKey === 'enableVideoCover'">
-      <label class="toggle" :class="{ 'compact-toggle': compact }">
-        <input
-          type="checkbox"
-          v-model="enableVideoCoverLocal"
-          @change="config.setEnableVideoCover(enableVideoCoverLocal)"
-        />
-        <span class="toggle__thumb" />
-      </label>
-    </template>
-
-    <!-- Video Keyframe Extraction -->
-    <template v-else-if="settingKey === 'enableVideoKeyframes'">
-      <label class="toggle" :class="{ 'compact-toggle': compact }">
-        <input
-          type="checkbox"
-          v-model="enableVideoKeyframesLocal"
-          @change="config.setEnableVideoKeyframes(enableVideoKeyframesLocal)"
-        />
-        <span class="toggle__thumb" />
-      </label>
-    </template>
-
-    <!-- AI High-quality Analysis Cache -->
-    <template v-else-if="settingKey === 'aiHqCache'">
-      <label class="toggle" :class="{ 'compact-toggle': compact }">
-        <input
-          type="checkbox"
-          v-model="aiHqCacheLocal"
-          @change="config.setAiHqCache(aiHqCacheLocal)"
-        />
-        <span class="toggle__thumb" />
-      </label>
-    </template>
-
-    <!-- Show Thumb Info -->
-    <template v-else-if="settingKey === 'showThumbInfo'">
-      <label class="toggle" :class="{ 'compact-toggle': compact }">
-        <input
-          type="checkbox"
-          v-model="ui.showThumbInfo"
-          @change="ui.setShowThumbInfo(ui.showThumbInfo)"
-        />
-        <span class="toggle__thumb" />
-      </label>
-    </template>
-
-    <!-- Thumb Decode Strategy -->
-    <template v-else-if="settingKey === 'thumbDecodeStrategy'">
-      <div class="select-wrap" :class="{ 'compact-select-wrap': compact }">
-        <select
-          v-model="thumbStrategyLocal"
-          @change="config.setThumbStrategy(thumbStrategyLocal)"
-          class="select"
+        <span
+          v-else-if="ai.status.activeFixedBatch && aiBatchSizeLocal < ai.status.activeFixedBatch"
+          class="batch-hint batch-hint--error"
+          >{{ $t('settings.aiBatchFixedCannotBeLower', { k: ai.status.activeFixedBatch }) }}</span
         >
-          <option value="cpu">{{ $t('settings.thumbStrategyCpu') }}</option>
-          <option value="gpu">{{ $t('settings.thumbStrategyGpu') }}</option>
-          <option value="direct">{{ $t('settings.thumbStrategyDirect') }}</option>
-        </select>
+        <span v-else-if="aiBatchSizeLocal > 200" class="batch-hint batch-hint--error">{{
+          $t('settings.aiBatchHighRisk')
+        }}</span>
+        <span v-else-if="aiBatchSizeLocal > 128" class="batch-hint batch-hint--warn">{{
+          $t('settings.aiBatchWarning')
+        }}</span>
+        <span v-else-if="ai.status.activeFixedBatch" class="batch-hint batch-hint--muted">{{
+          $t('settings.aiBatchFixedMin', { k: ai.status.activeFixedBatch })
+        }}</span>
       </div>
     </template>
 
-    <!-- GPU Engine -->
-    <template v-else-if="settingKey === 'gpuEngine'">
-      <div class="select-wrap" :class="{ 'compact-select-wrap': compact }">
-        <select
-          v-model="gpuEngineLocal"
-          @change="config.setGpuEngine(gpuEngineLocal)"
-          class="select"
-        >
-          <option value="wic">{{ $t('settings.gpuEngineWic') }}</option>
-        </select>
-      </div>
-    </template>
-
-    <!-- Thumb Size Segmented Control -->
+    <!-- ── 特例:缩略图尺寸档 segmented ─────────────────────────── -->
     <template v-else-if="settingKey === 'thumbSize'">
       <div class="segmented-control" :class="{ 'compact-segmented': compact }">
         <button
@@ -176,207 +51,71 @@
       </div>
     </template>
 
-    <!-- Thumb Skip Max KB -->
-    <template v-else-if="settingKey === 'thumbSkipMaxKb'">
-      <input
-        type="number"
-        v-model.number="thumbSkipMaxKbLocal"
-        @change="onThumbSkipMaxKbChange"
-        min="0"
-        max="1000000"
-        class="input-number"
-        :class="{ 'compact-input': compact }"
-      />
+    <!-- ── 开关类(注册表 control='toggle',绑定见 toggleBindings)──── -->
+    <template v-else-if="spec?.control === 'toggle' && hasToggleBinding">
+      <label class="toggle" :class="{ 'compact-toggle': compact }">
+        <input type="checkbox" v-model="toggleModel" />
+        <span class="toggle__thumb" />
+      </label>
     </template>
 
-    <!-- Thumb Cache Max MB -->
-    <template v-else-if="settingKey === 'thumbCacheMaxMb'">
-      <input
-        type="number"
-        v-model.number="thumbCacheMaxMbLocal"
-        @change="config.setThumbCacheMaxMb(thumbCacheMaxMbLocal)"
-        min="100"
-        max="100000"
-        class="input-number"
-        :class="{ 'compact-input': compact }"
-      />
-    </template>
-
-    <!-- Timeline Scroll Width -->
-    <template v-else-if="settingKey === 'timelineScrollWidth'">
-      <input
-        type="number"
-        v-model.number="timelineScrollWidthLocal"
-        @change="config.setTimelineScrollWidth(timelineScrollWidthLocal)"
-        min="2"
-        max="40"
-        class="input-number"
-        :class="{ 'compact-input': compact }"
-      />
-    </template>
-
-    <!-- AI Hardware Strategy -->
-    <template v-else-if="settingKey === 'aiHardwareStrategy'">
+    <!-- ── 下拉类(control='select',选项表来自注册表)────────────── -->
+    <template v-else-if="spec?.control === 'select' && hasSelectBinding">
       <div class="select-wrap" :class="{ 'compact-select-wrap': compact }">
-        <select
-          v-model="aiProviderOverrideLocal"
-          @change="config.setAiProviderOverride(aiProviderOverrideLocal)"
-          class="select"
-        >
-          <option value="auto">{{ $t('settings.aiAutoHardware') }}</option>
-          <option value="cpu">{{ $t('settings.aiForceCpu') }}</option>
+        <select v-model="selectModel" class="select">
+          <option v-for="opt in spec.options ?? []" :key="opt.value" :value="opt.value">
+            {{ opt.labelKey ? $t(opt.labelKey) : opt.label }}
+          </option>
         </select>
       </div>
     </template>
 
-    <!-- AI Batch Size -->
-    <template v-else-if="settingKey === 'aiBatchSize'">
-      <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px">
-        <input
-          type="number"
-          v-model.number="aiBatchSizeLocal"
-          @change="onBatchChange"
-          min="0"
-          max="512"
-          class="input-number"
-          :class="{ 'compact-input': compact }"
-          :placeholder="$t('settings.aiBatchAutoPlaceholder')"
-        />
-        <span
-          v-if="aiBatchSizeLocal === 0"
-          style="font-size: 11px; color: var(--color-success); white-space: nowrap"
-          >{{ $t('settings.aiBatchAutoAllocated')
-          }}<template v-if="ai.status.activeFixedBatch">{{
-            $t('settings.aiBatchNotLowerThan', { k: ai.status.activeFixedBatch })
-          }}</template></span
-        >
-        <span
-          v-else-if="ai.status.activeFixedBatch && aiBatchSizeLocal < ai.status.activeFixedBatch"
-          style="font-size: 11px; color: var(--color-error); white-space: nowrap"
-          >{{ $t('settings.aiBatchFixedCannotBeLower', { k: ai.status.activeFixedBatch }) }}</span
-        >
-        <span
-          v-else-if="aiBatchSizeLocal > 200"
-          style="font-size: 11px; color: var(--color-error); white-space: nowrap"
-          >{{ $t('settings.aiBatchHighRisk') }}</span
-        >
-        <span
-          v-else-if="aiBatchSizeLocal > 128"
-          style="font-size: 11px; color: var(--color-warning); white-space: nowrap"
-          >{{ $t('settings.aiBatchWarning') }}</span
-        >
-        <span
-          v-else-if="ai.status.activeFixedBatch"
-          style="font-size: 11px; color: var(--color-text-tertiary); white-space: nowrap"
-          >{{ $t('settings.aiBatchFixedMin', { k: ai.status.activeFixedBatch }) }}</span
-        >
-      </div>
+    <!-- ── 数字类(control='number',边界来自注册表;本地缓冲,change 时提交)── -->
+    <template v-else-if="spec?.control === 'number' && hasNumberBinding">
+      <input
+        type="number"
+        v-model.number="numberLocal"
+        @change="commitNumber"
+        :min="spec.min"
+        :max="spec.max"
+        class="input-number"
+        :class="{ 'compact-input': compact }"
+      />
     </template>
 
-    <!-- Log Level -->
-    <template v-else-if="settingKey === 'logLevel'">
-      <div class="select-wrap" :class="{ 'compact-select-wrap': compact }">
-        <select v-model="logLevelLocal" @change="config.setLogLevel(logLevelLocal)" class="select">
-          <option value="trace">{{ $t('settings.logLevelTrace') }}</option>
-          <option value="debug">{{ $t('settings.logLevelDebug') }}</option>
-          <option value="info">{{ $t('settings.logLevelInfo') }}</option>
-          <option value="warn">{{ $t('settings.logLevelWarn') }}</option>
-          <option value="error">{{ $t('settings.logLevelError') }}</option>
-        </select>
-      </div>
-    </template>
-
-    <!-- Clear DB Button -->
-    <template v-else-if="settingKey === 'clearDb'">
+    <!-- ── 危险清理按钮类(compact 统一 RotateCcw 图标,全尺寸按键取各自图标)── -->
+    <template v-else-if="dangerSpec && spec">
       <button
         v-if="compact"
         class="btn-icon danger-icon"
-        @click="handleClearDb"
-        :title="$t('settings.clearDb')"
-        :aria-label="$t('settings.clearDb')"
+        @click="dangerSpec.onClick"
+        :title="$t(spec.label)"
+        :aria-label="$t(spec.label)"
       >
         <RotateCcw :size="14" />
       </button>
-      <button v-else class="btn btn-danger" @click="handleClearDb">
-        <Database :size="14" /> {{ $t('settings.clearDbBtn') }}
+      <button v-else class="btn btn-danger" @click="dangerSpec.onClick">
+        <component :is="dangerSpec.icon" :size="14" /> {{ $t(dangerSpec.btnLabelKey) }}
       </button>
     </template>
 
-    <!-- Clear Settings Button -->
-    <template v-else-if="settingKey === 'clearSettings'">
-      <button
-        v-if="compact"
-        class="btn-icon danger-icon"
-        @click="handleClearSettings"
-        :title="$t('settings.clearSettings')"
-        :aria-label="$t('settings.clearSettings')"
-      >
-        <RotateCcw :size="14" />
-      </button>
-      <button v-else class="btn btn-danger" @click="handleClearSettings">
-        <Paintbrush :size="14" /> {{ $t('settings.clearSettingsBtn') }}
-      </button>
-    </template>
-
-    <!-- Clear All Thumbnails Button -->
-    <template v-else-if="settingKey === 'clearAllThumbnails'">
-      <button
-        v-if="compact"
-        class="btn-icon danger-icon"
-        @click="handleClearAllThumbnails"
-        :title="$t('settings.clearAllThumbnails')"
-        :aria-label="$t('settings.clearAllThumbnails')"
-      >
-        <RotateCcw :size="14" />
-      </button>
-      <button v-else class="btn btn-danger" @click="handleClearAllThumbnails">
-        <RotateCcw :size="14" /> {{ $t('settings.clearAllThumbnailsBtn') }}
-      </button>
-    </template>
-
-    <!-- Clear Logs Button -->
-    <template v-else-if="settingKey === 'clearLogs'">
-      <button
-        v-if="compact"
-        class="btn-icon danger-icon"
-        @click="handleClearLogs"
-        :title="$t('settings.clearLogs')"
-        :aria-label="$t('settings.clearLogs')"
-      >
-        <RotateCcw :size="14" />
-      </button>
-      <button v-else class="btn btn-danger" @click="handleClearLogs">
-        <RotateCcw :size="14" /> {{ $t('settings.clearLogsBtn') }}
-      </button>
-    </template>
-
-    <!-- Clear Browser Cache Button -->
-    <template v-else-if="settingKey === 'clearBrowserCache'">
-      <button
-        v-if="compact"
-        class="btn-icon danger-icon"
-        @click="handleClearBrowserCache"
-        :title="$t('settings.clearBrowserCache')"
-        :aria-label="$t('settings.clearBrowserCache')"
-      >
-        <RotateCcw :size="14" />
-      </button>
-      <button v-else class="btn btn-danger" @click="handleClearBrowserCache">
-        <RotateCcw :size="14" /> {{ $t('settings.clearBrowserCacheBtn') }}
-      </button>
-    </template>
-
-    <!-- Custom fallback for unknown or very complex types -->
+    <!-- ── 兜底:钉住区不支持的复杂项(目录/引擎状态/全量生成等特例行)── -->
     <template v-else>
-      <span style="font-size: 12px; color: var(--color-text-tertiary)">{{
-        $t('settings.unsupportedQuickAction')
-      }}</span>
+      <span class="unsupported-hint">{{ $t('settings.unsupportedQuickAction') }}</span>
     </template>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+// 注册式控件分派(设计 §8):按 SETTINGS_MAP.control 类型分派模板,替代原按
+// settingKey 的 625 行 v-else-if 长链。「控件长什么样」在注册表声明,「读写哪个
+// store」在下方三张同构绑定表声明——新增常规设置项零模板改动。
+// 行为等价性依据:ui/config 两 store 的 setter 均自带状态赋值,writable computed
+// 直调 setter 与原「v-model 先赋值 + @change 再调 setter」观察行为一致(checkbox/
+// select 的 v-model 本就只在 change 时刻写入)。number 类保留「输入进本地缓冲、
+// change 才提交」的原语义,避免逐键击发 IPC。
+import { ref, computed, watch } from 'vue'
+import type { Component } from 'vue'
 import { invokeIpc } from '../../utils/ipc'
 import { IPC } from '../../constants/ipc'
 import { useUiStore } from '../../stores/uiStore'
@@ -386,9 +125,10 @@ import { useScanStore } from '../../stores/scanStore'
 import { useAiStore } from '../../stores/aiStore'
 import { useI18n } from 'vue-i18n'
 import { THUMB_SIZE_TIERS } from '../../constants/defaults'
+import { SETTINGS_MAP } from '../../constants/settingsMap'
 import { RotateCcw, Database, Paintbrush } from '@lucide/vue'
 
-defineProps<{
+const props = defineProps<{
   settingKey: string
   compact?: boolean
 }>()
@@ -400,91 +140,154 @@ const scan = useScanStore()
 const ai = useAiStore()
 const { t } = useI18n()
 
-// Local bindings for inputs
-const uiFontSizeLocal = ref(config.uiFontSize)
-const enableHoverScaleLocal = ref(config.enableHoverScale)
-const thumbStrategyLocal = ref(config.thumbStrategy)
-const gpuEngineLocal = ref(config.gpuEngine)
-const thumbSkipMaxKbLocal = ref(config.thumbSkipMaxKb)
+const spec = computed(() => SETTINGS_MAP[props.settingKey])
 
-// 缩略图跳过阈值变更：写配置 + 失效布局（抽成方法——Vue 内联多语句处理器会被 Prettier
-// semi:false 拆行破坏，故必须单方法调用）。
-function onThumbSkipMaxKbChange() {
-  config.setThumbSkipMaxKb(thumbSkipMaxKbLocal.value)
-  media.invalidateLayout()
+/* ── 绑定表:声明各键「读哪、写哪」;控件形态由注册表声明 ─────────────── */
+
+const toggleBindings: Record<string, { get: () => boolean; set: (v: boolean) => void }> = {
+  hoverScale: {
+    get: () => config.enableHoverScale,
+    set: (v) => void config.setEnableHoverScale(v),
+  },
+  hoverAutoplay: { get: () => ui.hoverAutoplay, set: (v) => ui.setHoverAutoplay(v) },
+  bucketScroll: {
+    get: () => ui.bucketSegmentedScroll,
+    set: (v) => ui.setBucketSegmentedScroll(v),
+  },
+  showThumbInfo: { get: () => ui.showThumbInfo, set: (v) => ui.setShowThumbInfo(v) },
+  enableVideoCover: {
+    get: () => config.enableVideoCover,
+    set: (v) => void config.setEnableVideoCover(v),
+  },
+  enableVideoKeyframes: {
+    get: () => config.enableVideoKeyframes,
+    set: (v) => void config.setEnableVideoKeyframes(v),
+  },
+  aiHqCache: { get: () => config.aiHqCache, set: (v) => void config.setAiHqCache(v) },
 }
-const thumbCacheMaxMbLocal = ref(config.thumbCacheMaxMb)
-const timelineScrollWidthLocal = ref(config.timelineScrollWidth)
-const aiProviderOverrideLocal = ref(config.aiProviderOverride)
-const aiBatchSizeLocal = ref(config.aiBatchSize)
-const logLevelLocal = ref(config.logLevel)
-const enableVideoCoverLocal = ref(config.enableVideoCover)
-const enableVideoKeyframesLocal = ref(config.enableVideoKeyframes)
-const aiHqCacheLocal = ref(config.aiHqCache)
 
-// Sync from store
+const selectBindings: Record<string, { get: () => string; set: (v: string) => void }> = {
+  theme: {
+    get: () => ui.appearance,
+    set: (v) => ui.setAppearance(v as typeof ui.appearance),
+  },
+  language: { get: () => ui.language, set: (v) => ui.setLanguage(v) },
+  closeBehavior: {
+    get: () => ui.closeBehavior,
+    set: (v) => ui.setCloseBehavior(v as typeof ui.closeBehavior),
+  },
+  thumbDecodeStrategy: {
+    get: () => config.thumbStrategy,
+    set: (v) => void config.setThumbStrategy(v as typeof config.thumbStrategy),
+  },
+  gpuEngine: {
+    get: () => config.gpuEngine,
+    set: (v) => void config.setGpuEngine(v as typeof config.gpuEngine),
+  },
+  aiHardwareStrategy: {
+    get: () => config.aiProviderOverride,
+    set: (v) => void config.setAiProviderOverride(v as typeof config.aiProviderOverride),
+  },
+  logLevel: {
+    get: () => config.logLevel,
+    set: (v) => void config.setLogLevel(v as typeof config.logLevel),
+  },
+}
+
+const numberBindings: Record<string, { get: () => number; set: (v: number) => void }> = {
+  uiFontSize: { get: () => config.uiFontSize, set: (v) => void config.setUiFontSize(v) },
+  // 跳过阈值变更须同步失效布局(缩略图形态随之改变)。
+  thumbSkipMaxKb: {
+    get: () => config.thumbSkipMaxKb,
+    set: (v) => {
+      void config.setThumbSkipMaxKb(v)
+      media.invalidateLayout()
+    },
+  },
+  thumbCacheMaxMb: {
+    get: () => config.thumbCacheMaxMb,
+    set: (v) => void config.setThumbCacheMaxMb(v),
+  },
+  timelineScrollWidth: {
+    get: () => config.timelineScrollWidth,
+    set: (v) => void config.setTimelineScrollWidth(v),
+  },
+}
+
+const hasToggleBinding = computed(() => !!toggleBindings[props.settingKey])
+const hasSelectBinding = computed(() => !!selectBindings[props.settingKey])
+const hasNumberBinding = computed(() => !!numberBindings[props.settingKey])
+
+const toggleModel = computed<boolean>({
+  get: () => toggleBindings[props.settingKey]?.get() ?? false,
+  set: (v) => toggleBindings[props.settingKey]?.set(v),
+})
+
+const selectModel = computed<string>({
+  get: () => selectBindings[props.settingKey]?.get() ?? '',
+  set: (v) => selectBindings[props.settingKey]?.set(v),
+})
+
+// number 类本地缓冲:输入不触发提交,change 才写 store(并跟随 store 外部变更回同步)。
+const numberLocal = ref(0)
 watch(
-  () => config.uiFontSize,
-  (v) => (uiFontSizeLocal.value = v),
+  () => numberBindings[props.settingKey]?.get(),
+  (v) => {
+    if (typeof v === 'number') numberLocal.value = v
+  },
+  { immediate: true },
 )
-watch(
-  () => config.enableHoverScale,
-  (v) => (enableHoverScaleLocal.value = v),
-)
-watch(
-  () => config.thumbStrategy,
-  (v) => (thumbStrategyLocal.value = v),
-)
-watch(
-  () => config.gpuEngine,
-  (v) => (gpuEngineLocal.value = v),
-)
-watch(
-  () => config.thumbSkipMaxKb,
-  (v) => (thumbSkipMaxKbLocal.value = v),
-)
-watch(
-  () => config.thumbCacheMaxMb,
-  (v) => (thumbCacheMaxMbLocal.value = v),
-)
-watch(
-  () => config.timelineScrollWidth,
-  (v) => (timelineScrollWidthLocal.value = v),
-)
-watch(
-  () => config.aiProviderOverride,
-  (v) => (aiProviderOverrideLocal.value = v),
-)
+function commitNumber() {
+  numberBindings[props.settingKey]?.set(numberLocal.value)
+}
+
+/* ── 危险清理按钮表(icon=全尺寸按钮图标;compact 统一 RotateCcw)────── */
+
+const dangerButtons: Record<
+  string,
+  { icon: Component; btnLabelKey: string; onClick: () => void }
+> = {
+  clearDb: { icon: Database, btnLabelKey: 'settings.clearDbBtn', onClick: () => void handleClearDb() },
+  clearSettings: {
+    icon: Paintbrush,
+    btnLabelKey: 'settings.clearSettingsBtn',
+    onClick: () => void handleClearSettings(),
+  },
+  clearAllThumbnails: {
+    icon: RotateCcw,
+    btnLabelKey: 'settings.clearAllThumbnailsBtn',
+    onClick: () => void handleClearAllThumbnails(),
+  },
+  clearBrowserCache: {
+    icon: RotateCcw,
+    btnLabelKey: 'settings.clearBrowserCacheBtn',
+    onClick: handleClearBrowserCache,
+  },
+  clearLogs: {
+    icon: RotateCcw,
+    btnLabelKey: 'settings.clearLogsBtn',
+    onClick: () => void handleClearLogs(),
+  },
+}
+const dangerSpec = computed(() => dangerButtons[props.settingKey])
+
+/* ── AI 批大小特例(钳制 + 提示)──────────────────────────────────── */
+
+const aiBatchSizeLocal = ref(config.aiBatchSize)
 watch(
   () => config.aiBatchSize,
   (v) => (aiBatchSizeLocal.value = v),
 )
-watch(
-  () => config.logLevel,
-  (v) => (logLevelLocal.value = v),
-)
-watch(
-  () => config.enableVideoCover,
-  (v) => (enableVideoCoverLocal.value = v),
-)
-watch(
-  () => config.enableVideoKeyframes,
-  (v) => (enableVideoKeyframesLocal.value = v),
-)
-watch(
-  () => config.aiHqCache,
-  (v) => (aiHqCacheLocal.value = v),
-)
 
-// AI 批处理大小变更：固定 batch 模型下，非自动(0)的值不得小于其固定 k —— 自动钳制并提示。
-// 0=自动 仍允许（后端会把有效 batch 抬到 ≥k）。
+// AI 批处理大小变更:固定 batch 模型下,非自动(0)的值不得小于其固定 k —— 自动钳制并提示。
+// 0=自动 仍允许(后端会把有效 batch 抬到 ≥k)。
 function onBatchChange() {
   const k = ai.status.activeFixedBatch
   if (k && aiBatchSizeLocal.value > 0 && aiBatchSizeLocal.value < k) {
     aiBatchSizeLocal.value = k
     ui.addToast('warning', t('settings.aiBatchAdjustedToFixed', { k }))
   }
-  config.setAiBatchSize(aiBatchSizeLocal.value)
+  void config.setAiBatchSize(aiBatchSizeLocal.value)
 }
 
 function getTierLabel(tier: number): string {
@@ -496,6 +299,8 @@ function getTierLabel(tier: number): string {
   }
   return labels[tier] ?? `${tier}px`
 }
+
+/* ── 危险清理按钮 handlers(与重构前逐行一致)────────────────────── */
 
 async function handleClearDb() {
   if (!confirm(t('sidebar.clearDbConfirm'))) return
@@ -539,8 +344,8 @@ async function handleClearAllThumbnails() {
 }
 
 function handleClearBrowserCache() {
-  // 「清浏览器缓存」语义是纯前端：带 cache-busting 查询串重载，绕过 webview 已缓存的图片。
-  // 不存在 `clear_browser_cache` 后端命令——此前调它必失败弹错误 toast（与 SettingsView 同名实现对齐后修复）。
+  // 「清浏览器缓存」语义是纯前端:带 cache-busting 查询串重载,绕过 webview 已缓存的图片。
+  // 不存在 `clear_browser_cache` 后端命令——此前调它必失败弹错误 toast(与 SettingsView 同名实现对齐后修复)。
   window.location.href = window.location.pathname + '?clear=' + Date.now()
 }
 </script>
@@ -571,7 +376,8 @@ function handleClearBrowserCache() {
 }
 .segmented-btn.active {
   background: var(--color-accent);
-  color: #fff;
+  /* 彩底文字用反色 token:暗色主题 accent 偏亮,白字不可读(同 S5 批2 纪律) */
+  color: var(--color-text-inverse);
 }
 
 .dynamic-control {
@@ -621,5 +427,34 @@ function handleClearBrowserCache() {
 
 .danger-icon {
   color: var(--color-error);
+}
+
+/* ── AI 批大小提示(原内联 style 收进 class,S6)─────────────────────── */
+.batch-size-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+.batch-hint {
+  font-size: 11px;
+  white-space: nowrap;
+}
+.batch-hint--ok {
+  color: var(--color-success);
+}
+.batch-hint--error {
+  color: var(--color-error);
+}
+.batch-hint--warn {
+  color: var(--color-warning);
+}
+.batch-hint--muted {
+  color: var(--color-text-tertiary);
+}
+
+.unsupported-hint {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
 }
 </style>

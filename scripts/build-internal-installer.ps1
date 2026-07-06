@@ -16,7 +16,7 @@ if (-not (Test-Path $keyset)) {
 }
 $env:PICASA_EXOTIC_KEYSET_FILE = $keyset
 if (-not $env:PICASA_REGISTRY_BASE_DEFAULT) {
-    $env:PICASA_REGISTRY_BASE_DEFAULT = 'https://raw.githubusercontent.com/gfgjs/picasa-next-registry/main/exotic/v1'
+    $env:PICASA_REGISTRY_BASE_DEFAULT = 'https://raw.githubusercontent.com/gfgjs/scrollery-registry/main/exotic/v1'
 }
 Write-Host "内测注入 keyset   : $env:PICASA_EXOTIC_KEYSET_FILE"
 Write-Host "内测注入 registry : $env:PICASA_REGISTRY_BASE_DEFAULT"

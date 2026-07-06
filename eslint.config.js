@@ -50,7 +50,7 @@ export default defineConfigWithVueTs(
             // 计量单位（紧跟插值的后缀片段）
             'px', 's', 'MB', 'GB',
             // 品牌 / 协议 / 技术徽标
-            'Picasa Next', 'v0.1.0', 'WebDAV', 'LIVE', 'Live', 'ORIG', 'THUMB', 'fp16',
+            'Scrollery', 'v0.1.0', 'WebDAV', 'LIVE', 'Live', 'ORIG', 'THUMB', 'fp16',
             '1:1', 'API Key',
             // 技术占位示例（placeholder 中的 URL / 模型名 / 密钥格式）
             'https://api.openai.com/v1', 'https://dav.example.com/remote.php/dav/files/me',

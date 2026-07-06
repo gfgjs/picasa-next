@@ -785,7 +785,7 @@ mod tests {
 /// dev registry 工具产物核验(scripts/exotic-dev-registry.mjs)。#[ignore]:依赖
 /// 已生成的 .dev-registry 目录与外部环境变量,CI/常规 test 不跑。跑法(PowerShell):
 ///   $env:PICASA_EXOTIC_DEV_FILE_URLS='1'
-///   cargo test -p picasa-next --lib dev_registry_artifacts -- --ignored
+///   cargo test -p scrollery --lib dev_registry_artifacts -- --ignored
 /// 用**生产同一套**校验器全链核验:keyset 解析 → index 验签+条目校验 → zip
 /// verify_and_extract(验签/清单白名单/zip 加固/逐文件 hash)。
 #[cfg(test)]
@@ -846,7 +846,7 @@ mod dev_registry_artifact_tests {
 
 /// 内测 registry 工具产物核验(scripts/exotic-internal-registry.mjs)。#[ignore]:依赖
 /// 已生成的 .internal-signing/ 目录,CI/常规 test 不跑。跑法:
-///   cargo test -p picasa-next --lib internal_registry_artifacts -- --ignored
+///   cargo test -p scrollery --lib internal_registry_artifacts -- --ignored
 /// 与 dev 版差异:keyset 为「占位+内测键」超集、package_url 为真实 HTTPS(无需 dev
 /// file:// 开关)——正是内测安装包在生产验证链下将经历的形态(2026-07-05 内测链)。
 #[cfg(test)]

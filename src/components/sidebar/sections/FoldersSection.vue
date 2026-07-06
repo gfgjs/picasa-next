@@ -332,8 +332,19 @@ function onFolderStatsChanged(e: Event) {
   const selectDirId = (e as CustomEvent).detail?.selectDirId ?? null
   reloadTreePreserveExpansion(selectDirId)
 }
-onMounted(() => window.addEventListener('folder-stats-changed', onFolderStatsChanged))
-onBeforeUnmount(() => window.removeEventListener('folder-stats-changed', onFolderStatsChanged))
+// 空画廊「添加文件夹」引导按钮(MediaGrid 空状态,§6.3)经此事件复用完整 addRoot
+// 流程(重叠检测/自动扫描/树选中),避免在画廊侧复制这段逻辑。
+function onRequestAddFolder() {
+  addRoot()
+}
+onMounted(() => {
+  window.addEventListener('folder-stats-changed', onFolderStatsChanged)
+  window.addEventListener('request-add-folder', onRequestAddFolder)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('folder-stats-changed', onFolderStatsChanged)
+  window.removeEventListener('request-add-folder', onRequestAddFolder)
+})
 
 // ── Tree node click / selection ─────────────────────────────────────────────
 // ── 树节点点击 / 选择 ─────────────────────────────────────────────────────────

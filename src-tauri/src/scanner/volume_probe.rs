@@ -177,7 +177,7 @@ mod tests {
 
     #[test]
     fn path_prober_online_for_existing_dir() {
-        let dir = std::env::temp_dir().join(format!("picasa_probe_ok_{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("scrollery_probe_ok_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
@@ -190,8 +190,10 @@ mod tests {
 
     #[test]
     fn path_prober_offline_for_nonexistent() {
-        let missing =
-            std::env::temp_dir().join(format!("picasa_probe_missing_{}_nope", std::process::id()));
+        let missing = std::env::temp_dir().join(format!(
+            "scrollery_probe_missing_{}_nope",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&missing);
         assert!(!PathProber.is_online(&missing), "不存在的路径应判为离线");
     }
@@ -199,7 +201,8 @@ mod tests {
     #[test]
     fn path_prober_offline_for_file_not_dir() {
         // 指向文件而非目录 → 不是合法 scan_root 卷根 → 离线（保守）。
-        let f = std::env::temp_dir().join(format!("picasa_probe_file_{}.tmp", std::process::id()));
+        let f =
+            std::env::temp_dir().join(format!("scrollery_probe_file_{}.tmp", std::process::id()));
         std::fs::write(&f, b"x").unwrap();
         assert!(!PathProber.is_online(&f), "文件（非目录）应判为离线");
         let _ = std::fs::remove_file(&f);

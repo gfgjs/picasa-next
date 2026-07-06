@@ -1,10 +1,10 @@
 export default {
   onboarding: {
-    welcome: 'Welcome to Picasa Next',
+    welcome: 'Welcome to Scrollery',
     subtitle: 'Three quick steps to start managing your photos and videos',
     step1: {
       title: 'Add a photo folder',
-      desc: 'Pick a folder with your photos or videos and Picasa Next will scan it into your library. You can add more anytime from the sidebar.',
+      desc: 'Pick a folder with your photos or videos and Scrollery will scan it into your library. You can add more anytime from the sidebar.',
       addBtn: 'Choose folder',
       empty: 'No folder added yet — you can also do this later',
       addFailed: 'Failed to add folder: {error}',
@@ -222,14 +222,27 @@ export default {
     zoomModeFitWidth: 'Fit Width (current) - click for Fit Height',
     zoomModeFitHeight: 'Fit Height (current) - click for Fit Screen',
   },
+  // Built-in theme names (bilingual: English primary + Chinese character)
+  themes: {
+    ink: 'Ink · 墨',
+    porcelain: 'Porcelain · 素',
+    moonlight: 'Moonlight · 月白',
+    xuan: 'Xuan · 宣',
+    obsidian: 'Obsidian · 玄',
+    dai: 'Dai · 黛',
+  },
   settings: {
     title: 'Settings',
     general: 'General',
     theme: 'Theme',
-    themeDesc: 'Choose the interface theme for the application.',
+    themeDesc:
+      'Choose the appearance mode and pick a theme for light and dark; System switches between them automatically.',
     themeSystem: 'System',
     themeLight: 'Light',
     themeDark: 'Dark',
+    lightThemes: 'Light themes',
+    darkThemes: 'Dark themes',
+    themeActiveNow: 'Active',
     language: 'Language',
     languageDesc: 'Choose the interface language for the application.',
     thumbnails: 'Thumbnails',
@@ -478,7 +491,7 @@ export default {
     fmNotInstalled: '○ Not installed',
   },
   empty: {
-    allPhotos: 'Nothing here yet\nClick "Add Folder" on the left to start importing photos.',
+    allPhotos: 'Nothing here yet\nAdd a folder with photos to start building your library.',
     recentlyAdded: 'No recently added photos',
     favorites: 'No favorites yet\nClick the heart icon on a photo to add it to favorites.',
     videos: 'No video files',
@@ -527,7 +540,7 @@ export default {
     blockedTitle: 'This feature is currently unavailable',
     blockedUnsupportedPlatform: 'No plugin package is available for the current platform.',
     blockedIncompatibleHost:
-      'The plugin requires a newer version of Picasa Next. Please update and retry.',
+      'The plugin requires a newer version of Scrollery. Please update and retry.',
     blockedInvalidInstallation:
       'The plugin installation is corrupted. Please reinstall or repair it.',
     blockedDisabled: 'This plugin or its subsystem has been disabled.',
@@ -846,7 +859,7 @@ export default {
   // 关闭主窗口确认对话框
   closeConfirm: {
     title: 'Confirm Close',
-    message: 'Exit Picasa Next, or minimize to the system tray?',
+    message: 'Exit Scrollery, or minimize to the system tray?',
     remember: "Remember my choice and don't ask again",
     minimize: 'Minimize to Tray',
     exit: 'Exit App',

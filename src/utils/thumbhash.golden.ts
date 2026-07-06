@@ -2,7 +2,7 @@
 // 自动生成,勿手改。跨语言金标:Rust thumbhash crate 编码(rgba_to_thumb_hash)
 // 与解码(thumb_hash_to_rgba / thumb_hash_to_average_rgba)的逐字节输出。
 // 生成器:src-tauri/src/thumbnail/thumbhash.rs 的 print_thumbhash_golden_fixtures(#[ignore])
-//   cargo test -p picasa-next print_thumbhash_golden_fixtures -- --ignored --nocapture
+//   cargo test -p scrollery print_thumbhash_golden_fixtures -- --ignored --nocapture
 // 消费方:thumbhash.spec.ts(前端 TS 解码器 ↔ Rust 解码器对拍)。
 
 export interface ThumbhashGoldenFixture {

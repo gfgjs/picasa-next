@@ -151,7 +151,7 @@ mod tests {
 
     fn temp_dir(name: &str) -> std::path::PathBuf {
         let d =
-            std::env::temp_dir().join(format!("picasa_aicache_{}_{}", name, std::process::id()));
+            std::env::temp_dir().join(format!("scrollery_aicache_{}_{}", name, std::process::id()));
         std::fs::create_dir_all(&d).unwrap();
         d
     }

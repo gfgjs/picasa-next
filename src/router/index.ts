@@ -69,7 +69,7 @@ const router = createRouter({
 // 只在 afterEach 翻译会让切语言后的标题滞留旧语言直到下次导航（R1-7 验收「en-US 全界面无中文」不允许）。
 function applyDocumentTitle() {
   const titleKey = router.currentRoute.value.meta.title as string | undefined
-  document.title = titleKey ? `${i18n.global.t(titleKey)} — Picasa Next` : 'Picasa Next'
+  document.title = titleKey ? `${i18n.global.t(titleKey)} — Scrollery` : 'Scrollery'
 }
 
 router.afterEach(() => applyDocumentTitle())

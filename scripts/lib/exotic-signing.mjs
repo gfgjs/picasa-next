@@ -3,7 +3,7 @@
 //
 // 消费者:exotic-dev-registry.mjs(开发期 file:// 源)、exotic-internal-registry.mjs
 // (内测 HTTPS 源)、exotic-issue-license.mjs(License token 签发)。
-// 契约对端:src-tauri exotic::{registry,install} 与 crates/picasa-next-exotic-trust——
+// 契约对端:src-tauri exotic::{registry,install} 与 crates/scrollery-exotic-trust——
 // 本库产物必须能通过 installer.rs 的 #[ignore] 核验测试(生产同一套校验链,勿双轨漂移)。
 
 import crypto from 'node:crypto';

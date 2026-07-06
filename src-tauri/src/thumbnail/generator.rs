@@ -598,7 +598,7 @@ mod tests {
     /// R0-4:成功路径——最终文件内容完整、目录内不残留任何 .tmp。
     #[test]
     fn write_atomic_leaves_complete_file_and_no_tmp() {
-        let dir = std::env::temp_dir().join(format!("picasa_wa_{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("scrollery_wa_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let target = dir.join("a1b2c3.webp");
 
@@ -618,7 +618,7 @@ mod tests {
     /// 这正是崩溃恢复场景:上一次直写留下的截断文件,重生成后必须被完整文件顶掉。
     #[test]
     fn write_atomic_replaces_existing_truncated_file() {
-        let dir = std::env::temp_dir().join(format!("picasa_wa_rep_{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("scrollery_wa_rep_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let target = dir.join("d4e5f6.webp");
 

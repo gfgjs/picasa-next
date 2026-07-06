@@ -27,13 +27,26 @@
           <div class="empty-state__icon"><ImageIcon :size="48" /></div>
           <div class="empty-state__title">{{ emptyStateTitle }}</div>
           <div v-if="emptyStateDesc" class="empty-state__desc">{{ emptyStateDesc }}</div>
+          <!-- 空库「下一步动作」(§6.3):按钮触发 FoldersSection 的完整加目录流程 -->
+          <button
+            v-if="showEmptyAction"
+            class="btn btn-primary empty-state__action"
+            @click="requestAddFolder"
+          >
+            <FolderPlus :size="16" />
+            {{ $t('sidebar.addFolder') }}
+          </button>
         </div>
 
-        <!-- Loading -->
-        <!-- 加载中 -->
-        <div v-if="media.isComputingLayout" class="media-grid__loading">
-          <div class="spinner" />
-          <span>{{ $t('empty.computing') }}</span>
+        <!-- Loading: compute_layout 首屏阶段用骨架屏占位(S5),视觉上预演网格落位;
+             可访问性上仍以文案播报状态(骨架对读屏不可见)。 -->
+        <div
+          v-if="media.isComputingLayout"
+          class="media-grid__skeleton"
+          role="status"
+          :aria-label="$t('empty.computing')"
+        >
+          <div v-for="i in 12" :key="i" class="skeleton-block media-grid__skeleton-cell" />
         </div>
 
         <!-- T16 方案B(B1.5):bucket 分段渲染。容器总高 = 真实逻辑高、零坐标平移;
@@ -286,6 +299,7 @@ import {
   ImageIcon,
   Copy,
   FolderOpen,
+  FolderPlus,
   ChevronLeft,
   ChevronRight,
   Monitor,
@@ -364,6 +378,20 @@ const emptyStateDesc = computed(() => {
   const parts = emptyStateText.value.split('\n')
   return parts.length > 1 ? parts[1] : ''
 })
+
+// 空状态「下一步动作」(§6.3):仅真正的空库场景(全部照片视图,无搜索/目录/人物过滤)
+// 出「添加文件夹」按钮;动作经 request-add-folder 事件复用 FoldersSection 的完整
+// addRoot 流程(重叠检测/自动扫描/树选中),不在此复制该逻辑(事件通道同 folder-stats-changed 惯例)。
+const showEmptyAction = computed(
+  () =>
+    !ui.isSearching &&
+    ui.activeDirectoryId == null &&
+    ui.activePersonId == null &&
+    ui.activeSmartAlbum === 'all',
+)
+function requestAddFolder() {
+  window.dispatchEvent(new CustomEvent('request-add-folder'))
+}
 
 const gridRef = ref<HTMLElement | null>(null)
 const cacheDir = ref('')
@@ -1487,6 +1515,9 @@ watch(
   height: 100%;
   overflow: hidden;
   position: relative;
+  /* 画廊画布区专用底色(感知学红线):一切主题此 token 都是低饱和中性色,
+     暖调/冷调主题的"花样"只落在 chrome,照片观感不被 UI 带偏。 */
+  background: var(--color-bg-canvas);
 }
 
 .media-grid-wrapper {
@@ -1573,13 +1604,17 @@ watch(
   overflow: hidden;
 }
 
-.media-grid__loading {
+/* compute_layout 首屏骨架(S5):flex 换行模拟 justified 网格的首屏落位 */
+.media-grid__skeleton {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--spacing-sm);
-  padding: var(--spacing-xl);
-  color: var(--color-text-tertiary);
+  flex-wrap: wrap;
+  gap: var(--grid-gap);
+  padding: var(--spacing-sm);
+}
+.media-grid__skeleton-cell {
+  height: calc(var(--grid-row-height) * 0.75);
+  flex: 1 1 200px;
+  max-width: 340px;
 }
 
 /* T16 方案B(B1.5):段行未到时的骨架条纹——远跳/横扫瞬间以行状占位替代白屏;

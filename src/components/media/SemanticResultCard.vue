@@ -120,6 +120,8 @@ const badgeClass = computed(() => {
 </script>
 
 <style scoped>
+/* 硬编码色豁免说明(S5,设计 §6.2):本卡内 #fff/黑纱系均为照片上的恒定浮层
+   (相似度徽章/播放钮/黑底渐变),语义=媒体上的永远白字黑纱,刻意不随主题。 */
 .result-card {
   display: flex;
   flex-direction: column;

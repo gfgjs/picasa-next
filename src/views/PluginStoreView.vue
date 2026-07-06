@@ -62,7 +62,7 @@
         <span v-if="proc.blockedByAvailability > 0" class="ps-proc__blocked">
           {{ $t('exotic.procBlocked', { n: proc.blockedByAvailability }) }}
         </span>
-        <span v-if="proc.error > 0" class="ps-proc__err">✗ {{ proc.error }}</span>
+        <span v-if="proc.error > 0" class="ps-proc__err"><X :size="12" /> {{ proc.error }}</span>
         <button class="ps-proc__toggle" @click="toggleDetails">
           <component :is="detailsOpen ? ChevronUp : ChevronDown" :size="13" />
           {{ detailsOpen ? $t('exotic.procDetailsHide') : $t('exotic.procDetails') }}
@@ -121,9 +121,9 @@
       </div>
     </section>
 
-    <!-- 首次加载占位。 -->
-    <div v-if="store.loading.value && rows.length === 0" class="ps-empty">
-      <span class="ps-spinner" aria-hidden="true" />
+    <!-- 首次加载占位:骨架卡片(S5),替代空转 spinner。 -->
+    <div v-if="store.loading.value && rows.length === 0" class="ps-skeleton" role="status">
+      <div v-for="i in 3" :key="i" class="skeleton-block ps-skeleton__card" />
     </div>
 
     <!-- 空态：无可装、无已装。 -->
@@ -249,6 +249,7 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronUp,
+  X,
 } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 
@@ -581,6 +582,9 @@ async function ctrl(fn: () => Promise<void>) {
   color: var(--color-warning);
 }
 .ps-proc__err {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   color: var(--color-error);
 }
 .ps-proc__toggle {
@@ -739,13 +743,16 @@ async function ctrl(fn: () => Promise<void>) {
   margin: 0;
   font-size: var(--font-size-sm);
 }
-.ps-spinner {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  border: 3px solid var(--color-border-strong);
-  border-top-color: var(--color-accent);
-  animation: spin 0.7s linear infinite;
+/* 首载骨架卡(S5,shimmer 基元见 animations.css .skeleton-block) */
+.ps-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  padding: var(--spacing-lg) var(--spacing-md);
+}
+.ps-skeleton__card {
+  height: 88px;
+  border-radius: var(--radius-md);
 }
 
 /* ── Plugin cards ─────────────────────────────────────────────────────────── */

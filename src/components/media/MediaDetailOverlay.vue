@@ -949,6 +949,9 @@ async function onMoveCopyConfirm(targetNode: DirNode) {
 </script>
 
 <style scoped>
+/* 硬编码色豁免说明(S5,设计 §6.2):看图台 #000、人脸框青色、照片上的白字/黑纱
+   渐变、星级金色均为「媒体上的恒定浮层」语义——看图台永远黑(专业看图惯例)、
+   人脸框需在任意照片上可见、星级金全主题统一,刻意不随主题。 */
 .detail-overlay {
   position: fixed;
   inset: 0;

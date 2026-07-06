@@ -173,7 +173,9 @@ onBeforeUnmount(() => {
 .pdf-reader {
   height: 100%;
   overflow-y: auto;
-  background: var(--color-bg-base, #2b2b2b);
+  /* 原 var(--color-bg-base, #2b2b2b) 引用不存在的幽灵 token,一直走 fallback——
+     阅读台衬底改用 inset token,随主题正确着色(S5 修) */
+  background: var(--color-bg-inset);
   padding: 24px 0;
   box-sizing: border-box;
 }
@@ -185,6 +187,7 @@ onBeforeUnmount(() => {
 }
 .pdf-reader :deep(.pdf-page) {
   width: min(900px, 92%);
+  /* 硬编码豁免:PDF 页面本体=纸,渲染基准永远白(pdfjs 输出按白底合成) */
   background: #fff;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
   display: block;

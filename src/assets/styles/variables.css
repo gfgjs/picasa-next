@@ -19,7 +19,8 @@
   --radius-full: 9999px;
 
   /* ── Typography ────────────────────────────────────────────── */
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  /* 'Inter Variable' = 本地打包的可变字体(@fontsource);'Inter' 保留兼容系统装机字体 */
+  --font-sans: 'Inter Variable', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
 
   --font-size-2xs: 11px;

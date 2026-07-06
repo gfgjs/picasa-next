@@ -2,12 +2,12 @@
 //! 冷门格式插件 · keyring 授权存储 `KeyringLicenseStore`（v3 Part3 §5.2/§5.3）。
 //!
 //! 【Part6 §3.9.1a 去环 ③a】纯验签逻辑（`verify_token`/`evaluate_token`/`LicensePayload`）已迁至
-//! 开源叶 crate `picasa-next-exotic-trust`（无秘密价值、pro 需复用）。本文件保留**真实 keyring I/O**
+//! 开源叶 crate `scrollery-exotic-trust`（无秘密价值、pro 需复用）。本文件保留**真实 keyring I/O**
 //! 实现 `KeyringLicenseStore`(依赖 keyring crate;③b 裁决 2026-07-05:**保留本实现**为公开树直销
 //! 装配,私有树由组合根标记块 swap 至闭源 DirectEntitlement,双实现有意并存),并
 //! `pub use` 再导出迁走的原语，使既有 `crate::exotic::license::{verify_token, LicensePayload, ...}`
 //! 引用路径不变。授权 DTO / trait（`EntitlementProvider`/`LicenseStatus`/`LicenseError`）住更底层的
-//! 叶 crate `picasa-next-plugin-api`。
+//! 叶 crate `scrollery-plugin-api`。
 //!
 //! 三份真相中的「授权真相」（§5.1）：token 存系统 keyring（service 固定、account=plugin_id），
 //! DB 不保存 token；日志/遥测/panic/IPC **绝不**输出 token 或 subject_hash（§5.2）。
@@ -23,17 +23,15 @@ use std::sync::Arc;
 use crate::exotic::crypto::VerifyingKeyset;
 
 // 授权 DTO / trait 住 plugin-api 叶 crate（§3.9.1a）；此处 `pub use` 再导出使引用路径不变。
-pub use picasa_next_plugin_api::{
-    ActivationInfo, EntitlementProvider, LicenseError, LicenseStatus,
-};
+pub use scrollery_plugin_api::{ActivationInfo, EntitlementProvider, LicenseError, LicenseStatus};
 // 纯验签原语迁至 exotic-trust 叶 crate（§3.9.1a ③a）；`pub use` 再导出保持
 // `crate::exotic::license::{verify_token, evaluate_token, LicensePayload}` 引用路径不变，
 // 并令下方 `KeyringLicenseStore` 内部调用直接可见。
-pub use picasa_next_exotic_trust::{evaluate_token, verify_token, LicensePayload};
+pub use scrollery_exotic_trust::{evaluate_token, verify_token, LicensePayload};
 
 /// keyring service（与既有 proofread/storage key 同 service，account 区分用途）。
 #[cfg(feature = "channel-direct")]
-const KEYRING_SERVICE: &str = "picasa-next";
+use scrollery_plugin_api::KEYRING_SERVICE;
 
 /// keyring account = plugin_id（§5.2）。集中此处，便于审计「token 存放坐标」。
 #[cfg(feature = "channel-direct")]

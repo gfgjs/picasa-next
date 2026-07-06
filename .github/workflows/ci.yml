@@ -20,9 +20,13 @@ on:
   workflow_dispatch:
 
 jobs:
+  # 🔴 runs-on 经济账(2026-07-06 切自托管):私有仓 windows-latest 按 2× 倍率计费,rust/frontend/smoke
+  #    三个重 job 迁本机 dev-box-win(D:\actions-runner,self-hosted 分钟不计费不受配额限制);
+  #    rust-linux 留 ubuntu-latest(本机无 WSL/Docker,job 轻量,月免费额度可承载)。
+  #    回迁只需把 runs-on 改回 windows-latest;勿把本 runner 挂到公开仓(fork PR 可在 runner 上执行任意代码)。
   rust:
     name: Rust Check & Clippy & Test
-    runs-on: windows-latest
+    runs-on: [self-hosted, Windows, X64]
     defaults:
       run:
         shell: bash # windows runner 默认 pwsh;与 oss-gate 对齐用 bash,mkdir -p 等脚本可移植
@@ -34,8 +38,10 @@ jobs:
         with:
           components: clippy
 
-      # 编译缓存:windows runner 冷编译整 workspace 很慢,缓存 registry+target 大幅提速。
+      # 编译缓存:仅托管 runner 需要(冷机);自托管 _work 目录本身持久,再走 GitHub cache 纯网络往返浪费,
+      # 且 restore 会用陈旧缓存覆盖更新的本地 target(runner.environment 是 GitHub 内置上下文)。
       - name: Rust 编译缓存
+        if: runner.environment == 'github-hosted'
         uses: Swatinem/rust-cache@v2
 
       # ③ 见文件头:原「npm ci 材料化 ONNX 资源」步骤已随 Part7-T6 撤销(资源声明已删)。
@@ -64,12 +70,12 @@ jobs:
       - name: 渠道依赖树断言(updater 物理排除)
         run: |
           for ch in channel-msstore channel-steam; do
-            tree=$(cargo tree -p picasa-next -e normal --no-default-features --features "custom-protocol,lite,$ch" --locked)
+            tree=$(cargo tree -p scrollery -e normal --no-default-features --features "custom-protocol,lite,$ch" --locked)
             if grep -q "tauri-plugin-updater" <<< "$tree"; then
               echo "::error::tauri-plugin-updater 泄入 $ch 依赖树(Part7 §3.6.2 红线)"; exit 1
             fi
           done
-          tree=$(cargo tree -p picasa-next -e normal --locked)
+          tree=$(cargo tree -p scrollery -e normal --locked)
           if ! grep -q "tauri-plugin-updater" <<< "$tree"; then
             echo "诊断:direct 树共 $(grep -c "" <<< "$tree") 行,未见 tauri-plugin-updater"
             echo "::error::direct 依赖树意外丢失 tauri-plugin-updater(updater 能力被误删?)"; exit 1
@@ -89,12 +95,15 @@ jobs:
   # 不重复付费;Linux 特有 cfg 死代码若出现由 check 的 warning 面先暴露)。
   rust-linux:
     name: Rust Check & Test (Linux 编译面)
-    runs-on: ubuntu-latest
+    # phase-2(2026-07-06):迁 WSL2 自托管 dev-box-wsl——托管 ubuntu 受配额/账单钳制,本 job 曾是唯一必红位。
+    runs-on: [self-hosted, Linux, X64]
     steps:
       - uses: actions/checkout@v4
 
       # Tauri v2 Linux 前置(webkit2gtk 4.1 等;官方 prerequisites 清单)。
+      # 仅托管 runner 需要:自托管 WSL 已预装同清单;且自托管无免密 sudo,此步跑了必卡。
       - name: Tauri Linux 系统依赖
+        if: runner.environment == 'github-hosted'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
@@ -103,6 +112,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Rust 编译缓存
+        if: runner.environment == 'github-hosted'
         uses: Swatinem/rust-cache@v2
 
       - name: 占位 dist(generate_context 校验 frontendDist)
@@ -116,7 +126,8 @@ jobs:
 
   frontend:
     name: Frontend Typecheck & Test
-    runs-on: ubuntu-latest
+    # 自托管(见 rust job 注):node 脚本与 npm 命令均跨平台,Windows 本机可跑;默认 pwsh 即可(无 bash 语法步骤)。
+    runs-on: [self-hosted, Windows, X64]
     steps:
       - uses: actions/checkout@v4
 
@@ -134,6 +145,11 @@ jobs:
       # tauri.conf.json 无独立 version、src-tauri 走 workspace 继承;失配则提示 --write。
       - name: 版本单源检查(sync-version --check)
         run: node scripts/sync-version.mjs --check
+
+      # Part8-D10 改名门禁(就绪态):rename-gate.json active=false 期间仅 selftest+skip(秒级);
+      # 改名施工第 7 步翻 true 后,品牌旧词根回流即红(豁免面=plan-docs 历史文档+PICASA_ env 缓改族)。
+      - name: 改名门禁(check-rename-gate)
+        run: node scripts/check-rename-gate.mjs
 
       # R2-3:存量 33 lint 错清零后开硬门(含 R1-7 的 vue/no-bare-strings-in-template i18n 防回潮规则)。
       - name: ESLint
@@ -165,7 +181,7 @@ jobs:
   smoke:
     name: 开机冒烟(build 产物断言)
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-    runs-on: windows-latest
+    runs-on: [self-hosted, Windows, X64] # 自托管(见 rust job 注);tauri build 本机温缓存快一个量级
     defaults:
       run:
         shell: bash
@@ -176,6 +192,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Rust 编译缓存
+        if: runner.environment == 'github-hosted'
         uses: Swatinem/rust-cache@v2
 
       - name: Node 环境(npm 缓存)
@@ -198,5 +215,5 @@ jobs:
       - name: 开机冒烟断言(PICASA_SMOKE_TEST=1 → exit 0)
         timeout-minutes: 5
         run: |
-          PICASA_SMOKE_TEST=1 ./target/release/picasa-next.exe
+          PICASA_SMOKE_TEST=1 ./target/release/scrollery.exe
           echo "冒烟通过:应用达 RunEvent::Ready 并 exit(0)"

@@ -38,7 +38,10 @@
       :class="'fmt-' + (fileFormat || '').toLowerCase()"
     >
       <div class="media-thumb__textcard-lines">
-        <span></span><span></span><span></span><span></span>
+        <span></span>
+        <span></span>
+        <span></span>
+        <span></span>
       </div>
       <span class="media-thumb__textcard-ext">{{ (fileFormat || '').toUpperCase() }}</span>
     </div>
@@ -193,10 +196,10 @@
           :stroke-width="isFavorited ? 0 : 2"
         />
       </button>
-      <!-- Rating stars (bottom-left, Picasa-style). Read-only filled stars when rated;
+      <!-- Rating stars (bottom-left, classic-album-style). Read-only filled stars when rated;
            full interactive 5-star strip on hover for quick set/clear (点当前星=清零).
            Gated !compact — 5 SVGs are costly at tiny cell sizes (same discipline as 收藏红心). -->
-      <!-- 评分星级（左下，Picasa 式）：已评分时显示只读填充星角标；hover 整格出完整 5 星
+      <!-- 评分星级（左下，经典桌面相册式）：已评分时显示只读填充星角标；hover 整格出完整 5 星
            交互条供快捷打分/清零。!compact 守门（5 个 SVG 在极小尺寸下昂贵，同收藏纪律）。 -->
       <div v-if="!compact" class="media-thumb__rating-slot">
         <StarRating
@@ -616,10 +619,15 @@ onBeforeUnmount(() => {
 
 /* ── Text-document card (§3.4) — paper-like card with faux lines + ext badge ── */
 /* ── 文本文档卡（§3.4）—— 纸张感卡片 + 仿文本行 + 扩展名角标 ── */
+/* 硬编码色豁免说明(S5,设计 §6.2):本组件内叠在照片/视频/彩色徽章之上的
+   #fff、黑系渐变与 drop-shadow 语义为「媒体上的永远白字黑纱」,属画布内容区,
+   刻意不随主题——主题化会破坏照片观感中性红线。可主题化的(纸面/徽章底色)
+   已全部收敛为 --color-doc-paper(-line) 与 --color-badge-doc-xxx token。
+   (注意:注释内写 token 通配不能用「…paper* / …」——「*」贴着「/」会拼出「星斜杠」提前终止块注释) */
 .media-thumb__textcard {
   position: absolute;
   inset: 0;
-  background: #fbfbf8;
+  background: var(--color-doc-paper);
   display: flex;
   flex-direction: column;
   justify-content: space-between;
@@ -636,7 +644,7 @@ onBeforeUnmount(() => {
   display: block;
   height: 5px;
   border-radius: 2px;
-  background: #d6d6d2;
+  background: var(--color-doc-paper-line);
 }
 .media-thumb__textcard-lines span:nth-child(1) {
   width: 65%;
@@ -656,29 +664,29 @@ onBeforeUnmount(() => {
   font-size: 11px;
   font-weight: 700;
   color: #fff;
-  background: #6b7280;
+  background: var(--color-badge-doc-generic);
   padding: 2px 6px;
   border-radius: 3px;
   letter-spacing: 0.04em;
 }
 /* 按类型着色角标（Office 沿用其品牌色，便于一眼区分） */
 .media-thumb__textcard.fmt-md .media-thumb__textcard-ext {
-  background: #4b8bf4;
+  background: var(--color-badge-doc-md);
 }
 .media-thumb__textcard.fmt-doc .media-thumb__textcard-ext,
 .media-thumb__textcard.fmt-docx .media-thumb__textcard-ext,
 .media-thumb__textcard.fmt-odt .media-thumb__textcard-ext {
-  background: #2b579a;
+  background: var(--color-badge-doc-word);
 }
 .media-thumb__textcard.fmt-xls .media-thumb__textcard-ext,
 .media-thumb__textcard.fmt-xlsx .media-thumb__textcard-ext,
 .media-thumb__textcard.fmt-ods .media-thumb__textcard-ext {
-  background: #217346;
+  background: var(--color-badge-doc-excel);
 }
 .media-thumb__textcard.fmt-ppt .media-thumb__textcard-ext,
 .media-thumb__textcard.fmt-pptx .media-thumb__textcard-ext,
 .media-thumb__textcard.fmt-odp .media-thumb__textcard-ext {
-  background: #c43e1c;
+  background: var(--color-badge-doc-ppt);
 }
 
 .media-thumb__img {
@@ -817,8 +825,8 @@ onBeforeUnmount(() => {
   opacity: 1;
 }
 
-/* ── Rating stars (bottom-left, Picasa-style) ─────────────────────────── */
-/* ── 评分星级（左下，Picasa 式）─────────────────────────────────────── */
+/* ── Rating stars (bottom-left, classic-album-style) ─────────────────────────── */
+/* ── 评分星级（左下，经典桌面相册式）─────────────────────────────────────── */
 .media-thumb__rating-slot {
   position: absolute;
   bottom: 4px;
@@ -877,6 +885,9 @@ onBeforeUnmount(() => {
 .media-thumb--selected {
   transform: scale(0.85);
   border-radius: var(--radius-lg);
+  /* accent 描边环(§6.3):暗色主题下仅缩小+压暗遮罩不可辨,补一圈零模糊
+     box-shadow(零模糊环渲染开销极低,批量选中数百格也安全)。 */
+  box-shadow: 0 0 0 2px var(--color-accent);
 }
 
 /* Selected overlay — subtle dimming mask */

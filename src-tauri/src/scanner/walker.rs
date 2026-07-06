@@ -263,7 +263,7 @@ mod tests {
     #[test]
     fn walk_complete_on_readable_dir() {
         use std::io::Write;
-        let dir = std::env::temp_dir().join(format!("picasa_walk_ok_{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("scrollery_walk_ok_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let mut f = std::fs::File::create(dir.join("a.jpg")).unwrap();
@@ -288,8 +288,10 @@ mod tests {
     /// 锁住「不完整扫描 ≠ 删除」：下游差集据 complete 守门，绝不在此场景误删。
     #[test]
     fn walk_incomplete_on_unreadable_root() {
-        let missing =
-            std::env::temp_dir().join(format!("picasa_walk_missing_{}_nope", std::process::id()));
+        let missing = std::env::temp_dir().join(format!(
+            "scrollery_walk_missing_{}_nope",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&missing);
 
         let catalog = CatalogSnapshot::builtin().unwrap();
@@ -305,7 +307,8 @@ mod tests {
     #[test]
     fn walk_cancelled_is_incomplete() {
         use std::io::Write;
-        let dir = std::env::temp_dir().join(format!("picasa_walk_cancel_{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("scrollery_walk_cancel_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let mut f = std::fs::File::create(dir.join("a.jpg")).unwrap();

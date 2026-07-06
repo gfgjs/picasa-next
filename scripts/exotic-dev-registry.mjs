@@ -126,4 +126,4 @@ console.log(`dev registry 已生成(seq=${seq}, version=${version})
 需要授权 gate 也放行时(激活/运行付费插件),dev 构建加 feature:
   npm run tauri dev -- -- --features exotic-dev-fixtures
 产物自检(生产同套校验器):
-  $env:PICASA_EXOTIC_DEV_FILE_URLS='1'; cargo test -p picasa-next --lib dev_registry_artifacts -- --ignored`);
+  $env:PICASA_EXOTIC_DEV_FILE_URLS='1'; cargo test -p scrollery --lib dev_registry_artifacts -- --ignored`);

@@ -8,5 +8,5 @@
 # - 支持 FP16 外部数据格式（eisneim/cn-clip_vit-b-16 模型）
 # - ORT 1.21 无法加载此格式，会导致无限期卡死
 # - ORT 1.26 加载 FP16 模型只需 ~200ms
-ORT_DYLIB_PATH = { value = "D:\\photoapp\\picasa-next\\src-tauri\\target\\debug\\onnxruntime.dll", force = false }
+ORT_DYLIB_PATH = { value = "D:\\photoapp\\scrollery\\src-tauri\\target\\debug\\onnxruntime.dll", force = false }
 

@@ -70,6 +70,13 @@ pub struct StartupConfig {
     pub hover_autoplay: Option<String>,
     // T16 方案B(2026-07-04):bucket 分段虚拟滚动开关(B1)→ 共 15 键。
     pub bucket_segmented_scroll: Option<String>,
+    // 多主题 S1(2026-07-06):外观三键(appearance/theme_light/theme_dark)+ legacy
+    // theme(仅迁移读取,新版本不再写)→ 共 19 键。原 useTheme 独立的 get_app_config('theme')
+    // 并入本批,启动配置 IPC 保持 1 次(R2-4 纪律)。
+    pub theme: Option<String>,
+    pub appearance: Option<String>,
+    pub theme_light: Option<String>,
+    pub theme_dark: Option<String>,
     pub first_launch: Option<String>,
 }
 
@@ -93,6 +100,10 @@ pub async fn get_startup_config(state: State<'_, Arc<AppState>>) -> Result<Start
             thumb_info_elements: get_config(&pool, "thumb_info_elements")?,
             hover_autoplay: get_config(&pool, "hover_autoplay")?,
             bucket_segmented_scroll: get_config(&pool, "bucket_segmented_scroll")?,
+            theme: get_config(&pool, "theme")?,
+            appearance: get_config(&pool, "appearance")?,
+            theme_light: get_config(&pool, "theme_light")?,
+            theme_dark: get_config(&pool, "theme_dark")?,
             first_launch: get_config(&pool, "first_launch")?,
         })
     })

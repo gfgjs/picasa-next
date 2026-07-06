@@ -275,7 +275,7 @@ onMounted(loadBackends)
 }
 .ns-badge {
   background: var(--color-accent);
-  color: #fff;
+  color: var(--color-text-inverse);
   font-size: 10px;
   padding: 1px 6px;
   border-radius: 8px;
@@ -354,16 +354,16 @@ onMounted(loadBackends)
 }
 .ns-btn--primary {
   background: var(--color-accent);
-  color: #fff;
+  color: var(--color-text-inverse);
   border-color: transparent;
 }
 .ns-btn--danger {
   border-color: transparent;
-  color: #ff6b6b;
+  color: var(--color-error);
   padding: 6px;
 }
 .ns-btn--danger:hover {
-  background: rgba(255, 107, 107, 0.12);
+  background: color-mix(in srgb, var(--color-error) 12%, transparent);
 }
 .ns-msg {
   font-size: var(--font-size-xs);
@@ -372,6 +372,6 @@ onMounted(loadBackends)
   color: var(--color-accent);
 }
 .ns-msg--err {
-  color: #ff6b6b;
+  color: var(--color-error);
 }
 </style>
